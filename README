@@ -1,0 +1,36 @@
+**1. Démarrer les services :**
+```bash
+docker-compose up -d
+```
+
+**2. Accéder aux interfaces :**
+- **MinIO Console** : http://localhost:9001
+  - Username: `minioadmin`
+  - Password: `minioadmin123`
+  
+- **Label Studio** : http://localhost:8080
+  - Email: `admin@example.com`
+  - Password: `admin123`
+
+**3. Configuration MinIO dans Label Studio :**
+
+Une fois connecté à Label Studio, pour utiliser MinIO comme stockage pour un projet spécific :
+- Va dans **Settings** → **Cloud Storage**
+- Ajoute un nouveau storage de type **S3**
+- Configure avec :
+  - **Endpoint**: `http://minio:9000`
+  - **Bucket**: `labelstudio`
+  - **Access Key**: `minioadmin`
+  - **Secret Key**: `minioadmin123`
+  - **Region**: `us-east-1` (par défaut)
+  - DÉCOCHER "Use pre-signed URLs" 
+**4. Arrêter les services :**
+```bash
+docker-compose down
+```
+
+**Points importants :**
+- Le service `minio_init` crée automatiquement un bucket "labelstudio" au démarrage
+- Les données sont persistées dans des volumes Docker
+- Les deux services communiquent via le réseau `app_network`
+- Change les mots de passe en production !
