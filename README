@@ -1,36 +1,671 @@
-**1. Démarrer les services :**
+# 🎙️ Label Studio Audio Segmentation ML Backend
+
+Backend ML automatique pour Label Studio permettant la segmentation et la classification audio (parole, bruit, silence) avec transcription multilingue via **Whisper**.
+
+## 📋 Table des matières
+- [Fonctionnalités](#fonctionnalités)
+- [Démarrage rapide](#démarrage-rapide)
+- [Architecture](#architecture)
+- [Configuration complète](#configuration-complète)
+- [Template Label Studio](#template-label-studio)
+- [Vérification et débogage](#vérification-et-débogage)
+- [Troubleshooting](#troubleshooting)
+- [Personnalisation](#personnalisation)
+
+## 🚀 Fonctionnalités
+
+- ✅ **Segmentation automatique** basée sur la détection de silences
+- ✅ **Classification** : parole (speech), bruit (noise), silence (silence)
+- ✅ **Transcription automatique** des segments de parole avec **Whisper**
+- ✅ **Détection de langue** : français (par défaut), anglais
+- ✅ **Modèles open-source** pré-entraînés (Whisper Tiny)
+- ✅ **Intégration complète** avec MinIO + Redis + Label Studio
+- ✅ **Prédictions automatiques** directement dans l'interface
+
+## ⚡ Démarrage rapide
+
+### 1. **Construire et démarrer les services**
+
 ```bash
-docker-compose up -d
+# Construire et démarrer tous les services
+docker-compose up --build -d
+
+# Vérifier l'état des services
+docker-compose ps
+
+# Tous les services doivent être "Up" et "healthy"
 ```
 
-**2. Accéder aux interfaces :**
-- **MinIO Console** : http://localhost:9001
-  - Username: `minioadmin`
-  - Password: `minioadmin123`
+### 2. **Accéder aux interfaces**
+
+| Service | URL | Identifiants | Usage |
+|---------|-----|--------------|-------|
+| **Label Studio** | http://localhost:8080 | Email: `admin@example.com`<br>Password: `admin123` | Interface d'annotation |
+| **MinIO Console** | http://localhost:9001 | User: `minioadmin`<br>Password: `minioadmin123` | Stockage des fichiers audio |
+| **ML Backend API** | http://localhost:9090 | - | API des prédictions |
+| **Redis** | localhost:6379 | - | Queue des tâches |
+
+### 3. **Vérifier la santé des services**
+
+```bash
+# Tester l'API ML Backend
+curl http://localhost:9090/health
+# Devrait retourner: {"status": "UP"}
+
+# Tester MinIO
+curl http://localhost:9000/minio/health/live
+
+# Vérifier Redis
+docker-compose exec redis redis-cli ping
+# Devrait retourner: PONG
+```
+
+## 🏗️ Architecture
+
+```
+┌─────────────────┐
+│  Label Studio   │
+│    :8080        │
+└────────┬────────┘
+         │ 1. Demande prédiction
+         ▼
+┌─────────────────┐      ┌─────────────┐
+│   ML Backend    │◄────►│    Redis    │
+│     :9090       │      │    :6379    │
+└────────┬────────┘      └─────────────┘
+         │ 2. Télécharge audio
+         ▼
+┌─────────────────┐
+│     MinIO       │
+│  S3 Storage     │
+│     :9000       │
+└─────────────────┘
+
+Workflow:
+1. Utilisateur ouvre une tâche dans Label Studio
+2. Label Studio appelle ML Backend pour les prédictions
+3. ML Backend télécharge l'audio depuis MinIO
+4. Traitement: Segmentation + Classification + Transcription
+5. Retour des résultats à Label Studio
+6. Affichage des pré-annotations
+```
+
+## 🔧 Configuration complète
+
+### **Étape 1 : Créer un projet dans Label Studio**
+
+1. Accédez à http://localhost:8080
+2. Connectez-vous : `admin@example.com` / `admin123`
+3. **Create Project** → Donnez un nom (ex: "Audio Segmentation")
+4. Passez à l'étape suivante
+
+### **Étape 2 : Configurer le template d'annotation**
+
+Dans **Settings** → **Labeling Interface**, collez ce template :
+
+```xml
+<View>
+  <Header value="Écouter et valider les segments audio"/>
   
-- **Label Studio** : http://localhost:8080
-  - Email: `admin@example.com`
-  - Password: `admin123`
-
-**3. Configuration MinIO dans Label Studio :**
-
-Une fois connecté à Label Studio, pour utiliser MinIO comme stockage pour un projet spécific :
-- Va dans **Settings** → **Cloud Storage**
-- Ajoute un nouveau storage de type **S3**
-- Configure avec :
-  - **Endpoint**: `http://minio:9000`
-  - **Bucket**: `labelstudio`
-  - **Access Key**: `minioadmin`
-  - **Secret Key**: `minioadmin123`
-  - **Region**: `us-east-1` (par défaut)
-  - DÉCOCHER "Use pre-signed URLs" 
-**4. Arrêter les services :**
-```bash
-docker-compose down
+  <!-- Lecteur audio avec contrôles -->
+  <Audio name="audio" value="$audio" zoom="true" speed="true" volume="true" hotkey="space"/>
+  
+  <!-- Labels pour classification -->
+  <Labels name="label" toName="audio" choice="single" showInline="true">
+    <Label value="speech" background="#4CAF50" hotkey="1"/>
+    <Label value="noise" background="#FF9800" hotkey="2"/>
+    <Label value="silence" background="#9E9E9E" hotkey="3"/>
+  </Labels>
+  
+  <!-- Zone de transcription -->
+  <TextArea 
+    name="transcription" 
+    toName="audio" 
+    editable="true" 
+    rows="3"
+    maxSubmissions="0"
+    showSubmitButton="false"
+    placeholder="Transcription automatique (éditable)"/>
+</View>
 ```
 
-**Points importants :**
-- Le service `minio_init` crée automatiquement un bucket "labelstudio" au démarrage
-- Les données sont persistées dans des volumes Docker
-- Les deux services communiquent via le réseau `app_network`
-- Change les mots de passe en production !
+**Cliquez sur "Save"**
+
+### **Étape 3 : Connecter le ML Backend**
+
+1. Dans votre projet, allez dans **Settings** → **Machine Learning**
+2. **Add Model** :
+   - **URL** : `http://ml-backend:9090`
+   - **Title** : `Audio Segmentation Model`
+   - **Description** : `Segmentation et transcription automatique`
+3. **Validate and Save**
+   - ✅ Devrait afficher "Connected successfully"
+   - ❌ Si erreur, consultez [Troubleshooting](#troubleshooting)
+
+4. **Activer les prédictions automatiques** :
+   - ☑️ Cochez "Use for interactive preannotations"
+   - ☑️ Cochez "Retrieve predictions when loading a task"
+
+### **Étape 4 : Importer des fichiers audio**
+
+**Option A : Via MinIO (recommandé pour gros fichiers)**
+
+```bash
+# Copier vos fichiers audio vers MinIO
+docker-compose exec minio mc cp /chemin/vers/votre-audio.mp3 myminio/labelstudio/
+
+# Ou via l'interface web MinIO (http://localhost:9001)
+# Bucket: labelstudio → Upload
+```
+
+Ensuite dans Label Studio :
+1. **Settings** → **Cloud Storage** → **Add Source Storage**
+2. **Storage Type** : Amazon S3
+3. **Configuration** :
+   - Storage Title : Un nom arbitraire
+   - Bucket Name: `labelstudio`
+   - Region Name: Laissez par défaut
+   - S3 Endpoint: http://minio:9000
+   - Access Key ID: minioadmin
+   - Secret Access Key: minioadmin123
+   - **Use pre-signed URLs** : ☐ **DÉCOCHER** (important!)
+Dans "Import Settings & Preview", faites File Filter Regex: `.*\.(mp3|wav|m4a|ogg|flac)$`
+4. **Add Storage** puis **Sync Storage**
+
+**Option B : Upload direct (petit fichiers)**
+
+1. Dans Label Studio, **Import**
+2. **Upload Files** → Sélectionner vos fichiers audio
+3. **Import**
+
+### **Étape 5 : Obtenir les prédictions**
+
+**Les prédictions se génèrent automatiquement** quand vous :
+- Ouvrez une tâche pour la première fois
+- Cliquez sur le bouton "Get predictions" dans l'interface
+
+Vous devriez voir :
+- 🟢 Des régions colorées sur la timeline audio
+- 📝 Des transcriptions pour les segments de parole
+- 🔢 Un score de confiance pour chaque prédiction
+
+## 📝 Template Label Studio
+
+### **Template avancé avec métadonnées**
+
+```xml
+<View>
+  <Header value="Segmentation et Transcription Audio"/>
+  
+  <!-- Lecteur audio avec contrôles -->
+  <Audio 
+    name="audio" 
+    value="$audio" 
+    speed="true" 
+    volume="true" 
+    zoom="true"
+    hotkey="ctrl+space"/>
+  
+  <!-- Labels de classification (MULTIPLE car plusieurs segments) -->
+  <Header value="Classification des segments"/>
+  <Labels name="label" toName="audio">
+    <Label value="speech" background="#4CAF50" hotkey="s"/>
+    <Label value="noise" background="#FF9800" hotkey="n"/>
+    <Label value="silence" background="#9E9E9E" hotkey="i"/>
+  </Labels>
+  
+  <!-- Zone de transcription (liée aux segments audio) -->
+  <Header value="Transcription"/>
+  <TextArea 
+    name="transcription" 
+    toName="audio"
+    editable="true"
+    perRegion="true"
+    rows="3"
+    maxSubmissions="0"
+    placeholder="Transcription du segment (générée automatiquement par Whisper)"/>
+  
+  <!-- Métadonnées optionnelles par segment -->
+  <View visibleWhen="region-selected">
+    <Header value="Qualité du segment (optionnel)"/>
+    <Choices name="quality" toName="audio" perRegion="true" choice="single">
+      <Choice value="Bonne qualité" hotkey="g"/>
+      <Choice value="Qualité moyenne" hotkey="f"/>
+      <Choice value="Mauvaise qualité" hotkey="p"/>
+    </Choices>
+    
+    <Header value="Notes"/>
+    <TextArea 
+      name="notes" 
+      toName="audio" 
+      perRegion="true"
+      rows="2"
+      placeholder="Commentaires sur ce segment..."/>
+  </View>
+</View>
+```
+
+## 🔍 Vérification et débogage
+
+### **Script de vérification automatique**
+
+Créez un fichier `check_setup.sh` :
+
+```bash
+#!/bin/bash
+
+echo "🔍 Vérification de la configuration Label Studio Audio ML"
+echo "=========================================================="
+
+# Couleurs
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+check_service() {
+    local name=$1
+    local url=$2
+    local expected=$3
+    
+    echo -n "Checking $name... "
+    response=$(curl -s -o /dev/null -w "%{http_code}" $url)
+    
+    if [ "$response" -eq "$expected" ]; then
+        echo -e "${GREEN}✓ OK${NC} (HTTP $response)"
+    else
+        echo -e "${RED}✗ FAIL${NC} (HTTP $response, expected $expected)"
+    fi
+}
+
+echo ""
+echo "1️⃣  Services HTTP"
+echo "-------------------"
+check_service "MinIO" "http://localhost:9000/minio/health/live" 200
+check_service "ML Backend" "http://localhost:9090/health" 200
+check_service "Label Studio" "http://localhost:8080" 200
+
+echo ""
+echo "2️⃣  Redis"
+echo "-------------------"
+docker-compose exec -T redis redis-cli ping > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo -e "${GREEN}✓ Redis OK${NC}"
+else
+    echo -e "${RED}✗ Redis FAIL${NC}"
+fi
+
+echo ""
+echo "3️⃣  MinIO Bucket"
+echo "-------------------"
+docker-compose exec -T minio mc ls myminio/labelstudio > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo -e "${GREEN}✓ Bucket 'labelstudio' exists${NC}"
+    file_count=$(docker-compose exec -T minio mc ls myminio/labelstudio | wc -l)
+    echo "   Files in bucket: $file_count"
+else
+    echo -e "${RED}✗ Bucket 'labelstudio' not found${NC}"
+fi
+
+echo ""
+echo "4️⃣  ML Backend Connection"
+echo "-------------------"
+# Test depuis le conteneur Label Studio
+docker-compose exec -T labelstudio curl -s http://ml-backend:9090/health > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo -e "${GREEN}✓ Label Studio can reach ML Backend${NC}"
+else
+    echo -e "${RED}✗ Label Studio cannot reach ML Backend${NC}"
+fi
+
+echo ""
+echo "5️⃣  Test de prédiction"
+echo "-------------------"
+# Créer un fichier de test
+cat > /tmp/test_predict.json << 'EOF'
+{
+  "tasks": [{
+    "id": 999,
+    "data": {
+      "audio": "http://minio:9000/labelstudio/test.wav"
+    }
+  }]
+}
+EOF
+
+response=$(curl -s -X POST http://localhost:9090/predict \
+  -H "Content-Type: application/json" \
+  -d @/tmp/test_predict.json)
+
+if echo "$response" | grep -q "result"; then
+    echo -e "${GREEN}✓ ML Backend responds to /predict${NC}"
+else
+    echo -e "${RED}✗ ML Backend /predict failed${NC}"
+    echo "   Response: $response"
+fi
+
+echo ""
+echo "=========================================================="
+echo "🏁 Vérification terminée"
+```
+
+Rendez-le exécutable et lancez-le :
+
+```bash
+chmod +x check_setup.sh
+./check_setup.sh
+```
+
+### **Vérifier les logs en temps réel**
+
+```bash
+# Logs du ML Backend (le plus important)
+docker-compose logs -f ml-backend
+
+# Logs de tous les services
+docker-compose logs -f
+
+# Logs d'un service spécifique
+docker-compose logs -f labelstudio
+docker-compose logs -f minio
+```
+
+### **Tester manuellement les prédictions**
+
+```bash
+# Créer un fichier de test
+cat > test_predict.json << 'EOF'
+{
+  "tasks": [{
+    "id": 1,
+    "data": {
+      "audio": "http://minio:9000/labelstudio/votre-fichier.mp3"
+    }
+  }]
+}
+EOF
+
+# Appeler l'API
+curl -X POST http://localhost:9090/predict \
+  -H "Content-Type: application/json" \
+  -d @test_predict.json | jq
+
+# La réponse devrait contenir des "result" avec les segments
+```
+
+### **Inspecter les connexions réseau**
+
+```bash
+# Vérifier que les conteneurs sont sur le même réseau
+docker network inspect label_studio_network
+
+# Tester la connectivité inter-conteneurs
+docker-compose exec ml-backend ping -c 3 minio
+docker-compose exec ml-backend ping -c 3 labelstudio
+docker-compose exec labelstudio ping -c 3 ml-backend
+```
+
+## 🐛 Troubleshooting
+
+### **Problème : "Cannot connect to ML Backend"**
+
+**Symptômes** : Label Studio ne peut pas se connecter au ML Backend
+
+**Solutions** :
+
+```bash
+# 1. Vérifier que le ML Backend est en cours d'exécution
+docker-compose ps ml-backend
+# Devrait être "Up" et "healthy"
+
+# 2. Vérifier les logs
+docker-compose logs --tail=50 ml-backend
+
+# 3. Tester depuis Label Studio
+docker-compose exec labelstudio curl http://ml-backend:9090/health
+
+# 4. Redémarrer le ML Backend
+docker-compose restart ml-backend
+
+# 5. Reconstruire si nécessaire
+docker-compose up -d --build ml-backend
+```
+
+**Dans Label Studio**, utilisez bien l'URL : `http://ml-backend:9090` (pas localhost!)
+
+### **Problème : Les prédictions sont vides**
+
+**Symptômes** : La connexion fonctionne mais aucun segment n'apparaît
+
+**Diagnostic** :
+
+```bash
+# 1. Vérifier les logs du ML Backend lors d'une prédiction
+docker-compose logs -f ml-backend
+
+# Vous devriez voir :
+# - "PREDICT called with X tasks"
+# - "Downloaded to: /tmp/..."
+# - "Converted to WAV: ..."
+# - "Generated X segments"
+
+# 2. Vérifier que le fichier audio est accessible
+# Essayer de télécharger manuellement
+docker-compose exec ml-backend curl -I http://minio:9000/labelstudio/votre-fichier.mp3
+```
+
+**Solutions** :
+
+1. **Si le téléchargement échoue** :
+   - Vérifier que le fichier existe dans MinIO
+   - Vérifier les permissions du bucket
+   - Désactiver "Use pre-signed URLs" dans la config S3
+
+2. **Si le fichier est téléchargé mais vide** :
+   - Vérifier le format du fichier audio
+   - Essayer de convertir en WAV avant upload
+
+3. **Si le traitement échoue** :
+   ```bash
+   # Entrer dans le conteneur
+   docker-compose exec ml-backend bash
+   
+   # Installer ffmpeg si manquant
+   apt-get update && apt-get install -y ffmpeg
+   
+   # Tester la conversion
+   python -c "from pydub import AudioSegment; AudioSegment.from_file('test.mp3')"
+   ```
+
+### **Problème : "Use pre-signed URLs" cause des erreurs**
+
+**Symptômes** : Erreur 403 ou fichiers inaccessibles
+
+**Solution** : **TOUJOURS décocher** cette option dans la configuration S3 de Label Studio
+
+Dans **Settings** → **Cloud Storage** → Votre source S3 :
+- ☐ **Use pre-signed URLs** : **DÉCOCHER**
+
+Puis **Sync Storage** à nouveau.
+
+### **Problème : Transcriptions vides ou "..."**
+
+**Causes possibles** :
+1. Le modèle Whisper n'est pas chargé
+2. Le segment est trop court
+3. La qualité audio est mauvaise
+4. La langue détectée est incorrecte
+
+**Solutions** :
+
+```python
+# Dans audio_segmenter.py, ligne 35, essayer un modèle plus gros
+model_id = "openai/whisper-small"  # Au lieu de whisper-tiny
+
+# Forcer la langue dans la transcription (ligne 215)
+predicted_ids = self.asr_model.generate(
+    input_features,
+    language="fr",  # Ou "en" selon vos besoins
+    max_length=225
+)
+```
+
+### **Problème : Mémoire insuffisante**
+
+**Symptômes** : Le conteneur ML Backend crash ou devient très lent
+
+**Solutions** :
+
+```yaml
+# Dans compose.yml, augmenter les limites
+ml-backend:
+  mem_limit: 8g        # Au lieu de 6g
+  mem_reservation: 6g  # Au lieu de 4g
+```
+
+Ou utiliser un modèle plus léger :
+
+```python
+# Dans audio_segmenter.py
+model_id = "openai/whisper-tiny"  # Le plus léger (39M params)
+```
+
+### **Problème : URLs localhost au lieu des noms Docker**
+
+**Symptômes** : Erreur "Connection refused" dans les logs
+
+**Cause** : Les services utilisent `localhost` au lieu des noms de conteneurs
+
+**Solution** : Le code dans `utils.py` convertit automatiquement, mais vérifiez :
+
+```python
+# Dans utils.py, ligne 24-27
+url = url.replace('localhost:9000', 'minio:9000')
+url = url.replace('localhost:8080', 'labelstudio:8080')
+```
+
+### **Problème : Fichiers audio corrompus**
+
+**Symptômes** : Erreur lors de la conversion WAV
+
+**Diagnostic** :
+
+```bash
+# Vérifier le fichier
+docker-compose exec ml-backend bash
+cd /tmp/label_studio_audio
+ls -lh
+
+# Essayer de lire avec ffprobe
+ffprobe audio_1.mp3
+```
+
+**Solution** :
+
+```bash
+# Reconvertir avec ffmpeg
+ffmpeg -i input.mp3 -ar 16000 -ac 1 output.wav
+```
+
+## 🔧 Personnalisation
+
+### **Ajuster les seuils de segmentation**
+
+```python
+# Dans audio_segmenter.py, __init__
+self.silence_thresh = -50    # Plus sensible (détecte plus de parole)
+self.min_silence_len = 500   # Silence minimum plus long
+```
+
+### **Changer le modèle Whisper**
+
+```python
+# Dans audio_segmenter.py, load_models()
+model_id = "openai/whisper-base"   # 74M params, meilleur compromis
+# ou
+model_id = "openai/whisper-small"  # 244M params, meilleure qualité
+```
+
+### **Ajouter des langues**
+
+```python
+# Dans audio_segmenter.py
+self.languages = ["fr", "en", "es", "de"]  # Ajouter espagnol, allemand
+
+# Le modèle détecte automatiquement, ou forcez dans _transcribe_segment_whisper
+predicted_ids = self.asr_model.generate(
+    input_features,
+    language=None,  # Détection automatique
+    max_length=225
+)
+```
+
+### **Modifier les labels**
+
+```python
+# Dans model.py
+self.labels = ["speech", "noise", "silence", "music", "background"]
+```
+
+Et mettez à jour le template XML en conséquence.
+
+## 📊 Performance
+
+**Temps de traitement typiques** (avec whisper-tiny sur CPU) :
+- Audio de 1 minute : ~15-30 secondes
+- Audio de 5 minutes : ~60-90 secondes
+- Audio de 30 minutes : ~6-8 minutes
+
+**Avec GPU (CUDA)** : environ 5-10x plus rapide
+
+**Mémoire requise** :
+- whisper-tiny : 2-4 GB RAM
+- whisper-small : 4-6 GB RAM
+- whisper-medium : 8-10 GB RAM
+
+## 📁 Structure des fichiers
+
+```
+project/
+├── compose.yml              # Configuration Docker Compose
+├── ml-backend/
+│   ├── Dockerfile          # Image Python avec dépendances ML
+│   ├── requirements.txt    # Packages Python
+│   ├── _wsgi.py           # Point d'entrée Flask
+│   ├── model.py           # Modèle Label Studio ML
+│   ├── audio_segmenter.py # Logique de segmentation
+│   └── utils.py           # Utilitaires (download, convert)
+└── README.md              # Ce fichier
+```
+
+## 🔮 Roadmap
+
+- [x] Segmentation basique
+- [x] Classification speech/noise/silence
+- [x] Transcription avec Whisper
+- [x] Intégration Label Studio + MinIO
+- [ ] Support GPU pour accélération
+- [ ] Diarization (identification des locuteurs)
+- [ ] Détection d'émotions
+- [ ] Support de plus de langues
+- [ ] Batch processing asynchrone
+- [ ] Interface de monitoring
+
+## 📄 License
+
+Open-source - Utilisation libre
+
+## ❓ Support
+
+**En cas de problème** :
+
+1. Consultez les logs : `docker-compose logs -f ml-backend`
+2. Lancez le script de vérification : `./check_setup.sh`
+3. Vérifiez cette section de troubleshooting
+4. Testez manuellement l'API : `curl http://localhost:9090/predict`
+
+**Les logs du ML Backend sont très verbeux** et vous diront exactement où le problème se situe.
+
+---
+
+**Note** : Au premier démarrage, le ML Backend télécharge automatiquement le modèle Whisper (~150 MB pour whisper-tiny). Cette opération prend 2-5 minutes selon votre connexion Internet.

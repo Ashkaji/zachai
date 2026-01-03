@@ -1,0 +1,16 @@
+torch>=2.9.1
+torchaudio>=2.9.1
+transformers>=4.57.3
+pyannote-audio>=4.0.1
+librosa>=0.11.0
+pydub>=0.25.1
+openai-whisper>=20250625
+label-studio-ml @ git+https://github.com/HumanSignal/label-studio-ml-backend.git
+redis>=7.1.0
+requests>=2.32.5
+rq>=2.6.1
+numpy>=2.2.6
+scipy>=1.16.3
+soundfile>=0.13.1
+soxr>=1.0.0
+psutil>=5.9.0
