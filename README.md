@@ -7,7 +7,6 @@ Backend ML automatique pour Label Studio permettant la segmentation et la classi
 - [Démarrage rapide](#démarrage-rapide)
 - [Architecture](#architecture)
 - [Configuration complète](#configuration-complète)
-- [Template Label Studio](#template-label-studio)
 - [Vérification et débogage](#vérification-et-débogage)
 - [Troubleshooting](#troubleshooting)
 - [Personnalisation](#personnalisation)
@@ -292,5 +291,6 @@ Open-source - Utilisation libre
 
 
 **Note** : Au premier démarrage, le ML Backend télécharge automatiquement le modèle Whisper (~150 MB pour whisper-tiny). Cette opération prend 2-5 minutes selon votre connexion Internet.
+
 
 
