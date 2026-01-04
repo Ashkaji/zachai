@@ -28,10 +28,10 @@ Backend ML automatique pour Label Studio permettant la segmentation et la classi
 
 ```bash
 # Construire et démarrer tous les services
-docker-compose up --build -d
+docker compose up --build -d
 
 # Vérifier l'état des services
-docker-compose ps
+docker compose ps
 
 # Tous les services doivent être "Up" et "healthy"
 ```
@@ -652,3 +652,4 @@ Open-source - Utilisation libre
 
 
 **Note** : Au premier démarrage, le ML Backend télécharge automatiquement le modèle Whisper (~150 MB pour whisper-tiny). Cette opération prend 2-5 minutes selon votre connexion Internet.
+
