@@ -650,4 +650,5 @@ Open-source - Utilisation libre
 
 ---
 
+
 **Note** : Au premier démarrage, le ML Backend télécharge automatiquement le modèle Whisper (~150 MB pour whisper-tiny). Cette opération prend 2-5 minutes selon votre connexion Internet.
