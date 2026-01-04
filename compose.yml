@@ -50,6 +50,12 @@ services:
     container_name: redis
     ports:
       - "6379:6379"
+    command: redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - app_network
 
@@ -68,27 +74,32 @@ services:
       - RQ_QUEUE_NAME=default
       - LABEL_STUDIO_URL=http://labelstudio:8080
       - CUDA_VISIBLE_DEVICES=
+      # 🔥 NOUVEAUX: Timeouts augmentés pour gros fichiers
+      - PREDICTION_TIMEOUT=1800  # 30 minutes max par prédiction
+      - DOWNLOAD_TIMEOUT=300     # 5 minutes max pour téléchargement
     ports:
       - "9090:9090"
     volumes:
       - ./ml-backend:/app
       - ml_models:/app/models
+      - audio_temp:/tmp/label_studio_audio  # 🔥 FIX: Volume Docker au lieu de bind mount
     depends_on:
       redis:
-        condition: service_started
+        condition: service_healthy
       minio:
         condition: service_healthy
     networks:
       - app_network
-    mem_limit: 4g
-    mem_reservation: 2g
+    # 🔥 AUGMENTÉ: Limites mémoire pour gros fichiers
+    mem_limit: 8g        # 8 GB au lieu de 4 GB
+    mem_reservation: 4g  # 4 GB au lieu de 2 GB
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 120s  # Plus de temps pour charger les modèles
 
   labelstudio:
     image: heartexlabs/label-studio:latest
@@ -101,14 +112,15 @@ services:
       - LABEL_STUDIO_USERNAME=admin@example.com
       - LABEL_STUDIO_PASSWORD=admin123
       
-      # ML Backend - TIMEOUTS AUGMENTÉS POUR GROS FICHIERS
-      - LABEL_STUDIO_ML_TIMEOUT=600           # 10 minutes (était 60)
-      - LABEL_STUDIO_ML_RETRY_TIMEOUT=120     # 2 minutes (était 30)
-      - LABEL_STUDIO_ML_CONNECT_TIMEOUT=60    # 1 minute (était 30)
-      - LABEL_STUDIO_ML_TIMEOUT_PER_TASK=600  # 10 minutes (était 120)
-      - LABEL_STUDIO_ML_BACKEND_TIMEOUT=600
-      - LABEL_STUDIO_ML_TIMEOUT_SETUP=120
+      # 🔥 ML Backend - TIMEOUTS GROS FICHIERS (30 minutes!)
+      - LABEL_STUDIO_ML_TIMEOUT=1800          # 30 minutes (était 600)
+      - LABEL_STUDIO_ML_RETRY_TIMEOUT=300     # 5 minutes (était 120)
+      - LABEL_STUDIO_ML_CONNECT_TIMEOUT=120   # 2 minutes (était 60)
+      - LABEL_STUDIO_ML_TIMEOUT_PER_TASK=1800 # 30 minutes (était 600)
+      - LABEL_STUDIO_ML_BACKEND_TIMEOUT=1800
+      - LABEL_STUDIO_ML_TIMEOUT_SETUP=300
       - LABEL_STUDIO_ML_HEALTH_CHECK_TIMEOUT=120
+      
       # Configuration S3
       - LABEL_STUDIO_S3_ENDPOINT=http://minio:9000
       - LABEL_STUDIO_S3_ACCESS_KEY=minioadmin
@@ -129,6 +141,10 @@ services:
       # Désactiver le proxy pour les URLs S3
       - LABEL_STUDIO_DISABLE_S3_PROXY=true
       
+      # 🔥 NOUVEAUX: Limites upload pour gros fichiers
+      - LABEL_STUDIO_MAX_UPLOAD_SIZE=209715200  # 200 MB en bytes
+      - NGINX_CLIENT_MAX_BODY_SIZE=200m
+      
       # Debug
       - LABEL_STUDIO_LOG_LEVEL=INFO
     volumes:
@@ -140,6 +156,9 @@ services:
         condition: service_healthy
     networks:
       - app_network
+    # 🔥 Limites augmentées pour Label Studio aussi
+    mem_limit: 4g
+    mem_reservation: 2g
 
 volumes:
   minio_data:
@@ -148,8 +167,12 @@ volumes:
     driver: local
   ml_models:
     driver: local
+  audio_temp:  # 🔥 Nouveau volume pour fichiers temporaires audio
+    driver: local
 
 networks:
   app_network:
     driver: bridge
     name: label_studio_network
+    driver_opts:
+      com.docker.network.driver.mtu: 1500  # Fix potentiels problèmes réseau

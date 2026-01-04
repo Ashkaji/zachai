@@ -224,24 +224,6 @@ Vous devriez voir :
     rows="3"
     maxSubmissions="0"
     placeholder="Transcription du segment (générée automatiquement par Whisper)"/>
-  
-  <!-- Métadonnées optionnelles par segment -->
-  <View visibleWhen="region-selected">
-    <Header value="Qualité du segment (optionnel)"/>
-    <Choices name="quality" toName="audio" perRegion="true" choice="single">
-      <Choice value="Bonne qualité" hotkey="g"/>
-      <Choice value="Qualité moyenne" hotkey="f"/>
-      <Choice value="Mauvaise qualité" hotkey="p"/>
-    </Choices>
-    
-    <Header value="Notes"/>
-    <TextArea 
-      name="notes" 
-      toName="audio" 
-      perRegion="true"
-      rows="2"
-      placeholder="Commentaires sur ce segment..."/>
-  </View>
 </View>
 ```
 
