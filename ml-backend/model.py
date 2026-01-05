@@ -11,10 +11,17 @@ import psutil
 logger = logging.getLogger(__name__)
 
 class AudioSegmentationModel(LabelStudioMLBase):
+    """
+    Modèle de segmentation audio pour Label Studio
+    
+    - Détecte UNIQUEMENT les zones de parole (label "speech")
+    - Traitement en STREAMING pour gros fichiers (100MB+)
+    - Transcription progressive segment par segment
+    """
+    
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.max_segment_duration = 30.0
-        self.labels = ["speech", "noise", "silence"]
         
         logger.info("🚀 Initialisation du AudioSegmenter...")
         
@@ -22,10 +29,9 @@ class AudioSegmentationModel(LabelStudioMLBase):
         self.segmenter = AudioSegmenter(max_duration=self.max_segment_duration)
         
         # 🎯 CHARGER LES MODÈLES IMMÉDIATEMENT
-        logger.info("Chargement des modèles...")
+        logger.info("Chargement des modèles Whisper...")
         self.segmenter.load_models()
         
-        # Vérifier si les modèles sont chargés
         if self.segmenter.asr_model:
             logger.info("✅ Modèles chargés avec succès")
         else:
@@ -39,26 +45,30 @@ class AudioSegmentationModel(LabelStudioMLBase):
     
     def setup(self):
         """Setup minimal - rapide car modèles déjà chargés"""
-        self.set("model_version", "audio-segmentation-v1.1")
+        self.set("model_version", "audio-segmentation-v2.0-speech-only")
         logger.info("✅ Setup terminé - prêt à recevoir des requêtes")
         return {
             "model_version": self.get("model_version"),
             "status": "ready",
-            "message": "Modèles Whisper pré-chargés avec succès"
+            "message": "Modèles Whisper pré-chargés - Mode SPEECH ONLY"
         }
 
     def predict(self, tasks: List[Dict], context: Optional[Dict] = None, **kwargs):
         """
-        Prédictions - VERSION OPTIMISÉE GROS FICHIERS
+        Prédictions - VERSION STREAMING OPTIMISÉE
+        
+        🔥 CHANGEMENTS:
+        - Pas d'attente du chargement complet
+        - Traitement segment par segment
+        - Mémoire optimisée pour gros fichiers
         """
         logger.info("=" * 80)
         logger.info(f"🎯 PREDICT called with {len(tasks)} tasks")
         logger.info("=" * 80)
         
-        # Log mémoire initiale
         self._log_memory_usage("START")
         
-        # Récupérer l'API key depuis le contexte si disponible
+        # Récupérer l'API key
         api_key = None
         if context and 'access_token' in context:
             api_key = context['access_token']
@@ -82,7 +92,7 @@ class AudioSegmentationModel(LabelStudioMLBase):
                 logger.info(f"Task ID: {task_id}")
                 logger.info(f"Audio URL: {audio_url[:100]}...")
                 
-                # 🔥 ÉTAPE 1: Télécharger (avec streaming pour gros fichiers)
+                # 🔥 ÉTAPE 1: Télécharger (avec streaming)
                 logger.info("\n📥 Downloading audio...")
                 audio_path = download_audio_file(audio_url, task_id, api_key)
                 
@@ -97,7 +107,7 @@ class AudioSegmentationModel(LabelStudioMLBase):
                 
                 self._log_memory_usage("AFTER DOWNLOAD")
                 
-                # 🔥 ÉTAPE 2: Convertir en WAV (optimisé pour gros fichiers)
+                # 🔥 ÉTAPE 2: Convertir en WAV
                 logger.info("\n🔄 Converting to WAV...")
                 wav_path = convert_to_wav(audio_path)
                 
@@ -113,13 +123,17 @@ class AudioSegmentationModel(LabelStudioMLBase):
                 
                 self._log_memory_usage("AFTER CONVERSION")
                 
-                # 🔥 ÉTAPE 3: Segmentation et classification
-                logger.info("\n🎯 Segmenting and classifying...")
+                # 🔥 ÉTAPE 3: Segmentation STREAMING
+                logger.info("\n🎯 Segmenting and transcribing (STREAMING)...")
+                logger.info("    Les segments sont traités au fur et à mesure...")
+                
+                # Utiliser la version NON-STREAMING pour compatibilité Label Studio
+                # (qui attend une liste complète)
                 segments = self.segmenter.segment_and_classify(wav_path)
                 
-                logger.info(f"✅ Generated {len(segments)} segments")
+                logger.info(f"✅ Generated {len(segments)} speech segments")
                 
-                # Log détaillé des segments
+                # Log détaillé
                 self._log_segment_summary(segments)
                 
                 self._log_memory_usage("AFTER SEGMENTATION")
@@ -136,9 +150,9 @@ class AudioSegmentationModel(LabelStudioMLBase):
                 
                 logger.info(f"✅ Prediction created with {len(result)} annotations")
                 
-                # 🔥 NETTOYAGE IMMÉDIAT + GARBAGE COLLECTION
+                # 🔥 NETTOYAGE IMMÉDIAT
                 self._cleanup_files([audio_path, wav_path])
-                gc.collect()  # Force garbage collection
+                gc.collect()
                 
                 self._log_memory_usage("AFTER CLEANUP")
                 
@@ -171,53 +185,31 @@ class AudioSegmentationModel(LabelStudioMLBase):
     def _convert_to_label_studio_format(self, segments: List[Dict]) -> List[Dict]:
         """
         Convertit les segments au format Label Studio
-        🔥 VERSION CORRIGÉE: Labels ET transcriptions dans une seule région
+        
+        🔥 VERSION SANS LABELS - Les régions sont créées SANS label prédéfini
+        L'utilisateur cliquera pour ajouter ses propres labels selon son projet
         """
         results = []
         
         for i, segment in enumerate(segments):
-            label = segment['label']
-            region_id = f"region_{i}"
+            # 🔥 UNE SEULE ANNOTATION PAR SEGMENT
+            # Pas de label prédéfini - juste la transcription dans une région
             
-            # 🔥 IMPORTANT: Créer UNE SEULE région avec le label
-            region = {
-                'id': region_id,
-                'from_name': 'label',
+            annotation = {
+                'id': f"region_{i}",
+                'from_name': 'transcription',  # Lié au <TextArea name="transcription">
                 'to_name': 'audio',
-                'type': 'labels',
+                'type': 'textarea',
+                'origin': 'manual',
                 'value': {
                     'start': segment['start'],
                     'end': segment['end'],
-                    'labels': [label]
+                    'text': [segment.get('transcription', '')]
                 },
                 'score': segment.get('confidence', 0.8)
             }
             
-            results.append(region)
-            
-            # 🔥 FIX CRITIQUE: Transcription attachée à la MÊME région
-            # Utiliser 'origin' pour lier la transcription à la région du label
-            if label == 'speech' and segment.get('transcription'):
-                transcription = {
-                    'id': f"trans_{i}",
-                    'from_name': 'transcription',
-                    'to_name': 'audio',
-                    'type': 'textarea',
-                    'origin': 'manual',  # Important pour Label Studio
-                    'value': {
-                        'start': segment['start'],
-                        'end': segment['end'],
-                        'text': [segment['transcription']]
-                    }
-                }
-                
-                results.append(transcription)
-            
-            # Debug: Log si on a une incohérence
-            if label == 'silence' and segment.get('transcription'):
-                logger.warning(f"⚠️ Segment {i}: silence has transcription (should not happen!)")
-            if label == 'noise' and segment.get('transcription'):
-                logger.warning(f"⚠️ Segment {i}: noise has transcription (should not happen!)")
+            results.append(annotation)
         
         return results
     
@@ -235,7 +227,7 @@ class AudioSegmentationModel(LabelStudioMLBase):
             try:
                 if path and os.path.exists(path):
                     os.remove(path)
-                    logger.debug(f"🗑️  Removed: {path}")
+                    logger.debug(f"🗑️ Removed: {path}")
             except Exception as e:
                 logger.debug(f"Could not remove {path}: {e}")
     
@@ -246,7 +238,6 @@ class AudioSegmentationModel(LabelStudioMLBase):
             mem_info = process.memory_info()
             mem_mb = mem_info.rss / 1024 / 1024
             
-            # Mémoire système
             vm = psutil.virtual_memory()
             system_used_mb = vm.used / 1024 / 1024
             system_percent = vm.percent
@@ -259,31 +250,30 @@ class AudioSegmentationModel(LabelStudioMLBase):
     
     def _log_segment_summary(self, segments: List[Dict]):
         """Log un résumé des segments générés"""
-        speech_count = sum(1 for s in segments if s['label'] == 'speech')
-        noise_count = sum(1 for s in segments if s['label'] == 'noise')
-        silence_count = sum(1 for s in segments if s['label'] == 'silence')
+        if not segments:
+            logger.info("\n📊 SEGMENT SUMMARY: Aucun segment de parole détecté")
+            return
         
-        # Durées totales
-        speech_duration = sum(s['end'] - s['start'] for s in segments if s['label'] == 'speech')
-        noise_duration = sum(s['end'] - s['start'] for s in segments if s['label'] == 'noise')
-        silence_duration = sum(s['end'] - s['start'] for s in segments if s['label'] == 'silence')
+        total_duration = sum(s['end'] - s['start'] for s in segments)
         
-        total_duration = speech_duration + noise_duration + silence_duration
+        # Langues détectées
+        languages = {}
+        for s in segments:
+            lang = s.get('language', 'unknown')
+            languages[lang] = languages.get(lang, 0) + 1
         
         logger.info(f"\n📊 SEGMENT SUMMARY:")
         logger.info(f"   Total segments: {len(segments)}")
-        logger.info(f"   Speech:  {speech_count:3d} segments ({speech_duration:6.1f}s = {100*speech_duration/total_duration:5.1f}%)")
-        logger.info(f"   Noise:   {noise_count:3d} segments ({noise_duration:6.1f}s = {100*noise_duration/total_duration:5.1f}%)")
-        logger.info(f"   Silence: {silence_count:3d} segments ({silence_duration:6.1f}s = {100*silence_duration/total_duration:5.1f}%)")
-        logger.info(f"   Total duration: {total_duration:.1f}s")
+        logger.info(f"   Total speech duration: {total_duration:.1f}s")
+        logger.info(f"   Average segment: {total_duration/len(segments):.1f}s")
+        logger.info(f"   Languages detected: {languages}")
         
         # Log quelques transcriptions d'exemple
-        speech_with_trans = [s for s in segments if s['label'] == 'speech' and s.get('transcription')]
-        if speech_with_trans:
-            logger.info(f"\n📝 Sample transcriptions:")
-            for i, seg in enumerate(speech_with_trans[:3], 1):
-                trans = seg['transcription'][:80]
-                logger.info(f"   {i}. [{seg['start']:.1f}s] ({seg.get('language', '?')}) {trans}...")
+        logger.info(f"\n📝 Sample transcriptions:")
+        for i, seg in enumerate(segments[:3], 1):
+            trans = seg['transcription'][:80]
+            lang = seg.get('language', '?')
+            logger.info(f"   {i}. [{seg['start']:.1f}s] ({lang}) {trans}...")
     
     def fit(self, event, data, **kwargs):
         """Active Learning - pour plus tard"""
