@@ -329,7 +329,7 @@ Dans **Settings** → **Labeling Interface**, choisissez et collez le template a
 
 1. Dans votre projet, allez dans **Settings** → **Machine Learning**
 2. **Add Model** :
-   - **URL** : `http://ml-backend:9090`
+   - **URL** : `http://ml-pipeline:9090`
    - **Title** : `Audio Speech Detection`
    - **Description** : `Détection automatique des zones de parole + transcription`
 3. **Validate and Save**
@@ -542,7 +542,7 @@ predicted_ids = self.asr_model.generate(
 ### Augmenter les limites mémoire
 
 ```yaml
-# Dans compose.yml, service ml-backend
+# Dans compose.yml, service ml-pipeline
 mem_limit: 16g        # 16 GB au lieu de 8 GB
 mem_reservation: 8g   # 8 GB au lieu de 4 GB
 ```
@@ -553,14 +553,14 @@ mem_reservation: 8g   # 8 GB au lieu de 4 GB
 
 ```bash
 # Vérifier les logs
-docker-compose logs -f ml-backend
+docker-compose logs -f ml-pipeline
 
 # Cherchez :
 # ✅ "Modèle Whisper chargé avec succès!"
 # ❌ "ERREUR lors du chargement des modèles"
 ```
 
-**Solution** : Rebuilder avec `docker-compose build --no-cache ml-backend`
+**Solution** : Rebuilder avec `docker-compose build --no-cache ml-pipeline`
 
 ### Les prédictions sont vides
 
@@ -577,7 +577,7 @@ docker-compose logs -f ml-backend
 # Dans labelstudio service
 - LABEL_STUDIO_ML_TIMEOUT=3600  # 60 minutes au lieu de 30
 
-# Dans ml-backend service
+# Dans ml-pipeline service
 - PREDICTION_TIMEOUT=3600  # 60 minutes
 ```
 
@@ -597,7 +597,7 @@ docker-compose logs -f ml-backend
 
 ```bash
 # Monitorer la mémoire
-docker stats ml-backend
+docker stats ml-pipeline
 
 # Si proche de la limite :
 # 1. Augmenter mem_limit dans compose.yml
@@ -623,7 +623,7 @@ predicted_ids = self.asr_model.generate(
 ```
 project/
 ├── compose.yml              # Configuration Docker Compose
-├── ml-backend/
+├── ml-pipeline/
 │   ├── Dockerfile          # Image Python avec dépendances ML
 │   ├── requirements.txt    # Packages Python
 │   ├── download_models.py  # Script de pré-téléchargement Whisper
@@ -657,7 +657,7 @@ Open-source - Utilisation libre
 
 **En cas de problème** :
 
-1. Consultez les logs : `docker-compose logs -f ml-backend`
+1. Consultez les logs : `docker-compose logs -f ml-pipeline`
 2. Vérifiez la santé : `curl http://localhost:9090/health`
 3. Testez manuellement : `curl http://localhost:9090/setup`
 4. Consultez cette section de troubleshooting

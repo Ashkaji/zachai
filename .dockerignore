@@ -1,5 +1,5 @@
 # ============================================================================
-# .dockerignore - Configuration pour ml-backend
+# .dockerignore - Configuration pour ml-pipeline
 # ============================================================================
 
 # --- Python ---
@@ -22,10 +22,10 @@ ENV/
 # 1. Ils seront téléchargés pendant le build Docker (via download_models.py)
 # 2. Évite les conflits d'architecture (Mac M1/M2 vs Linux x86_64)
 # 3. Réduit la taille du contexte Docker
-ml-backend/models/*
-!ml-backend/models/.gitkeep
-ml-backend/.cache/
-ml-backend/huggingface/
+ml-pipeline/models/*
+!ml-pipeline/models/.gitkeep
+ml-pipeline/.cache/
+ml-pipeline/huggingface/
 *.bin
 *.safetensors
 *.onnx

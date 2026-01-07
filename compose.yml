@@ -59,11 +59,11 @@ services:
     networks:
       - app_network
 
-  ml-backend:
+  ml-pipeline:
     build:
-      context: ./ml-backend
+      context: ./ml-pipeline
       dockerfile: Dockerfile
-    container_name: ml-backend
+    container_name: ml-pipeline
     environment:
       - LOG_LEVEL=INFO
       - MODEL_DIR=/app/models
@@ -80,7 +80,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./ml-backend:/app
+      - ./ml-pipeline:/app
       - ml_models:/app/models
       - audio_temp:/tmp/label_studio_audio  # 🔥 FIX: Volume Docker au lieu de bind mount
     depends_on:
@@ -152,7 +152,7 @@ services:
     depends_on:
       minio:
         condition: service_healthy
-      ml-backend:
+      ml-pipeline:
         condition: service_healthy
     networks:
       - app_network
