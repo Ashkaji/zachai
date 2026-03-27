@@ -1,0 +1,120 @@
+# generated: 2026-03-19
+# last_updated: 2026-03-27
+# project: zachai
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: .bmad-outputs/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog -> in-progress: Automatically when first story is created (via create-story)
+#   - in-progress -> done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# SPRINT MAPPING (from brainstorming session 2026-03-27):
+# =======================================================
+# Sprint 1 (Layer 0 — zéro dépendance):
+#   Epic 1 Stories 1.1, 1.2 + Epic 3 Story 3.1
+# Sprint 2 (Layer 1 — débloqué par Sprint 1):
+#   Epic 1 Story 1.3 + Epic 3 Story 3.2
+# Sprint 3 (Layer 2 — déblocage métier):
+#   Epic 2 Story 2.1 + Epic 3 Story 3.3 + Epic 5 Story 5.2
+# Sprint 4 (Layer 3 — convergence BPMN):
+#   Epic 2 Stories 2.2, 2.3 + Epic 4 Story 4.1
+# Sprint 5 (Layer 4 — collaboration & Golden Set):
+#   Epic 4 Story 4.2 + Epic 5 Stories 5.1, 5.3, 5.4, 5.5
+# Sprint 6 (Layer 5-6 — Flywheel & interface complète):
+#   Epic 2 Story 2.4 + Epic 4 Stories 4.3, 4.4 + Epic 6 + Epic 7
+
+generated: 2026-03-19
+last_updated: 2026-03-27
+project: zachai
+project_key: NOKEY
+tracking_system: file-system
+story_location: .bmad-outputs/implementation-artifacts
+
+development_status:
+
+  # ─── EPIC 1 — Socle Infrastructure & Identité (Sprint 1-2) ───────────────
+  epic-1: backlog
+  # Sprint 1
+  1-1-minio-bootstrap-bucket-structure: backlog
+  1-2-keycloak-multi-roles: backlog
+  # Sprint 2
+  1-3-presigned-url-engine-fastapi: backlog
+  epic-1-retrospective: optional
+
+  # ─── EPIC 2 — Gestion Dynamique des Projets (Sprint 3-6) ─────────────────
+  epic-2: backlog
+  # Sprint 3
+  2-1-crud-natures-label-schemas: backlog
+  # Sprint 4 (CONVERGENCE)
+  2-2-project-creation-label-studio-provisioning: backlog
+  2-3-audio-upload-ffmpeg-normalization: backlog
+  # Sprint 6
+  2-4-assignment-dashboard: backlog
+  epic-2-retrospective: optional
+
+  # ─── EPIC 3 — Pipeline d'Inférence Haute Performance (Sprint 1-3) ────────
+  epic-3: backlog
+  # Sprint 1
+  3-1-ffmpeg-worker-normalization-batch: backlog
+  # Sprint 2
+  3-2-openvino-whisper-inference-preannotation: backlog
+  # Sprint 3
+  3-3-model-registry-hot-reload: backlog
+  epic-3-retrospective: optional
+
+  # ─── EPIC 4 — Flywheel d'Apprentissage Continu (Sprint 4-6) ──────────────
+  epic-4: backlog
+  # Sprint 4
+  4-1-golden-set-expert-loop-label-studio-webhook: backlog
+  # Sprint 5
+  4-2-golden-set-user-loop-frontend-corrections: backlog
+  # Sprint 6
+  4-3-lora-finetuning-auto-trigger-camunda: backlog
+  4-4-lora-pipeline-dataset-training-validation-deploy: backlog
+  epic-4-retrospective: optional
+
+  # ─── EPIC 5 — Éditeur Collaboratif Souverain (Sprint 3-5) ────────────────
+  epic-5: backlog
+  # Sprint 3
+  5-2-secure-wss-handshake-ticket-redis: backlog
+  # Sprint 5
+  5-1-realtime-sync-hocuspocus-yjs: backlog
+  5-3-bidirectional-audio-text-sync: backlog
+  5-4-automatic-snapshot-persistence: backlog
+  5-5-realtime-grammar-check-languagetool: backlog
+  epic-5-retrospective: optional
+
+  # ─── EPIC 6 — Chaîne de Validation & Gouvernance (Sprint 6) ──────────────
+  epic-6: backlog
+  # Sprint 6
+  6-1-transcripteur-submission: backlog
+  6-2-manager-approval-rejection: backlog
+  6-3-project-closure-golden-set-archival: backlog
+  epic-6-retrospective: optional
+
+  # ─── EPIC 7 — Export & Extensions Plateforme (Sprint 6-7) ────────────────
+  epic-7: backlog
+  # Sprint 6-7
+  7-1-export-docx-txt-srt: backlog
+  7-2-whisper-open-api: backlog
+  7-3-biblical-citation-detection: backlog
+  epic-7-retrospective: optional
