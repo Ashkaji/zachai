@@ -61,7 +61,7 @@ Voir [`docs/architecture.md`](docs/architecture.md) pour le diagramme de flux co
 ### Lancement
 
 ```bash
-git clone https://github.com/<votre-org>/zachai.git
+git clone https://github.com/Ashkaji/zachai.git
 cd zachai
 docker compose up -d
 ```
@@ -74,6 +74,47 @@ L'ordre de démarrage est géré automatiquement via les health checks Docker Co
 - MinIO Console : `http://localhost:9001`
 - Keycloak Admin : `http://localhost:8180`
 - Label Studio : `http://localhost:8090`
+
+---
+
+## Collaboration avec Assistants IA
+
+Ce projet est conçu pour être développé avec l'assistance de **Gemini CLI** (Google) et **Claude Code** (Anthropic).
+
+### Installation des outils
+
+1.  **Gemini CLI** (nécessite Node.js)
+    ```bash
+    npm install -g @google/gemini-cli
+    gemini login
+    ```
+
+2.  **Claude Code** (nécessite Node.js)
+    ```bash
+    npm install -g @anthropic-ai/claude-code
+    claude login
+    ```
+
+### Prise en main collaborative
+
+Une fois installé, vous devez lancer une session interactive depuis la racine du repo pour interagir avec le projet :
+
+- **Avec Gemini :**
+  ```bash
+  gemini
+  # Une fois dans la session :
+  > "analyse le projet et propose la prochaine tâche"
+  > /bmad-help
+  ```
+- **Avec Claude :**
+  ```bash
+  claude
+  # Une fois dans la session :
+  > "expliquer docs/architecture.md"
+  > /bmad-help
+  ```
+
+Le projet utilise la méthodologie **BMad** (Build Modality with Agentic Design). Pour plus de détails sur la méthode, consultez la [documentation officielle BMad](https://docs.bmad-method.org/).
 
 ---
 
@@ -109,10 +150,14 @@ Suivi de sprint : [`.bmad-outputs/implementation-artifacts/sprint-status.yaml`](
 ## Contribuer
 
 Ce projet utilise la méthodologie **BMad** pour la conception et le suivi du développement.
+Consultez la [documentation de la méthode BMAD](https://docs.bmad-method.org/) pour en savoir plus.
 
 ```bash
+# Lancer une session interactive (ex: gemini)
+gemini
+
 # Voir où en est le projet et quoi faire ensuite
-/bmad-help
+> /bmad-help
 ```
 
 Les artefacts de conception sont dans `docs/`. Les stories prêtes pour développement sont dans `.bmad-outputs/implementation-artifacts/`.
