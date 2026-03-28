@@ -50,11 +50,33 @@ Voir [`docs/architecture.md`](docs/architecture.md) pour le diagramme de flux co
 
 ---
 
+## Structure du Projet
+
+```
+zachai/
+├── docs/                        ← Documentation (PRD, Architecture, UX, API, Epics)
+├── src/
+│   ├── compose.yml              ← Orchestration Docker (point d'entrée du stack)
+│   ├── .env.example             ← Variables d'environnement (copier en .env)
+│   ├── bpmn/                    ← Workflows BPMN Camunda 7
+│   └── services/                ← Code source des services custom
+│       ├── api/                 ← FastAPI Gateway
+│       ├── ffmpeg-worker/       ← Normalisation audio
+│       ├── openvino/            ← Inférence Whisper
+│       ├── camunda-workers/     ← External Task Workers Python
+│       ├── hocuspocus/          ← Serveur collaboration temps-réel
+│       ├── export-worker/       ← Export DOCX/JSON
+│       └── frontend/            ← Interface React + Tiptap
+└── .gitignore
+```
+
+---
+
 ## Démarrage Rapide
 
 ### Prérequis
 
-- Docker + Docker Compose
+- Docker + Docker Compose V2
 - 16 Go RAM minimum (LanguageTool + OpenVINO sont RAM-intensifs)
 - Accélération Intel recommandée pour OpenVINO
 
@@ -62,11 +84,12 @@ Voir [`docs/architecture.md`](docs/architecture.md) pour le diagramme de flux co
 
 ```bash
 git clone https://github.com/Ashkaji/zachai.git
-cd zachai
+cd zachai/src
+cp .env.example .env   # puis éditer les credentials si nécessaire
 docker compose up -d
 ```
 
-L'ordre de démarrage est géré automatiquement via les health checks Docker Compose (voir [`docs/architecture.md`](docs/architecture.md) section 6).
+L'ordre de démarrage est géré automatiquement via les health checks (voir [`docs/architecture.md`](docs/architecture.md) section 6).
 
 **Interfaces disponibles après démarrage :**
 - Frontend : `http://localhost:3000`
