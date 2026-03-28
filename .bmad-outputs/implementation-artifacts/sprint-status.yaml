@@ -1,5 +1,5 @@
 # generated: 2026-03-19
-# last_updated: 2026-03-27
+# last_updated: 2026-03-28
 # project: zachai
 # project_key: NOKEY
 # tracking_system: file-system
@@ -43,7 +43,7 @@
 #   Epic 2 Story 2.4 + Epic 4 Stories 4.3, 4.4 + Epic 6 + Epic 7
 
 generated: 2026-03-19
-last_updated: 2026-03-27
+last_updated: 2026-03-28
 project: zachai
 project_key: NOKEY
 tracking_system: file-system
@@ -55,7 +55,7 @@ development_status:
   epic-1: in-progress
   # Sprint 1
   1-1-minio-bootstrap-bucket-structure: done
-  1-2-keycloak-multi-roles: backlog
+  1-2-keycloak-multi-roles: done
   # Sprint 2
   1-3-presigned-url-engine-fastapi: backlog
   epic-1-retrospective: optional

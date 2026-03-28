@@ -1,6 +1,6 @@
 # ZachAI — Plateforme de Connaissance Ministérielle
 
-ZachAI est une plateforme 100% open-source de transcription et d'archivage audio pour la CMCI (Centre Missionnaire Chrétien International). Elle transforme des milliers d'heures d'enseignements audio/vidéo en transcriptions publiables via un pipeline collaboratif alimentant un Flywheel ASR qui améliore continuellement le modèle Whisper fine-tuné sur le vocabulaire CMCI.
+ZachAI est une plateforme 100% open-source de transcription et d'archivage audio pour la CMCI (Communauté Missionnaire Chrétienne Internationale). Elle transforme des milliers d'heures d'enseignements audio/vidéo en transcriptions publiables via un pipeline collaboratif alimentant un Flywheel ASR qui améliore continuellement le modèle Whisper fine-tuné sur le vocabulaire CMCI.
 
 **Déploiement : 100% local via Docker Compose. Aucune donnée ne quitte le serveur.**
 

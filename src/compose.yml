@@ -26,7 +26,7 @@ networks:
 
 volumes:
   minio_data:
-  # postgres_data:      # TODO: Story 1.2 (Keycloak depends on postgres)
+  postgres_data:        # Story 1.2 — shared PostgreSQL instance (keycloak + zachai + camunda DBs)
   # redis_data:         # TODO: Story 5.2 (Hocuspocus + WSS tickets)
 
 services:
@@ -86,11 +86,78 @@ services:
     restart: "no"
 
   # ── Layer 1: Identity & Persistence ──────────────────────────────────────────
-  # postgres:       # TODO: Story 1.2 — Single PostgreSQL instance shared by Keycloak (dedicated DB)
-  #                 #                   and ZachAI business model (dedicated DB). Depends on: (none).
-  # keycloak:       # TODO: Story 1.2 — OIDC/RBAC (Admin, Manager, Transcripteur, Expert roles).
-  #                 #                   Image: quay.io/keycloak/keycloak:latest. Port: 8180.
-  #                 #                   Depends on: postgres (service_healthy).
+  #
+  # PostgreSQL is the shared database instance. Three dedicated databases:
+  #   - keycloak  : IAM data (created by POSTGRES_DB env var — automatic)
+  #   - zachai    : Business model data (created by init.sql — Story 1.2)
+  #   - camunda   : Workflow engine data (TODO: Story 2.2 — activate in init.sql)
+  # Keycloak depends on postgres (service_healthy).
+
+  postgres:
+    image: postgres:16.4
+    container_name: zachai-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: keycloak    # primary DB — keycloak IAM data
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./config/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - zachai-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB:-keycloak}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1.4
+    # NOTE: Verify tag at https://quay.io/repository/keycloak/keycloak?tab=tags
+    # and update to latest stable release before first deployment.
+    container_name: zachai-keycloak
+    command: start-dev --import-realm
+    # start-dev: disables HTTPS enforcement — suitable for on-premise Docker Compose.
+    # --import-realm: imports JSON files from /opt/keycloak/data/import/ at startup.
+    #                 Skips silently if realm already exists (idempotent).
+    ports:
+      - "8180:8080"    # Keycloak admin UI + OIDC — http://localhost:8180
+      - "9002:9000"    # Keycloak management — http://localhost:9002/health (AC #2 compliance)
+      #                  NOTE: Port 9000 is reserved for MinIO S3 API.
+    environment:
+      # Admin bootstrap credentials (one-time — ignored if admin already exists)
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
+      # Database — connects to the 'keycloak' database in the shared postgres instance
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      # HTTP / hostname (dev mode — no HTTPS enforcement)
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      # Enable /health/ready endpoint on management port 9000
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ./config/realms/zachai-realm.json:/opt/keycloak/data/import/zachai-realm.json:ro
+    networks:
+      - zachai-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # Keycloak 26.x health endpoint is on management port 9000 (not 8080).
+      # The UBI8 micro base image has NO curl or wget — use bash /dev/tcp instead.
+      # start_period: 90s — Keycloak needs time for PostgreSQL schema migration on first run.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && printf 'GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && timeout 3 cat <&3 | grep -q UP || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
+    restart: unless-stopped
+
   # redis:          # TODO: Story 5.2 — WSS short-lived tickets (TTL 60s) + LanguageTool cache.
   #                 #                   Image: redis:7-alpine. Port: 6379. Depends on: (none).
 
