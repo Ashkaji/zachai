@@ -10,7 +10,16 @@
       "WebFetch(domain:pypi.org)",
       "Bash(pip show:*)",
       "Bash(pip install:*)",
-      "Bash(python -m pytest test_main.py -v)"
+      "Bash(python -m pytest test_main.py -v)",
+      "Bash(docker exec:*)",
+      "Bash(docker run:*)",
+      "Bash(docker restart:*)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec zachai-keycloak /opt/keycloak/bin/kcadm.sh config credentials \\\\\n  --server http://localhost:8080 --realm master --user admin --password changeme 2>&1)",
+      "Bash(curl:*)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec zachai-keycloak /opt/keycloak/bin/kcadm.sh config credentials --server http://localhost:8080 --realm master --user admin --password admin)",
+      "Bash(echo \"Exit: $?\")",
+      "Bash(grep -v \"^$\")",
+      "Bash(docker ps:*)"
     ]
   }
 }
