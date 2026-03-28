@@ -171,8 +171,37 @@ services:
   #                 #                   Port: 8000.
 
   # ── Layer 2: Compute & Inference ─────────────────────────────────────────────
-  # ffmpeg-worker:  # TODO: Story 3.1 — Audio normalization (→ 16kHz mono PCM).
-  #                 #                   Depends on: minio (service_healthy).
+
+  ffmpeg-worker:
+    build:
+      context: ./workers/ffmpeg-worker
+    container_name: zachai-ffmpeg-worker
+    environment:
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+    networks:
+      - zachai-network
+    depends_on:
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8765/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          memory: 512M
+    restart: unless-stopped
+    # Port 8765 is internal only — NOT mapped to host (architecture.md § 5 — Internal Shield)
+
   # openvino:       # TODO: Story 3.2 — Whisper ASR inference + hot-reload (polls models/latest every 60s).
   #                 #                   Depends on: minio (service_healthy).
   #                 #                   Internal only — NOT exposed publicly.

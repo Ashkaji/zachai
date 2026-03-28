@@ -4,7 +4,13 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:docs.camunda.org)",
-      "Bash(docker compose:*)"
+      "Bash(docker compose:*)",
+      "WebSearch",
+      "WebFetch(domain:docs.min.io)",
+      "WebFetch(domain:pypi.org)",
+      "Bash(pip show:*)",
+      "Bash(pip install:*)",
+      "Bash(python -m pytest test_main.py -v)"
     ]
   }
 }
