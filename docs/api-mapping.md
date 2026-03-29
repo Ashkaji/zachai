@@ -92,6 +92,22 @@ FastAPI ne manipule jamais les binaires — il orchestre les accès via Presigne
   - Body: `{audio_id, segment_start, segment_end, corrected_text, label?, source, weight}`
   - Action: Insère entrée + incrémente compteur + vérifie seuil → déclenche Camunda 7 si seuil atteint
 
+- **`POST /v1/golden-set/frontend-correction`** (Story 4.2)
+  - Auth: **Keycloak JWT** — rôle **Transcripteur** (ou **Admin** pour support). **Pas** de secret interne.
+  - Body: `{audio_id, segment_start, segment_end, original_text, corrected_text, label?, client_mutation_id?}`
+  - **Contrôles :**
+    - **403** si le `sub` JWT n'est pas `Assignment.transcripteur_id` pour `audio_id` (Admin exempté).
+    - **404** si `audio_id` inexistant.
+    - **409** si `AudioFile.status` ∉ `{assigned, in_progress}`.
+  - Le serveur force `source = "frontend_correction"`, `weight = "standard"` — les clients **ne doivent pas** envoyer ces champs.
+  - Idempotence optionnelle via `client_mutation_id` (UUID).
+  - Délègue à la même routine `persist_golden_set_entry` que Story 4.1.
+
+- **`GET /v1/audio-files/{audio_file_id}/transcription`** (Story 4.2)
+  - Auth: **Transcripteur** assigné ou **Admin**
+  - Retourne: `{ "segments": [{ "start", "end", "text", "confidence?" }] }`
+  - Tant que `POST /v1/callback/transcription` ne persiste pas de lignes, retourne `{ "segments": [] }` (200).
+
 - **`GET /v1/golden-set/status`**
   - Auth: Admin / Manager
   - Retourne: `{count, threshold, last_training_at, next_trigger_at}`

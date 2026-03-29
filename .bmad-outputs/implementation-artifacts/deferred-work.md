@@ -36,3 +36,21 @@
 - **`retired_engines` list growth**: successful hot-reloads append retired `WhisperEngine` instances without eviction; consider a maxlen or periodic cleanup after N reloads to cap memory/native handles in very long-lived workers (`src/workers/openvino-worker/main.py`).
 - **IR layout validation**: story AC3 mentions verifying OpenVINO IR layout; implementation validates via non-empty sync + `WhisperPipeline.load()` on reload failure path — optional explicit file manifest check deferred.
 - **`model_lock` scope**: single lock serializes all inference and blocks swap during long `transcribe` calls — intentional for safety; document operational expectation that reload may lag behind pointer updates under heavy ASR load (`src/workers/openvino-worker/main.py`).
+
+## Deferred from: code review of 4-1-golden-set-expert-loop-label-studio-webhook.md (2026-03-29)
+
+- **Auth verification as imperative calls, not FastAPI `Depends()`**: `verify_label_studio_webhook_secret` and `verify_golden_set_internal_secret` are called manually inside route handlers rather than injected via `Depends()`. Pre-existing pattern across the codebase.
+- **No request body size limit on webhook endpoint**: `/v1/callback/expert-validation` calls `await request.json()` with no body size restriction. FastAPI/Starlette defaults apply; operational hardening for a future story.
+- **Test env vars set globally via `os.environ.setdefault`**: Test secrets are set at module level, polluting process environment. Same pattern used by all prior stories.
+- **`source`/`weight` not validated at DB level**: DB columns are plain `String`; Pydantic validators are the only gate. Consistent with all other ORM models in the project.
+
+## Deferred from: code review of 4-2-golden-set-user-loop-frontend-corrections (2026-03-29)
+
+- **W1 — Expert webhook serializes N DB/MinIO round-trips**: `post_expert_validation_callback` calls `persist_golden_set_entry` in a serial loop; one annotation with many segments creates N full round-trips in a single HTTP request. Story 4.1 design; optimize with batch insert in future.
+- **W2 — No Alembic/migration tool**: Codebase relies on `Base.metadata.create_all` which won't add columns/indexes to existing tables. Pre-existing architectural choice.
+- **W3 — No rate limiting on correction endpoint**: `POST /v1/golden-set/frontend-correction` has no throttle or per-user rate limit. Infrastructure concern for future hardening.
+- **W4 — Redundant guard in `normalize_expert_validation_payload`**: `golden_set.py:208` — `if annotation is None and isinstance(body.get("annotation"), dict) is False` second clause is tautologically true when first is true. Story 4.1 helper code.
+- **W5 — LS project verification silently passes for unknown project**: When `label_studio_project_id_for_verify` is set but no Project row matches, verification passes silently. Story 4.1 code path.
+- **W6 — Frontend sequential correction submission**: `submitCorrections` fires N sequential `fetch` calls per debounce cycle; performance optimization for future story.
+- **W7 — `GOLDEN_SET_THRESHOLD` accepts 0 or negative**: threshold env var is parsed but never consumed until Story 4.3; validate range then.
+- **W8 — `api-mapping.md` describes Camunda trigger but code doesn't fire it**: pre-existing docs text; Camunda trigger is a Story 4.3 concern.

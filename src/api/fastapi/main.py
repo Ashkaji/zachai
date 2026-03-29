@@ -1,13 +1,17 @@
 """
-ZachAI FastAPI Gateway — Story 2.4: Assignment dashboard + FFmpeg semantics fix
-Extends Story 2.3: Audio upload + FFmpeg normalization (success leaves status `uploaded` + `normalized_path`).
-Adds: Assignment ORM, project status/assign endpoints, transcripteur task list, optional project audio summary.
+ZachAI FastAPI Gateway — Story 4.1: Golden Set expert loop (Label Studio webhook + internal ingest)
+Extends Story 2.4: Assignment dashboard + FFmpeg semantics fix.
+Adds GoldenSetEntry / GoldenSetCounter, POST /v1/golden-set/entry, POST /v1/callback/expert-validation.
 FastAPI never touches audio binary data — upload goes directly browser→MinIO.
 """
 import os
+import io
 import uuid
+import hmac
+import math
 import logging
 import html
+import time
 from contextlib import asynccontextmanager
 from datetime import timedelta, datetime, timezone
 from enum import Enum
@@ -23,14 +27,16 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError, ExpiredSignatureError
 from minio import Minio
 from minio.error import S3Error
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, selectinload
-from sqlalchemy import String, Boolean, Integer, Float, ForeignKey, DateTime, func, select, delete, Index, case
+from sqlalchemy import String, Boolean, Integer, Float, ForeignKey, DateTime, Text, func, select, delete, Index, case
 from sqlalchemy import UniqueConstraint
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.exc import IntegrityError
 from lxml import etree
+
+import golden_set
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -111,6 +117,26 @@ CAMUNDA_REST_URL: str = os.environ["CAMUNDA_REST_URL"]
 FFMPEG_WORKER_URL: str = os.environ["FFMPEG_WORKER_URL"].rstrip("/")
 
 camunda_client = httpx.AsyncClient(base_url=CAMUNDA_REST_URL, timeout=30.0)
+
+# Golden Set bucket (Story 4.1) — must exist (minio-init); default matches architecture.
+GOLDEN_SET_BUCKET: str = (os.environ.get("GOLDEN_SET_BUCKET") or "golden-set").strip() or "golden-set"
+_raw_threshold = os.environ.get("GOLDEN_SET_THRESHOLD", "1000")
+try:
+    GOLDEN_SET_THRESHOLD: int = int(_raw_threshold)
+except (TypeError, ValueError):
+    logger.warning("GOLDEN_SET_THRESHOLD=%r is not a valid integer; falling back to 1000", _raw_threshold)
+    GOLDEN_SET_THRESHOLD: int = 1000
+
+# Shared secrets — cached at startup (Story 4.1)
+_LABEL_STUDIO_WEBHOOK_SECRET: str = (os.environ.get("LABEL_STUDIO_WEBHOOK_SECRET") or "").strip()
+_GOLDEN_SET_INTERNAL_SECRET: str = (os.environ.get("GOLDEN_SET_INTERNAL_SECRET") or "").strip()
+_CHANGEME_PREFIXES = ("changeme",)
+if _LABEL_STUDIO_WEBHOOK_SECRET and _LABEL_STUDIO_WEBHOOK_SECRET.startswith(_CHANGEME_PREFIXES):
+    logger.warning("LABEL_STUDIO_WEBHOOK_SECRET uses a default 'changeme' value — override in production")
+if _GOLDEN_SET_INTERNAL_SECRET and _GOLDEN_SET_INTERNAL_SECRET.startswith(_CHANGEME_PREFIXES):
+    logger.warning("GOLDEN_SET_INTERNAL_SECRET uses a default 'changeme' value — override in production")
+
+_GOLDEN_SET_ACTIONS = frozenset({"ANNOTATION_CREATED", "ANNOTATION_UPDATED", "ANNOTATION_SUBMITTED"})
 
 # FFmpeg worker HTTP client — created in lifespan (real AsyncClient; tests avoid import-time mock issues)
 _ffmpeg_client: httpx.AsyncClient | None = None
@@ -255,6 +281,44 @@ class Assignment(Base):
     audio_file: Mapped["AudioFile"] = relationship("AudioFile", back_populates="assignment")
 
 
+class GoldenSetEntry(Base):
+    """One row per golden-set artifact (PostgreSQL) + matching MinIO JSON object (Story 4.1)."""
+
+    __tablename__ = "golden_set_entries"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    audio_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("audio_files.id", ondelete="CASCADE"), nullable=False
+    )
+    segment_start: Mapped[float] = mapped_column(Float, nullable=False)
+    segment_end: Mapped[float] = mapped_column(Float, nullable=False)
+    original_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    corrected_text: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    weight: Mapped[str] = mapped_column(String(32), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    minio_object_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    sha256_hex: Mapped[str] = mapped_column(String(64), nullable=False)
+    label_studio_task_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    label_studio_annotation_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_golden_set_entry_idempotency"),
+        Index("ix_golden_set_entries_audio_id", "audio_id"),
+    )
+
+
+class GoldenSetCounter(Base):
+    __tablename__ = "golden_set_counters"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=1000)
+    last_training_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 # ─── JWKS fetch ───────────────────────────────────────────────────────────────
 
 
@@ -329,6 +393,13 @@ async def lifespan(app: FastAPI):
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                r = await session.execute(select(GoldenSetCounter).where(GoldenSetCounter.id == 1))
+                if r.scalar_one_or_none() is None:
+                    session.add(
+                        GoldenSetCounter(id=1, count=0, threshold=GOLDEN_SET_THRESHOLD)
+                    )
         logger.info("Database tables initialized")
     except Exception as exc:
         logger.error(
@@ -358,9 +429,25 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="ZachAI Gateway",
-    description="Lean API gateway: presigned URLs, JWT, Nature CRUD, Project CRUD, audio upload, Camunda 7",
-    version="2.4.0",
+    description="Lean API gateway: presigned URLs, JWT, Nature CRUD, Project CRUD, audio upload, Golden Set, Camunda 7",
+    version="2.6.0",
     lifespan=lifespan,
+)
+
+# ─── CORS (Story 4.2 — frontend runs on different port in dev) ────────────
+from fastapi.middleware.cors import CORSMiddleware
+
+_CORS_ORIGINS = [
+    o.strip()
+    for o in (os.environ.get("CORS_ALLOWED_ORIGINS") or "http://localhost:5173,http://localhost:3000").split(",")
+    if o.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ─── Security ─────────────────────────────────────────────────────────────────
@@ -517,6 +604,74 @@ class AudioRegisterRequest(BaseModel):
 class AssignAudioRequest(BaseModel):
     audio_id: int = Field(..., gt=0)
     transcripteur_id: str = Field(..., min_length=1, max_length=255)
+
+
+class GoldenSetEntryRequest(BaseModel):
+    """Internal ingest contract — see docs/api-mapping.md §4."""
+
+    audio_id: int = Field(..., gt=0)
+    segment_start: float = Field(..., ge=0)
+    segment_end: float = Field(..., ge=0)
+    corrected_text: str = Field("", max_length=50000)
+    label: str | None = Field(None, max_length=512)
+    source: str = Field(..., max_length=64)
+    weight: str = Field(..., max_length=32)
+    original_text: str | None = Field(None, max_length=50000)
+    idempotency_key: str | None = Field(None, max_length=128)
+    label_studio_task_id: int | None = None
+    label_studio_annotation_id: int | None = None
+
+    @field_validator("segment_start", "segment_end")
+    @classmethod
+    def _finite(cls, v: float) -> float:
+        if not math.isfinite(v):
+            raise ValueError("segment boundaries must be finite numbers")
+        return v
+
+    @model_validator(mode="after")
+    def _start_le_end(self) -> "GoldenSetEntryRequest":
+        if self.segment_start > self.segment_end:
+            raise ValueError("segment_start must be <= segment_end")
+        return self
+
+    @field_validator("source")
+    @classmethod
+    def _source(cls, v: str) -> str:
+        if v not in ("label_studio", "frontend_correction"):
+            raise ValueError("source must be label_studio or frontend_correction")
+        return v
+
+    @field_validator("weight")
+    @classmethod
+    def _weight(cls, v: str) -> str:
+        if v not in ("high", "standard"):
+            raise ValueError("weight must be high or standard")
+        return v
+
+
+class FrontendCorrectionRequest(BaseModel):
+    """Browser-facing Golden Set capture (Story 4.2 AC1). Server forces source/weight."""
+
+    audio_id: int = Field(..., gt=0)
+    segment_start: float = Field(..., ge=0)
+    segment_end: float = Field(..., ge=0)
+    original_text: str = Field(..., min_length=1, max_length=50000)
+    corrected_text: str = Field(..., min_length=1, max_length=50000)
+    label: str | None = Field(None, max_length=512)
+    client_mutation_id: str | None = Field(None, max_length=128)
+
+    @field_validator("segment_start", "segment_end")
+    @classmethod
+    def _finite(cls, v: float) -> float:
+        if not math.isfinite(v):
+            raise ValueError("segment boundaries must be finite numbers")
+        return v
+
+    @model_validator(mode="after")
+    def _start_le_end(self) -> "FrontendCorrectionRequest":
+        if self.segment_start > self.segment_end:
+            raise ValueError("segment_start must be <= segment_end")
+        return self
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -701,6 +856,205 @@ def _audio_row_for_project_status(af: AudioFile) -> dict:
     row["assigned_to"] = asg.transcripteur_id if asg else None
     row["assigned_at"] = asg.assigned_at.isoformat() if asg else None
     return row
+
+
+def _default_golden_idempotency_key(body: GoldenSetEntryRequest) -> str:
+    parts = {
+        "audio_id": body.audio_id,
+        "s0": body.segment_start,
+        "s1": body.segment_end,
+        "t": body.corrected_text,
+        "label": body.label,
+        "source": body.source,
+        "weight": body.weight,
+        "lst": body.label_studio_task_id,
+        "lsa": body.label_studio_annotation_id,
+    }
+    return golden_set.idempotency_key_from_parts(parts)
+
+
+def _verify_shared_secret(
+    request: Request,
+    *,
+    expected_secret: str,
+    header_name: str,
+    unconfigured_msg: str,
+) -> None:
+    """Constant-time shared-secret verification (Story 4.1 AC2). Supports custom header or Bearer."""
+    if not expected_secret:
+        raise HTTPException(status_code=503, detail={"error": unconfigured_msg})
+    header_secret = request.headers.get(header_name)
+    bearer = request.headers.get("Authorization") or ""
+    bearer_token = bearer[7:].strip() if bearer.startswith("Bearer ") else None
+    candidates: list[str] = [c for c in (header_secret, bearer_token) if c]
+    if not candidates:
+        raise HTTPException(status_code=401, detail={"error": "Unauthorized"})
+    if not any(hmac.compare_digest(c.encode("utf-8"), expected_secret.encode("utf-8")) for c in candidates):
+        raise HTTPException(status_code=403, detail={"error": "Forbidden"})
+
+
+def verify_label_studio_webhook_secret(request: Request) -> None:
+    _verify_shared_secret(
+        request,
+        expected_secret=_LABEL_STUDIO_WEBHOOK_SECRET,
+        header_name="X-ZachAI-Webhook-Secret",
+        unconfigured_msg="Expert validation webhook is not configured",
+    )
+
+
+def verify_golden_set_internal_secret(request: Request) -> None:
+    _verify_shared_secret(
+        request,
+        expected_secret=_GOLDEN_SET_INTERNAL_SECRET,
+        header_name="X-ZachAI-Golden-Set-Internal-Secret",
+        unconfigured_msg="Golden set internal API is not configured",
+    )
+
+
+async def persist_golden_set_entry(
+    db: AsyncSession,
+    body: GoldenSetEntryRequest,
+    *,
+    label_studio_project_id_for_verify: int | None = None,
+) -> dict:
+    """
+    Durable Golden Set ingest: idempotent DB row + MinIO JSON + counter increment (Story 4.1).
+    Does not start Camunda (Story 4.3).
+    """
+    t0 = time.perf_counter()
+    ik = (body.idempotency_key or "").strip() or _default_golden_idempotency_key(body)
+
+    dup = await db.execute(select(GoldenSetEntry.id).where(GoldenSetEntry.idempotency_key == ik))
+    if dup.scalar_one_or_none() is not None:
+        ms = (time.perf_counter() - t0) * 1000.0
+        logger.info(
+            "golden_set audio_id=%s task_id=%s entries_written=0 idempotency_hit=1 minio_key=- duration_ms=%.0f",
+            body.audio_id,
+            body.label_studio_task_id,
+            ms,
+        )
+        return {"status": "ok", "idempotent": True, "idempotency_key": ik, "minio_object_key": None}
+
+    r = await db.execute(select(AudioFile).where(AudioFile.id == body.audio_id))
+    af = r.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
+
+    if label_studio_project_id_for_verify is not None:
+        pr = await db.execute(
+            select(Project).where(Project.label_studio_project_id == label_studio_project_id_for_verify)
+        )
+        proj = pr.scalar_one_or_none()
+        if proj is not None and proj.id != af.project_id:
+            raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
+
+    ts_prefix = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    entry_uuid = uuid.uuid4().hex[:12]
+    object_rel = f"{body.audio_id}/{ts_prefix}_{entry_uuid}.json"
+    core_payload = {
+        "audio_id": body.audio_id,
+        "segment_start": body.segment_start,
+        "segment_end": body.segment_end,
+        "original_text": body.original_text,
+        "corrected_text": body.corrected_text,
+        "label": body.label,
+        "source": body.source,
+        "weight": body.weight,
+        "label_studio_task_id": body.label_studio_task_id,
+        "label_studio_annotation_id": body.label_studio_annotation_id,
+        "idempotency_key": ik,
+    }
+    canonical_core = golden_set.canonical_json_bytes(core_payload)
+    digest = golden_set.sha256_hex(canonical_core)
+    artifact_obj = {**core_payload, "sha256": digest}
+    artifact_bytes = golden_set.canonical_json_bytes(artifact_obj)
+
+    try:
+        internal_client.put_object(
+            GOLDEN_SET_BUCKET,
+            object_rel,
+            io.BytesIO(artifact_bytes),
+            length=len(artifact_bytes),
+            content_type="application/json",
+            metadata={"sha256": digest},
+        )
+    except Exception as exc:
+        logger.error("golden_set MinIO put_object failed audio_id=%s: %s", body.audio_id, exc)
+        raise HTTPException(status_code=500, detail={"error": "Storage error during golden set write"})
+
+    minio_key = f"{GOLDEN_SET_BUCKET}/{object_rel}"
+    try:
+        entry = GoldenSetEntry(
+        audio_id=body.audio_id,
+        segment_start=body.segment_start,
+        segment_end=body.segment_end,
+        original_text=body.original_text,
+        corrected_text=body.corrected_text,
+        label=body.label,
+        source=body.source,
+        weight=body.weight,
+        idempotency_key=ik,
+        minio_object_key=minio_key,
+        sha256_hex=digest,
+        label_studio_task_id=body.label_studio_task_id,
+        label_studio_annotation_id=body.label_studio_annotation_id,
+    )
+        db.add(entry)
+
+        cr = await db.execute(
+            select(GoldenSetCounter).where(GoldenSetCounter.id == 1).with_for_update()
+        )
+        ctr = cr.scalar_one_or_none()
+        if ctr is None:
+            try:
+                ctr = GoldenSetCounter(id=1, count=0, threshold=GOLDEN_SET_THRESHOLD)
+                db.add(ctr)
+                await db.flush()
+            except IntegrityError:
+                await db.rollback()
+                cr2 = await db.execute(
+                    select(GoldenSetCounter).where(GoldenSetCounter.id == 1).with_for_update()
+                )
+                ctr = cr2.scalar_one()
+                db.add(entry)
+        ctr.count = GoldenSetCounter.count + 1
+
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        try:
+            internal_client.remove_object(GOLDEN_SET_BUCKET, object_rel)
+        except Exception:
+            logger.warning("golden_set orphan cleanup failed for %s (idempotency race)", object_rel)
+        ms = (time.perf_counter() - t0) * 1000.0
+        logger.info(
+            "golden_set audio_id=%s idempotency race; treating as duplicate duration_ms=%.0f",
+            body.audio_id,
+            ms,
+        )
+        return {"status": "ok", "idempotent": True, "idempotency_key": ik, "minio_object_key": minio_key}
+    except Exception:
+        await db.rollback()
+        try:
+            internal_client.remove_object(GOLDEN_SET_BUCKET, object_rel)
+        except Exception:
+            logger.warning("golden_set orphan cleanup failed for %s", object_rel)
+        raise
+
+    ms = (time.perf_counter() - t0) * 1000.0
+    logger.info(
+        "golden_set audio_id=%s task_id=%s entries_written=1 idempotency_hit=0 minio_key=%s duration_ms=%.0f",
+        body.audio_id,
+        body.label_studio_task_id,
+        minio_key,
+        ms,
+    )
+    return {
+        "status": "ok",
+        "idempotent": False,
+        "idempotency_key": ik,
+        "minio_object_key": minio_key,
+    }
 
 
 async def call_ffmpeg_normalize(db: AsyncSession, audio: AudioFile) -> None:
@@ -1527,3 +1881,222 @@ async def normalize_project_audio_on_demand(
     await call_ffmpeg_normalize(db, audio)
     await db.refresh(audio)
     return _audio_file_to_dict(audio)
+
+
+# ─── Routes — Golden Set (Story 4.1) ─────────────────────────────────────────
+
+
+@app.post("/v1/golden-set/entry")
+async def post_golden_set_entry(
+    request: Request,
+    body: GoldenSetEntryRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Internal ingest — service API key (not Keycloak). See docs/api-mapping.md §4."""
+    verify_golden_set_internal_secret(request)
+    return await persist_golden_set_entry(db, body)
+
+
+@app.post("/v1/golden-set/frontend-correction")
+async def post_golden_set_frontend_correction(
+    body: FrontendCorrectionRequest,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Browser-facing Golden Set capture — JWT auth (Transcripteur or Admin). Story 4.2."""
+    t0 = time.perf_counter()
+    roles = get_roles(payload)
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(status_code=401, detail={"error": "Subject missing in token"})
+    if not {"Transcripteur", "Admin"}.intersection(roles):
+        raise HTTPException(status_code=403, detail={"error": "Transcripteur or Admin role required"})
+
+    result = await db.execute(
+        select(AudioFile)
+        .where(AudioFile.id == body.audio_id)
+        .options(selectinload(AudioFile.assignment))
+    )
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
+
+    if "Admin" not in roles:
+        asg = af.assignment
+        if not asg or asg.transcripteur_id != sub:
+            raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
+
+    if af.status not in (AudioFileStatus.ASSIGNED, AudioFileStatus.IN_PROGRESS):
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "Audio file status does not allow corrections"},
+        )
+
+    ik = None
+    if body.client_mutation_id:
+        parts = {"audio_id": body.audio_id, "client_mutation_id": body.client_mutation_id}
+        ik = golden_set.idempotency_key_from_parts(parts)
+
+    req = GoldenSetEntryRequest(
+        audio_id=body.audio_id,
+        segment_start=body.segment_start,
+        segment_end=body.segment_end,
+        original_text=body.original_text,
+        corrected_text=body.corrected_text,
+        label=body.label,
+        source="frontend_correction",
+        weight="standard",
+        idempotency_key=ik,
+    )
+
+    out = await persist_golden_set_entry(db, req)
+
+    ms = (time.perf_counter() - t0) * 1000.0
+    logger.info(
+        "frontend_correction audio_id=%s user_sub=%s segment_start=%.2f segment_end=%.2f "
+        "entries_written=%d idempotency_hit=%s minio_key=%s duration_ms=%.0f",
+        body.audio_id,
+        sub,
+        body.segment_start,
+        body.segment_end,
+        0 if out.get("idempotent") else 1,
+        "1" if out.get("idempotent") else "0",
+        out.get("minio_object_key", "-"),
+        ms,
+    )
+
+    return out
+
+
+# ─── Routes — Transcription read (Story 4.2) ─────────────────────────────────
+
+
+@app.get("/v1/audio-files/{audio_file_id}/transcription")
+async def get_audio_transcription(
+    audio_file_id: int,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Return stored segments for an audio file; empty until callback persists rows (Story 4.2 AC7)."""
+    roles = get_roles(payload)
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(status_code=401, detail={"error": "Subject missing in token"})
+    if not {"Transcripteur", "Admin"}.intersection(roles):
+        raise HTTPException(status_code=403, detail={"error": "Transcripteur or Admin role required"})
+
+    result = await db.execute(
+        select(AudioFile)
+        .where(AudioFile.id == audio_file_id)
+        .options(selectinload(AudioFile.assignment))
+    )
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
+
+    if "Admin" not in roles:
+        asg = af.assignment
+        if not asg or asg.transcripteur_id != sub:
+            raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
+
+    return {"segments": []}
+
+
+@app.post("/v1/callback/expert-validation")
+async def post_expert_validation_callback(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """
+    Label Studio webhook — docs/api-mapping.md §5.
+    Configure in Label Studio: Project Settings → Webhooks; use actions such as
+    ANNOTATION_UPDATED / ANNOTATION_CREATED when an expert submits or updates an annotation.
+    """
+    verify_label_studio_webhook_secret(request)
+    try:
+        raw = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": "Invalid JSON"})
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail={"error": "Invalid JSON body"})
+
+    norm = golden_set.normalize_expert_validation_payload(raw)
+
+    action = norm.get("action")
+    if action is not None and action not in _GOLDEN_SET_ACTIONS:
+        return {
+            "status": "ok",
+            "entries_written": 0,
+            "idempotency_hits": 0,
+            "task_id": norm["task_id"],
+            "skipped_action": action,
+        }
+
+    audio_id = norm["audio_id"]
+    if audio_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "audio_id is required (top-level or task.data.audio_id)"},
+        )
+    if audio_id <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "audio_id must be a positive integer"},
+        )
+
+    segments = norm["segments"]
+    if not segments:
+        return {
+            "status": "ok",
+            "entries_written": 0,
+            "idempotency_hits": 0,
+            "task_id": norm["task_id"],
+        }
+
+    entries_written = 0
+    idempotency_hits = 0
+    skipped = 0
+    for seg in segments:
+        parts = {
+            "ann": norm["annotation_id"],
+            "task": norm["task_id"],
+            "s0": seg["segment_start"],
+            "s1": seg["segment_end"],
+            "t": seg["corrected_text"],
+            "label": seg["label"],
+        }
+        ik = golden_set.idempotency_key_from_parts(parts)
+        try:
+            req = GoldenSetEntryRequest(
+                audio_id=audio_id,
+                segment_start=seg["segment_start"],
+                segment_end=seg["segment_end"],
+                corrected_text=seg["corrected_text"],
+                label=seg["label"],
+                source="label_studio",
+                weight="high",
+                original_text=seg.get("original_text"),
+                idempotency_key=ik,
+                label_studio_task_id=norm["task_id"],
+                label_studio_annotation_id=norm["annotation_id"],
+            )
+        except (ValidationError, ValueError) as exc:
+            logger.warning("golden_set skipping invalid segment task_id=%s: %s", norm["task_id"], exc)
+            skipped += 1
+            continue
+        out = await persist_golden_set_entry(
+            db,
+            req,
+            label_studio_project_id_for_verify=norm["label_studio_project_id"],
+        )
+        if out.get("idempotent"):
+            idempotency_hits += 1
+        else:
+            entries_written += 1
+
+    return {
+        "status": "ok",
+        "entries_written": entries_written,
+        "idempotency_hits": idempotency_hits,
+        "task_id": norm["task_id"],
+    }

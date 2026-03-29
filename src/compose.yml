@@ -193,6 +193,13 @@ services:
       CAMUNDA_REST_URL: http://camunda7:8080/engine-rest
       # FFmpeg Worker — audio normalization (Story 2.3)
       FFMPEG_WORKER_URL: http://ffmpeg-worker:8765
+      # Golden Set — Story 4.1 (Label Studio webhook + internal ingest)
+      LABEL_STUDIO_WEBHOOK_SECRET: ${LABEL_STUDIO_WEBHOOK_SECRET:-changeme-label-studio-webhook}
+      GOLDEN_SET_INTERNAL_SECRET: ${GOLDEN_SET_INTERNAL_SECRET:-changeme-golden-set-internal}
+      GOLDEN_SET_BUCKET: ${GOLDEN_SET_BUCKET:-golden-set}
+      GOLDEN_SET_THRESHOLD: ${GOLDEN_SET_THRESHOLD:-1000}
+      # CORS — Story 4.2 (frontend dev port)
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
     networks:
       - zachai-network
     depends_on:
@@ -366,6 +373,22 @@ services:
   #                 #                   Validates SHA-256 checksum before MinIO upload.
   #                 #                   Depends on: minio (service_healthy).
 
-  # ── Layer 6: Frontend ─────────────────────────────────────────────────────────
-  # frontend:       # TODO: Story (React+Tiptap) — "Azure Flow" UX.
-  #                 #                   Port: 3000. Depends on: fastapi, hocuspocus (service_healthy).
+  # ── Layer 6: Frontend (Story 4.2) ─────────────────────────────────────────────
+  # Dev mode: run `npm run dev` in src/frontend/ with VITE_API_BASE=http://localhost:8000
+  # Docker mode (optional — uncomment to add frontend to compose stack):
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #   container_name: zachai-frontend
+  #   ports:
+  #     - "5173:5173"
+  #   environment:
+  #     VITE_API_BASE: http://fastapi:8000
+  #     VITE_KEYCLOAK_URL: http://localhost:8180
+  #     VITE_KEYCLOAK_REALM: zachai
+  #     VITE_KEYCLOAK_CLIENT_ID: zachai-frontend
+  #   networks:
+  #     - zachai-network
+  #   depends_on:
+  #     fastapi:
+  #       condition: service_healthy

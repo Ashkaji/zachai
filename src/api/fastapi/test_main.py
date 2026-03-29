@@ -21,6 +21,9 @@ os.environ.setdefault("POSTGRES_USER", "zachai")
 os.environ.setdefault("POSTGRES_PASSWORD", "changeme")
 os.environ.setdefault("CAMUNDA_REST_URL", "http://camunda7:8080/engine-rest")
 os.environ.setdefault("FFMPEG_WORKER_URL", "http://ffmpeg-worker:8765")
+os.environ.setdefault("LABEL_STUDIO_WEBHOOK_SECRET", "test-label-studio-webhook-secret")
+os.environ.setdefault("GOLDEN_SET_INTERNAL_SECRET", "test-golden-set-internal-secret")
+os.environ.setdefault("GOLDEN_SET_BUCKET", "golden-set")
 
 # Mock JWKS fetch at module import time so startup doesn't hit Keycloak
 MOCK_JWKS = {"keys": [{"kid": "test-key", "kty": "RSA", "alg": "RS256", "use": "sig"}]}
@@ -1838,3 +1841,454 @@ def test_register_completed_project_forbidden(mock_db):
             json={"object_key": "projects/1/audio/x.mp3"},
         )
     assert response.status_code == 403
+
+
+# ─── Story 4.1: Golden Set — Label Studio webhook & internal ingest ─────────
+
+
+LS_WEBHOOK_BODY_ONE_SEGMENT = {
+    "action": "ANNOTATION_UPDATED",
+    "task": {"id": 42, "data": {"audio_id": 7}},
+    "annotation": {
+        "id": 99,
+        "result": [
+            {
+                "type": "labels",
+                "value": {"start": 0.0, "end": 1.5, "labels": ["Orateur"]},
+            },
+            {"type": "textarea", "value": {"text": ["corrected hello"]}},
+        ],
+    },
+}
+
+
+def _webhook_headers():
+    return {"X-ZachAI-Webhook-Secret": os.environ["LABEL_STUDIO_WEBHOOK_SECRET"]}
+
+
+def test_expert_validation_webhook_no_secret_header(mock_db):
+    """Missing webhook secret → 401."""
+    response = client.post(
+        "/v1/callback/expert-validation",
+        json=LS_WEBHOOK_BODY_ONE_SEGMENT,
+    )
+    assert response.status_code == 401
+
+
+def test_expert_validation_webhook_wrong_secret(mock_db):
+    """Wrong webhook secret → 403."""
+    response = client.post(
+        "/v1/callback/expert-validation",
+        headers={"X-ZachAI-Webhook-Secret": "not-the-secret"},
+        json=LS_WEBHOOK_BODY_ONE_SEGMENT,
+    )
+    assert response.status_code == 403
+
+
+def test_expert_validation_webhook_missing_audio(mock_db):
+    """Unknown audio_id → 404."""
+    dup_r = MagicMock()
+    dup_r.scalar_one_or_none.return_value = None
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = None
+    mock_db.execute = AsyncMock(side_effect=[dup_r, af_r])
+    with patch.object(main.internal_client, "put_object") as mock_put:
+        response = client.post(
+            "/v1/callback/expert-validation",
+            headers=_webhook_headers(),
+            json=LS_WEBHOOK_BODY_ONE_SEGMENT,
+        )
+    assert response.status_code == 404
+    mock_put.assert_not_called()
+
+
+def test_expert_validation_webhook_writes_golden_set(mock_db):
+    """Valid webhook: MinIO put + DB commit path (mocked)."""
+    dup_r = MagicMock()
+    dup_r.scalar_one_or_none.return_value = None
+    mock_af = MagicMock()
+    mock_af.project_id = 1
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_af
+    mock_ctr = MagicMock()
+    mock_ctr.count = 3
+    ctr_r = MagicMock()
+    ctr_r.scalar_one_or_none.return_value = mock_ctr
+    mock_db.execute = AsyncMock(side_effect=[dup_r, af_r, ctr_r])
+    mock_db.commit = AsyncMock()
+
+    with patch.object(main.internal_client, "put_object") as mock_put:
+        response = client.post(
+            "/v1/callback/expert-validation",
+            headers=_webhook_headers(),
+            json=LS_WEBHOOK_BODY_ONE_SEGMENT,
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["entries_written"] == 1
+    assert data["idempotency_hits"] == 0
+    mock_put.assert_called_once()
+    assert mock_ctr.count == 4
+    mock_db.commit.assert_called_once()
+
+
+def test_expert_validation_webhook_idempotent_repeat(mock_db):
+    """Duplicate delivery: idempotency hit, no second MinIO put."""
+    dup_r = MagicMock()
+    dup_r.scalar_one_or_none.return_value = 123  # existing row
+    mock_db.execute = AsyncMock(return_value=dup_r)
+    mock_db.commit = AsyncMock()
+
+    with patch.object(main.internal_client, "put_object") as mock_put:
+        response = client.post(
+            "/v1/callback/expert-validation",
+            headers=_webhook_headers(),
+            json=LS_WEBHOOK_BODY_ONE_SEGMENT,
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["entries_written"] == 0
+    assert data["idempotency_hits"] == 1
+    mock_put.assert_not_called()
+    mock_db.commit.assert_not_called()
+
+
+def test_golden_set_internal_entry_no_auth_header(mock_db):
+    """Missing auth header entirely → 401."""
+    response = client.post(
+        "/v1/golden-set/entry",
+        json={
+            "audio_id": 1,
+            "segment_start": 0.0,
+            "segment_end": 1.0,
+            "corrected_text": "hi",
+            "source": "frontend_correction",
+            "weight": "standard",
+        },
+    )
+    assert response.status_code == 401
+
+
+def test_golden_set_internal_entry_wrong_secret(mock_db):
+    response = client.post(
+        "/v1/golden-set/entry",
+        headers={"X-ZachAI-Golden-Set-Internal-Secret": "nope"},
+        json={
+            "audio_id": 1,
+            "segment_start": 0.0,
+            "segment_end": 1.0,
+            "corrected_text": "hi",
+            "source": "frontend_correction",
+            "weight": "standard",
+        },
+    )
+    assert response.status_code == 403
+
+
+def test_golden_set_internal_entry_success(mock_db):
+    dup_r = MagicMock()
+    dup_r.scalar_one_or_none.return_value = None
+    mock_af = MagicMock()
+    mock_af.project_id = 1
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_af
+    mock_ctr = MagicMock()
+    mock_ctr.count = 10
+    ctr_r = MagicMock()
+    ctr_r.scalar_one_or_none.return_value = mock_ctr
+    mock_db.execute = AsyncMock(side_effect=[dup_r, af_r, ctr_r])
+    mock_db.commit = AsyncMock()
+
+    with patch.object(main.internal_client, "put_object") as mock_put:
+        response = client.post(
+            "/v1/golden-set/entry",
+            headers={
+                "X-ZachAI-Golden-Set-Internal-Secret": os.environ["GOLDEN_SET_INTERNAL_SECRET"]
+            },
+            json={
+                "audio_id": 1,
+                "segment_start": 0.0,
+                "segment_end": 1.0,
+                "corrected_text": "hi",
+                "source": "frontend_correction",
+                "weight": "standard",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["idempotent"] is False
+    mock_put.assert_called_once()
+    assert mock_ctr.count == 11
+
+
+# ─── Story 4.2: Frontend correction route & transcription read ───────────────
+
+
+def _make_mock_audio_with_assignment(
+    audio_id=1,
+    project_id=1,
+    transcripteur_id="user-999",
+    status_val="assigned",
+):
+    ts = datetime(2026, 3, 29, tzinfo=timezone.utc)
+    af = MagicMock()
+    af.id = audio_id
+    af.project_id = project_id
+    af.filename = "test.wav"
+    af.minio_path = f"projects/{project_id}/audio/test.wav"
+    af.normalized_path = f"projects/{project_id}/audio/test.normalized.wav"
+    af.duration_s = 10.0
+    af.validation_error = None
+    af.validation_attempted_at = None
+    af.uploaded_at = ts
+    af.updated_at = ts
+    af.status = {
+        "uploaded": main.AudioFileStatus.UPLOADED,
+        "assigned": main.AudioFileStatus.ASSIGNED,
+        "in_progress": main.AudioFileStatus.IN_PROGRESS,
+        "transcribed": main.AudioFileStatus.TRANSCRIBED,
+        "validated": main.AudioFileStatus.VALIDATED,
+    }[status_val]
+    asg = MagicMock()
+    asg.transcripteur_id = transcripteur_id
+    asg.assigned_at = ts
+    af.assignment = asg
+    return af
+
+
+FRONTEND_CORRECTION_BODY = {
+    "audio_id": 1,
+    "segment_start": 0.5,
+    "segment_end": 2.0,
+    "original_text": "bonjour",
+    "corrected_text": "Bonjour",
+}
+
+
+def test_frontend_correction_happy_path_transcripteur(mock_db):
+    """POST /v1/golden-set/frontend-correction: assigned Transcripteur → 200 + counter increment."""
+    mock_audio = _make_mock_audio_with_assignment(transcripteur_id="user-999")
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_audio
+    dup_r = MagicMock()
+    dup_r.scalar_one_or_none.return_value = None
+    persist_af_r = MagicMock()
+    persist_af_r.scalar_one_or_none.return_value = mock_audio
+    mock_ctr = MagicMock()
+    mock_ctr.count = 5
+    ctr_r = MagicMock()
+    ctr_r.scalar_one_or_none.return_value = mock_ctr
+    mock_db.execute = AsyncMock(side_effect=[af_r, dup_r, persist_af_r, ctr_r])
+    mock_db.commit = AsyncMock()
+
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD), \
+         patch.object(main.internal_client, "put_object") as mock_put:
+        response = client.post(
+            "/v1/golden-set/frontend-correction",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json=FRONTEND_CORRECTION_BODY,
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["idempotent"] is False
+    mock_put.assert_called_once()
+    assert mock_ctr.count == 6
+
+
+def test_frontend_correction_wrong_user_403(mock_db):
+    """POST /v1/golden-set/frontend-correction: Transcripteur not assigned → 403."""
+    mock_audio = _make_mock_audio_with_assignment(transcripteur_id="other-user")
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_audio
+    mock_db.execute = AsyncMock(return_value=af_r)
+
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.post(
+            "/v1/golden-set/frontend-correction",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json=FRONTEND_CORRECTION_BODY,
+        )
+
+    assert response.status_code == 403
+    assert "assigned" in response.json()["error"].lower()
+
+
+def test_frontend_correction_wrong_role_403(mock_db):
+    """POST /v1/golden-set/frontend-correction: Manager-only → 403."""
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/golden-set/frontend-correction",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json=FRONTEND_CORRECTION_BODY,
+        )
+
+    assert response.status_code == 403
+    assert "role" in response.json()["error"].lower()
+
+
+def test_frontend_correction_missing_audio_404(mock_db):
+    """POST /v1/golden-set/frontend-correction: non-existent audio_id → 404."""
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = None
+    mock_db.execute = AsyncMock(return_value=af_r)
+
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.post(
+            "/v1/golden-set/frontend-correction",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json=FRONTEND_CORRECTION_BODY,
+        )
+
+    assert response.status_code == 404
+
+
+def test_frontend_correction_idempotent_duplicate(mock_db):
+    """POST /v1/golden-set/frontend-correction: same client_mutation_id → idempotent no-op."""
+    mock_audio = _make_mock_audio_with_assignment(transcripteur_id="user-999")
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_audio
+    dup_r = MagicMock()
+    dup_r.scalar_one_or_none.return_value = 42  # existing row
+    mock_db.execute = AsyncMock(side_effect=[af_r, dup_r])
+    mock_db.commit = AsyncMock()
+
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD), \
+         patch.object(main.internal_client, "put_object") as mock_put:
+        response = client.post(
+            "/v1/golden-set/frontend-correction",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={**FRONTEND_CORRECTION_BODY, "client_mutation_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["idempotent"] is True
+    mock_put.assert_not_called()
+
+
+def test_frontend_correction_admin_bypass_assignment(mock_db):
+    """POST /v1/golden-set/frontend-correction: Admin bypasses assignment check."""
+    mock_audio = _make_mock_audio_with_assignment(transcripteur_id="other-user")
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_audio
+    dup_r = MagicMock()
+    dup_r.scalar_one_or_none.return_value = None
+    persist_af_r = MagicMock()
+    persist_af_r.scalar_one_or_none.return_value = mock_audio
+    mock_ctr = MagicMock()
+    mock_ctr.count = 0
+    ctr_r = MagicMock()
+    ctr_r.scalar_one_or_none.return_value = mock_ctr
+    mock_db.execute = AsyncMock(side_effect=[af_r, dup_r, persist_af_r, ctr_r])
+    mock_db.commit = AsyncMock()
+
+    with patch.object(main, "decode_token", return_value=ADMIN_PAYLOAD), \
+         patch.object(main.internal_client, "put_object"):
+        response = client.post(
+            "/v1/golden-set/frontend-correction",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json=FRONTEND_CORRECTION_BODY,
+        )
+
+    assert response.status_code == 200
+
+
+def test_frontend_correction_status_409_after_submit(mock_db):
+    """POST /v1/golden-set/frontend-correction: transcribed audio → 409."""
+    mock_audio = _make_mock_audio_with_assignment(
+        transcripteur_id="user-999", status_val="transcribed"
+    )
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_audio
+    mock_db.execute = AsyncMock(return_value=af_r)
+
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.post(
+            "/v1/golden-set/frontend-correction",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json=FRONTEND_CORRECTION_BODY,
+        )
+
+    assert response.status_code == 409
+
+
+# ─── Story 4.2: GET /v1/audio-files/{id}/transcription ──────────────────────
+
+
+def test_transcription_get_happy_path(mock_db):
+    """GET /v1/audio-files/{id}/transcription: assigned Transcripteur → 200 with empty segments."""
+    mock_audio = _make_mock_audio_with_assignment(transcripteur_id="user-999")
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_audio
+    mock_db.execute = AsyncMock(return_value=af_r)
+
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.get(
+            "/v1/audio-files/1/transcription",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"segments": []}
+
+
+def test_transcription_get_wrong_user_403(mock_db):
+    """GET /v1/audio-files/{id}/transcription: unassigned Transcripteur → 403."""
+    mock_audio = _make_mock_audio_with_assignment(transcripteur_id="other-user")
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_audio
+    mock_db.execute = AsyncMock(return_value=af_r)
+
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.get(
+            "/v1/audio-files/1/transcription",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 403
+
+
+def test_transcription_get_missing_audio_404(mock_db):
+    """GET /v1/audio-files/{id}/transcription: unknown audio → 404."""
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = None
+    mock_db.execute = AsyncMock(return_value=af_r)
+
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.get(
+            "/v1/audio-files/999/transcription",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 404
+
+
+def test_transcription_get_manager_forbidden(mock_db):
+    """GET /v1/audio-files/{id}/transcription: Manager role → 403."""
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.get(
+            "/v1/audio-files/1/transcription",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 403
+
+
+def test_transcription_get_admin_can_view(mock_db):
+    """GET /v1/audio-files/{id}/transcription: Admin bypasses assignment check."""
+    mock_audio = _make_mock_audio_with_assignment(transcripteur_id="other-user")
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_audio
+    mock_db.execute = AsyncMock(return_value=af_r)
+
+    with patch.object(main, "decode_token", return_value=ADMIN_PAYLOAD):
+        response = client.get(
+            "/v1/audio-files/1/transcription",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"segments": []}
