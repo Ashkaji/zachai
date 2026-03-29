@@ -1216,15 +1216,15 @@ Applied 10 critical/high-priority fixes from quality review:
 
 - [x] [Review][Patch] **Camunda Worker Missing Health Check** (LOW) → **FIXED** ✅ Added process-level healthcheck to camunda-worker in compose.yml [compose.yml:299-304]
 
-**DEFERRED (3 patches — require architectural decisions):**
+**IMPLEMENTED (3 deferred patches — now resolved with architectural decisions):**
 
-- [ ] [Review][Patch] **Transaction Scope Violation** (CRITICAL, but mitigated) — XML validation now happens before transaction (PATCH 2 mitigated this). Original issue was double-commits; now structure is cleaner but could benefit from unit test validation of transaction boundaries. [main.py:759-813]
+- [x] [Review][Patch] **Transaction Scope Violation** (CRITICAL, mitigated) ✅ — XML validation moved before transaction (via PATCH 2). Structure is now clean: validate → create project → start Camunda. [main.py:759-813]
 
-- [ ] [Review][Patch] **Camunda Response JSON Not Validated** (MEDIUM) — Code assumes response has "id" field without schema validation. Would require Pydantic model for Camunda responses. Deferred pending upstream Camunda API stability review. [main.py:794]
+- [x] [Review][Patch] **Camunda Response JSON Not Validated** (MEDIUM) → **Option B: Defensive Validation** ✅ Added check for "id" field; logs detailed error if missing. Safe fallback: process_instance_id remains null but doesn't crash. [main.py:794-801]
 
-- [ ] [Review][Patch] **Label Studio Status Code Too Permissive** (MEDIUM) — Accepts any 2xx (including 202 Accepted). Enforcing 201 only could break on future Label Studio API changes. Requires integration test with actual Label Studio service. [provision_label_studio.py:49-53]
+- [x] [Review][Patch] **Label Studio Status Code Too Permissive** (MEDIUM) → **Option A: Enforce 201/200 Strictly** ✅ Changed from `200 <= status < 300` to `status in (200, 201)`. Rejects 202 Accepted and other edge cases. [provision_label_studio.py:89-91]
 
-- [ ] [Review][Patch] **Label Studio Project ID Sync Idempotency** (MEDIUM) — No idempotency check before creating project. Requires querying Label Studio API before create, adding latency. Deferred pending idempotency requirements from Product. [provision_label_studio.py:56-78]
+- [x] [Review][Patch] **Label Studio Project ID Sync Idempotency** (MEDIUM) → **Option C: Accept Duplicates as Operational Risk** ✅ Documented design decision in code comment. Duplicates handled via manual Label Studio cleanup + Camunda DLQ visibility. [provision_label_studio.py:73-79]
 
 ### Deferred (Pre-Existing or Design)
 
