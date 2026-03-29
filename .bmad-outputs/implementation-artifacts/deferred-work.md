@@ -25,3 +25,8 @@
 
 - **Cross-manager project status mutation remains possible on legacy `PUT /v1/projects/{project_id}/status`**: endpoint still permits any Manager/Admin without owner check. This predates Story 2.4 assignment endpoints and should be handled in a dedicated authorization-hardening change.
 - **Owner-check error semantics for missing JWT `sub`**: helper currently reports 403 “Not the project owner” rather than a 401/token-shape error when `sub` is absent. Existing behavior predates this review and can be standardized in auth cleanup.
+
+## Deferred from: code review of 3-2-openvino-whisper-inference-preannotation.md (2026-03-29)
+
+- **Inference timeout vs threaded native run**: `anyio.fail_after` can return HTTP 504 while the blocking `WhisperPipeline.generate` call continues on the worker thread until completion — acceptable v1 limitation unless process pool or cancelable API is introduced (`src/workers/openvino-worker/main.py`).
+- **MinIO stat then download (TOCTOU)**: object can disappear after `stat_object` and before `fget_object`; client may see 500 instead of 404 — rare operational race (`src/workers/openvino-worker/main.py`).

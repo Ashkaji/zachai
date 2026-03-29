@@ -272,9 +272,44 @@ services:
     restart: unless-stopped
     # Port 8765 is internal only — NOT mapped to host (architecture.md § 5 — Internal Shield)
 
-  # openvino:       # TODO: Story 3.2 — Whisper ASR inference + hot-reload (polls models/latest every 60s).
-  #                 #                   Depends on: minio (service_healthy).
-  #                 #                   Internal only — NOT exposed publicly.
+  openvino-worker:
+    build:
+      context: ./workers/openvino-worker
+    container_name: zachai-openvino-worker
+    environment:
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      WHISPER_MODEL_PATH: ${WHISPER_MODEL_PATH}
+      OV_DEVICE: ${OV_DEVICE:-CPU}
+      INFER_TIMEOUT_SECONDS: ${INFER_TIMEOUT_SECONDS:-900}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+    networks:
+      - zachai-network
+    depends_on:
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8770/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          memory: 512M
+    restart: unless-stopped
+    # Port 8770 is internal only — NOT mapped to host (architecture.md § 5 — Internal Shield)
+    #
+    # Models are not baked into the image. Mount host-exported OpenVINO Whisper IR, e.g.:
+    #   volumes:
+    #     - ${WHISPER_MODEL_HOST_PATH:?set path to exported model dir}:/models/whisper-base-ov:ro
+    # and set WHISPER_MODEL_PATH=/models/whisper-base-ov in .env
 
   # ── Layer 3: Orchestration Workers (Story 2.2) ──────────────────────────────
 

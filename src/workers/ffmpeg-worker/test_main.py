@@ -7,6 +7,7 @@ Run: pytest test_main.py -v
 import os
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -74,6 +75,7 @@ def test_normalize_success(mock_subprocess, mock_minio):
 
     mock_minio.fget_object.side_effect = fake_fget
     mock_minio.fput_object.return_value = None
+    mock_minio.stat_object.return_value = SimpleNamespace(size=16)
     mock_subprocess.side_effect = fake_subprocess
 
     response = client.post("/normalize", json={
@@ -101,6 +103,7 @@ def test_normalize_minio_download_failure(mock_minio):
         "NoSuchKey", "The specified key does not exist.",
         "test/missing.mp4", "projects", "req-id", "host-id"
     )
+    mock_minio.stat_object.return_value = SimpleNamespace(size=16)
 
     response = client.post("/normalize", json={
         "input_bucket": "projects",
@@ -121,6 +124,7 @@ def test_normalize_ffmpeg_failure(mock_subprocess, mock_minio):
         Path(local_path).write_bytes(b"\x00" * 16)
 
     mock_minio.fget_object.side_effect = fake_fget
+    mock_minio.stat_object.return_value = SimpleNamespace(size=16)
 
     bad_result = MagicMock()
     bad_result.returncode = 1
@@ -243,6 +247,7 @@ def test_normalize_temp_files_cleaned_up(mock_subprocess, mock_minio):
 
     mock_minio.fget_object.side_effect = fake_fget
     mock_minio.fput_object.return_value = None
+    mock_minio.stat_object.return_value = SimpleNamespace(size=16)
     mock_subprocess.side_effect = fake_subprocess
 
     response = client.post("/normalize", json={
