@@ -58,3 +58,7 @@
 ## Deferred from: code review of 4-3-lora-finetuning-auto-trigger-camunda.md (2026-03-29)
 
 - **Compose builds for Postgres/Keycloak (`src/docker/*`)**: Changes are outside story 4.3 file list but address Docker Desktop Windows bind mounts; ensure CI or README covers building from `src/` context when using compose.
+
+## Deferred from: code review of story 4-4-lora-pipeline-dataset-training-validation-deploy.md (2026-03-29)
+
+- **`model-ready` idempotency vs counter commit boundary**: If the API crashes after inserting `ModelReadyIdempotency` but before committing `GoldenSetCounter` updates, a retry can return `idempotent: true` while the counter remains non-zero — rare; reconcile manually or tighten transactional ordering in a follow-up.

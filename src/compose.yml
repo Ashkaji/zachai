@@ -199,6 +199,7 @@ services:
       # Golden Set — Story 4.1 (Label Studio webhook + internal ingest)
       LABEL_STUDIO_WEBHOOK_SECRET: ${LABEL_STUDIO_WEBHOOK_SECRET:-changeme-label-studio-webhook}
       GOLDEN_SET_INTERNAL_SECRET: ${GOLDEN_SET_INTERNAL_SECRET:-changeme-golden-set-internal}
+      MODEL_READY_CALLBACK_SECRET: ${MODEL_READY_CALLBACK_SECRET:-changeme-model-ready-callback}
       GOLDEN_SET_BUCKET: ${GOLDEN_SET_BUCKET:-golden-set}
       GOLDEN_SET_THRESHOLD: ${GOLDEN_SET_THRESHOLD:-1000}
       # CORS — Story 4.2 (frontend dev port)
@@ -346,6 +347,23 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: zachai
       DB_HOST: postgres
+      # LoRA pipeline (Story 4.4) — same worker process as provision-label-studio
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      GOLDEN_SET_BUCKET: ${GOLDEN_SET_BUCKET:-golden-set}
+      MODEL_REGISTRY_BUCKET: ${MODEL_REGISTRY_BUCKET:-models}
+      MODEL_POINTER_KEY: ${MODEL_POINTER_KEY:-latest}
+      FASTAPI_INTERNAL_URL: http://fastapi:8000
+      MODEL_READY_CALLBACK_SECRET: ${MODEL_READY_CALLBACK_SECRET:-changeme-model-ready-callback}
+      LORA_MAX_WER: ${LORA_MAX_WER:-0.02}
+      LORA_EVAL_FRACTION: ${LORA_EVAL_FRACTION:-0.2}
+      LORA_SPLIT_SEED: ${LORA_SPLIT_SEED:-42}
+      # Defaults align with src/.env.example (stub + whisper-base-ov/) for local compose; override in prod .env
+      LORA_TRAINING_STUB: ${LORA_TRAINING_STUB:-true}
+      LORA_STUB_SOURCE_PREFIX: ${LORA_STUB_SOURCE_PREFIX:-whisper-base-ov/}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
     networks:
       - zachai-network
     depends_on:
@@ -353,8 +371,12 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      fastapi:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "ps aux | grep '[p]rovision_label_studio' || exit 1"]
+      test: ["CMD-SHELL", "ps aux | grep '[r]un_workers' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

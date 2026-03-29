@@ -1,7 +1,8 @@
 """
-ZachAI FastAPI Gateway — Story 4.1–4.3: Golden Set + LoRA threshold → Camunda 7
+ZachAI FastAPI Gateway — Story 4.1–4.4: Golden Set + LoRA pipeline
 Extends Story 2.4: Assignment dashboard + FFmpeg semantics fix.
-Golden Set: POST /v1/golden-set/entry, frontend-correction, expert webhook; threshold crossing starts `lora-fine-tuning` BPMN (Story 4.3).
+Golden Set: POST /v1/golden-set/entry, frontend-correction, expert webhook; threshold crossing starts `lora-fine-tuning` BPMN (Story 4.3–4.4).
+POST /v1/callback/model-ready resets counter after successful registry publish (Story 4.4).
 FastAPI never touches audio binary data — upload goes directly browser→MinIO.
 """
 import os
@@ -31,6 +32,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, selectinload
 from sqlalchemy import String, Boolean, Integer, Float, ForeignKey, DateTime, Text, func, select, delete, Index, case
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import UniqueConstraint
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.exc import IntegrityError
@@ -133,11 +135,14 @@ LORA_FINETUNING_PROCESS_KEY: str = "lora-fine-tuning"
 # Shared secrets — cached at startup (Story 4.1)
 _LABEL_STUDIO_WEBHOOK_SECRET: str = (os.environ.get("LABEL_STUDIO_WEBHOOK_SECRET") or "").strip()
 _GOLDEN_SET_INTERNAL_SECRET: str = (os.environ.get("GOLDEN_SET_INTERNAL_SECRET") or "").strip()
+_MODEL_READY_CALLBACK_SECRET: str = (os.environ.get("MODEL_READY_CALLBACK_SECRET") or "").strip()
 _CHANGEME_PREFIXES = ("changeme",)
 if _LABEL_STUDIO_WEBHOOK_SECRET and _LABEL_STUDIO_WEBHOOK_SECRET.startswith(_CHANGEME_PREFIXES):
     logger.warning("LABEL_STUDIO_WEBHOOK_SECRET uses a default 'changeme' value — override in production")
 if _GOLDEN_SET_INTERNAL_SECRET and _GOLDEN_SET_INTERNAL_SECRET.startswith(_CHANGEME_PREFIXES):
     logger.warning("GOLDEN_SET_INTERNAL_SECRET uses a default 'changeme' value — override in production")
+if _MODEL_READY_CALLBACK_SECRET and _MODEL_READY_CALLBACK_SECRET.startswith(_CHANGEME_PREFIXES):
+    logger.warning("MODEL_READY_CALLBACK_SECRET uses a default 'changeme' value — override in production")
 
 _GOLDEN_SET_ACTIONS = frozenset({"ANNOTATION_CREATED", "ANNOTATION_UPDATED", "ANNOTATION_SUBMITTED"})
 
@@ -322,6 +327,16 @@ class GoldenSetCounter(Base):
     last_training_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ModelReadyIdempotency(Base):
+    """One row per successful model-ready callback (Story 4.4) — dedupes worker retries."""
+
+    __tablename__ = "model_ready_idempotency"
+    training_run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 # ─── JWKS fetch ───────────────────────────────────────────────────────────────
 
 
@@ -446,7 +461,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ZachAI Gateway",
     description="Lean API gateway: presigned URLs, JWT, Nature CRUD, Project CRUD, audio upload, Golden Set, Camunda 7",
-    version="2.7.0",
+    version="2.8.0",
     lifespan=lifespan,
 )
 
@@ -676,6 +691,20 @@ class GoldenSetStatusResponse(BaseModel):
     next_trigger_at: str | None = Field(
         None,
         description="Reserved for future scheduler semantics; always null in Story 4.3.",
+    )
+
+
+class ModelReadyCallbackRequest(BaseModel):
+    """POST /v1/callback/model-ready — LoRA registry worker (Story 4.4)."""
+
+    model_version: str = Field(..., min_length=1, max_length=512)
+    wer_score: float = Field(..., description="Word error rate on eval split (0–1, jiwer).")
+    minio_path: str = Field(..., min_length=1, max_length=1024)
+    training_run_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        description="Camunda process instance id (or unique run id) for callback idempotency.",
     )
 
 
@@ -938,6 +967,15 @@ def verify_golden_set_internal_secret(request: Request) -> None:
         expected_secret=_GOLDEN_SET_INTERNAL_SECRET,
         header_name="X-ZachAI-Golden-Set-Internal-Secret",
         unconfigured_msg="Golden set internal API is not configured",
+    )
+
+
+def verify_model_ready_callback_secret(request: Request) -> None:
+    _verify_shared_secret(
+        request,
+        expected_secret=_MODEL_READY_CALLBACK_SECRET,
+        header_name="X-ZachAI-Model-Ready-Secret",
+        unconfigured_msg="Model-ready callback is not configured",
     )
 
 
@@ -2228,4 +2266,54 @@ async def post_expert_validation_callback(
         "entries_written": entries_written,
         "idempotency_hits": idempotency_hits,
         "task_id": norm["task_id"],
+    }
+
+
+@app.post("/v1/callback/model-ready")
+async def post_model_ready_callback(
+    request: Request,
+    body: ModelReadyCallbackRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """
+    LoRA registry worker — after MinIO publish + models/latest update (Story 4.4).
+    Resets GoldenSetCounter for the next threshold cycle; idempotent per training_run_id.
+    """
+    verify_model_ready_callback_secret(request)
+
+    stmt = (
+        pg_insert(ModelReadyIdempotency)
+        .values(training_run_id=body.training_run_id)
+        .on_conflict_do_nothing(index_elements=[ModelReadyIdempotency.training_run_id])
+        .returning(ModelReadyIdempotency.training_run_id)
+    )
+    ins = await db.execute(stmt)
+    if ins.scalar_one_or_none() is None:
+        await db.commit()
+        return {"status": "ok", "idempotent": True}
+
+    completed_at = datetime.now(timezone.utc)
+    cr = await db.execute(select(GoldenSetCounter).where(GoldenSetCounter.id == 1).with_for_update())
+    ctr = cr.scalar_one_or_none()
+    if ctr is None:
+        ctr = GoldenSetCounter(id=1, count=0, threshold=GOLDEN_SET_THRESHOLD)
+        db.add(ctr)
+        await db.flush()
+
+    ctr.last_training_at = completed_at
+    ctr.count = 0
+    await db.commit()
+
+    logger.info(
+        "model_ready_callback training_run_id=%s model_version=%s wer_score=%s minio_path=%s",
+        body.training_run_id,
+        body.model_version,
+        body.wer_score,
+        body.minio_path,
+    )
+
+    return {
+        "status": "ok",
+        "idempotent": False,
+        "last_training_at": completed_at.isoformat().replace("+00:00", "Z"),
     }

@@ -24,6 +24,7 @@ os.environ.setdefault("FFMPEG_WORKER_URL", "http://ffmpeg-worker:8765")
 os.environ.setdefault("LABEL_STUDIO_WEBHOOK_SECRET", "test-label-studio-webhook-secret")
 os.environ.setdefault("GOLDEN_SET_INTERNAL_SECRET", "test-golden-set-internal-secret")
 os.environ.setdefault("GOLDEN_SET_BUCKET", "golden-set")
+os.environ.setdefault("MODEL_READY_CALLBACK_SECRET", "test-model-ready-secret")
 
 # Mock JWKS fetch at module import time so startup doesn't hit Keycloak
 MOCK_JWKS = {"keys": [{"kid": "test-key", "kty": "RSA", "alg": "RS256", "use": "sig"}]}
@@ -2563,3 +2564,85 @@ def test_transcription_get_admin_can_view(mock_db):
 
     assert response.status_code == 200
     assert response.json() == {"segments": []}
+
+
+# ─── Story 4.4: POST /v1/callback/model-ready ─────────────────────────────────
+
+
+def _model_ready_headers():
+    return {"X-ZachAI-Model-Ready-Secret": os.environ["MODEL_READY_CALLBACK_SECRET"]}
+
+
+_MODEL_READY_BODY = {
+    "model_version": "whisper-cmci-test-1",
+    "wer_score": 0.01,
+    "minio_path": "models/whisper-cmci-test-1/",
+    "training_run_id": "camunda-proc-abc123",
+}
+
+
+def test_model_ready_callback_no_secret(mock_db):
+    response = client.post("/v1/callback/model-ready", json=_MODEL_READY_BODY)
+    assert response.status_code == 401
+
+
+def test_model_ready_callback_wrong_secret(mock_db):
+    response = client.post(
+        "/v1/callback/model-ready",
+        headers={"X-ZachAI-Model-Ready-Secret": "wrong"},
+        json=_MODEL_READY_BODY,
+    )
+    assert response.status_code == 403
+
+
+def test_model_ready_callback_invalid_body(mock_db):
+    response = client.post(
+        "/v1/callback/model-ready",
+        headers=_model_ready_headers(),
+        json={"model_version": "x"},
+    )
+    assert response.status_code == 422
+
+
+def test_model_ready_callback_success_updates_counter(mock_db):
+    ins_r = MagicMock()
+    ins_r.scalar_one_or_none.return_value = "camunda-proc-abc123"
+    mock_ctr = MagicMock()
+    mock_ctr.count = 50
+    mock_ctr.threshold = 1000
+    ctr_r = MagicMock()
+    ctr_r.scalar_one_or_none.return_value = mock_ctr
+    mock_db.execute = AsyncMock(side_effect=[ins_r, ctr_r])
+    mock_db.commit = AsyncMock()
+
+    response = client.post(
+        "/v1/callback/model-ready",
+        headers=_model_ready_headers(),
+        json=_MODEL_READY_BODY,
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert data["idempotent"] is False
+    assert "last_training_at" in data
+    assert mock_ctr.count == 0
+    assert mock_ctr.last_training_at is not None
+    mock_db.commit.assert_called_once()
+
+
+def test_model_ready_callback_idempotent_duplicate(mock_db):
+    ins_r = MagicMock()
+    ins_r.scalar_one_or_none.return_value = None
+    mock_db.execute = AsyncMock(return_value=ins_r)
+    mock_db.commit = AsyncMock()
+
+    response = client.post(
+        "/v1/callback/model-ready",
+        headers=_model_ready_headers(),
+        json=_MODEL_READY_BODY,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "idempotent": True}
+    mock_db.commit.assert_called_once()

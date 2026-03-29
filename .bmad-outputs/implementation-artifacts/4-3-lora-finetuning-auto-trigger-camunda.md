@@ -1,6 +1,6 @@
 # Story 4.3: LoRA Fine-tuning Auto-Trigger (Camunda 7)
 
-Status: review
+Status: done
 
 <!-- Ultimate context engine analysis completed — comprehensive developer guide created. -->
 
@@ -180,12 +180,13 @@ Composer (Cursor agent)
 ### Change Log
 
 - 2026-03-29 — Story 4.3 implemented: threshold trigger, Camunda start, dual BPMN deploy, `GET /v1/golden-set/status`, tests, api-mapping alignment; sprint status → review.
+- 2026-03-29 — Marked **done** after review; compose image/build context defer remains in deferred-work.md.
 
 ---
 
 ## Story Completion Status
 
-**review** — Implementation complete; all tasks checked; `pytest test_main.py` passes (108 tests).
+**done** — Code review closed 2026-03-29; threshold + Camunda start + status API + tests; Epic 4 closure with 4.4.
 
 ---
 

@@ -128,10 +128,15 @@ Les **External Task Workers** (Python) polent Camunda 7 (`/engine-rest/external-
   - Body: `{task_id, annotation, audio_id}`
   - Action: Parse l'annotation → insère entrées Golden Set → `POST /v1/golden-set/entry`
 
-- **`POST /v1/callback/model-ready`**
-  - Source: Camunda 7 / LoRA Training Worker
-  - Body: `{model_version, wer_score, minio_path}`
-  - Action: Met à jour Model Registry → notifie OpenVINO hot-reload
+- **`POST /v1/callback/model-ready`** (Story 4.4)
+  - Source: worker Camunda (étape `lora-registry-publish`), **après** upload versionné MinIO + mise à jour de l’objet pointeur `models/latest`.
+  - Auth: secret partagé — en-tête **`X-ZachAI-Model-Ready-Secret`** (ou `Authorization: Bearer <secret>`), même mécanisme que les autres callbacks internes.
+  - Body JSON: `{ "model_version": string, "wer_score": number, "minio_path": string, "training_run_id": string }`
+    - `model_version` : dossier de version (ex. `whisper-cmci-20260329-a1b2c3d4e5`).
+    - `wer_score` : WER sur le jeu d’évaluation uniquement, échelle **0–1** (jiwer, ex. `0.02` = 2 %).
+    - `minio_path` : préfixe complet publié (ex. `models/whisper-cmci-…/`).
+    - `training_run_id` : id d’instance de processus Camunda (ou identifiant unique) — **idempotence** : un second POST avec le même `training_run_id` renvoie `idempotent: true` sans réinitialiser à nouveau le compteur.
+  - Action côté gateway : insertion idempotente + mise à jour transactionnelle `GoldenSetCounter` (`last_training_at` = maintenant UTC, `count` = 0). Le hot-reload OpenVINO est **implicite** via le pointeur `latest` (Story 3.3).
 
 ---
 

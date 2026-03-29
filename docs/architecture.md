@@ -205,14 +205,19 @@ response = requests.post(f"{CAMUNDA_URL}/external-task/fetchAndLock", json={
     "workerId": "zachai-worker-1",
     "maxTasks": 5,
     "asyncResponseTimeout": 30000,  # attendre jusqu'à 30s si pas de tâche
-    "topics": [{"topicName": "lora-training", "lockDuration": 600000}]
+    "topics": [
+      {"topicName": "lora-dataset-prep", "lockDuration": 1800000},
+      {"topicName": "lora-training", "lockDuration": 3600000},
+      {"topicName": "lora-wer-eval", "lockDuration": 1800000},
+      {"topicName": "lora-registry-publish", "lockDuration": 1800000}
+    ]
 })
 ```
 
 **Déploiement BPMN au démarrage :**
 ```python
 # Script d'initialisation — déployer les 3 workflows au startup de FastAPI
-for bpmn_file in ["project-lifecycle.bpmn", "lora-finetuning.bpmn", "export-pipeline.bpmn"]:
+for bpmn_file in ["project-lifecycle.bpmn", "lora-fine-tuning.bpmn", "export-pipeline.bpmn"]:
     requests.post(f"{CAMUNDA_URL}/deployment/create",
         files={"data": (bpmn_file, open(f"bpmn/{bpmn_file}", "rb"))},
         data={"deployment-name": "zachai-workflows", "enable-duplicate-filtering": "true"}
