@@ -20,6 +20,7 @@ os.environ.setdefault("MINIO_PRESIGNED_ENDPOINT", "localhost:9000")
 os.environ.setdefault("POSTGRES_USER", "zachai")
 os.environ.setdefault("POSTGRES_PASSWORD", "changeme")
 os.environ.setdefault("CAMUNDA_REST_URL", "http://camunda7:8080/engine-rest")
+os.environ.setdefault("FFMPEG_WORKER_URL", "http://ffmpeg-worker:8765")
 
 # Mock JWKS fetch at module import time so startup doesn't hit Keycloak
 MOCK_JWKS = {"keys": [{"kid": "test-key", "kty": "RSA", "alg": "RS256", "use": "sig"}]}
@@ -60,6 +61,12 @@ ADMIN_PAYLOAD = {
 TRANSCRIPTEUR_PAYLOAD = {
     "sub": "user-999",
     "realm_access": {"roles": ["Transcripteur"]},
+    "exp": 9999999999,
+}
+
+MANAGER_OTHER_PAYLOAD = {
+    "sub": "manager-other",
+    "realm_access": {"roles": ["Manager"]},
     "exp": 9999999999,
 }
 
@@ -703,7 +710,11 @@ def make_mock_project(
     p.description = description
     p.nature_id = nature_id
     p.production_goal = production_goal
-    p.status = MagicMock(value=status_val)
+    p.status = {
+        "draft": main.ProjectStatus.DRAFT,
+        "active": main.ProjectStatus.ACTIVE,
+        "completed": main.ProjectStatus.COMPLETED,
+    }.get(status_val, main.ProjectStatus.DRAFT)
     p.manager_id = manager_id
     p.process_instance_id = process_instance_id
     p.label_studio_project_id = label_studio_project_id
@@ -1061,5 +1072,769 @@ def test_update_status_transcripteur_forbidden(mock_db):
             "/v1/projects/1/status",
             headers={"Authorization": "Bearer dummy.token.here"},
             json={"status": "active"},
+        )
+    assert response.status_code == 403
+
+
+# ─── Story 2.3: Project-scoped audio upload & register ──────────────────────
+
+
+def test_project_audio_upload_manager_success(mock_db):
+    """POST .../audio-files/upload returns presigned URL for draft project."""
+    mock_project = make_mock_project(status_val="draft")
+    mr = MagicMock()
+    mr.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = mr
+    fake_url = "http://localhost:9000/projects/1/audio/abc.mp3?X-Amz-Algorithm=AWS4"
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD), \
+         patch.object(main.presigned_client, "presigned_put_object", return_value=fake_url):
+        response = client.post(
+            "/v1/projects/1/audio-files/upload",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"filename": "clip.mp3", "content_type": "audio/mpeg"},
+        )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["presigned_url"] == fake_url
+    assert data["expires_in"] == 3600
+    assert data["object_key"].startswith("projects/1/audio/")
+    assert data["object_key"].endswith(".mp3")
+
+
+def test_project_audio_upload_admin_success(mock_db):
+    """Admin may request project-scoped upload URL."""
+    mock_project = make_mock_project(status_val="active")
+    mr = MagicMock()
+    mr.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = mr
+    fake_url = "http://localhost:9000/x"
+    with patch.object(main, "decode_token", return_value=ADMIN_PAYLOAD), \
+         patch.object(main.presigned_client, "presigned_put_object", return_value=fake_url):
+        response = client.post(
+            "/v1/projects/1/audio-files/upload",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"filename": "a.wav", "content_type": "audio/wav"},
+        )
+    assert response.status_code == 200
+
+
+def test_project_audio_upload_transcripteur_forbidden(mock_db):
+    """Transcripteur cannot request upload URL (Story 2.3)."""
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.post(
+            "/v1/projects/1/audio-files/upload",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"filename": "a.mp3", "content_type": "audio/mpeg"},
+        )
+    assert response.status_code == 403
+
+
+def test_project_audio_upload_project_not_found(mock_db):
+    """404 when project missing."""
+    mr = MagicMock()
+    mr.scalar_one_or_none.return_value = None
+    mock_db.execute.return_value = mr
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD), \
+         patch.object(main.presigned_client, "presigned_put_object", return_value="http://x"):
+        response = client.post(
+            "/v1/projects/999/audio-files/upload",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"filename": "a.mp3", "content_type": "audio/mpeg"},
+        )
+    assert response.status_code == 404
+    assert response.json()["error"] == "Project not found"
+
+
+def test_project_audio_upload_completed_forbidden(mock_db):
+    """Completed project cannot accept new uploads (403)."""
+    mock_project = make_mock_project(status_val="completed")
+    mr = MagicMock()
+    mr.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = mr
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/projects/1/audio-files/upload",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"filename": "a.mp3", "content_type": "audio/mpeg"},
+        )
+    assert response.status_code == 403
+    assert "draft or active" in response.json()["error"]
+
+
+def test_project_audio_upload_invalid_content_type(mock_db):
+    """Invalid content_type returns 400."""
+    mock_project = make_mock_project()
+    mr = MagicMock()
+    mr.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = mr
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/projects/1/audio-files/upload",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"filename": "a.mp3", "content_type": "text/plain"},
+        )
+    assert response.status_code == 400
+
+
+def test_register_audio_wrong_prefix(mock_db):
+    """Register rejects object_key outside projects/{id}/audio/."""
+    mock_project = make_mock_project()
+    mr = MagicMock()
+    mr.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = mr
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/projects/1/audio-files/register",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"object_key": "projects/2/audio/foo.mp3"},
+        )
+    assert response.status_code == 400
+
+
+def test_register_audio_not_in_minio(mock_db):
+    """Register returns 400 when object not in MinIO."""
+    from minio.error import S3Error
+
+    mock_project = make_mock_project()
+    mr = MagicMock()
+    mr.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = mr
+    err = S3Error(
+        MagicMock(),
+        "NoSuchKey",
+        "not found",
+        "projects/1/audio/x.mp3",
+        "req-1",
+        "host-1",
+        "projects",
+        "1/audio/x.mp3",
+    )
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD), \
+         patch.object(main.internal_client, "stat_object", side_effect=err):
+        response = client.post(
+            "/v1/projects/1/audio-files/register",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"object_key": "projects/1/audio/x.mp3"},
+        )
+    assert response.status_code == 400
+    assert "not found" in response.json()["error"].lower()
+
+
+def test_register_audio_success_with_normalize(mock_db):
+    """After register, normalization succeeds: status stays uploaded with normalized_path (Story 2.4 AC1)."""
+    mock_project = make_mock_project()
+    proj_res = MagicMock()
+    proj_res.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = proj_res
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "status": "ok",
+        "output_key": "1/audio/abc.normalized.wav",
+        "duration_s": 42.5,
+    }
+    ffmpeg_client = AsyncMock()
+    ffmpeg_client.post = AsyncMock(return_value=mock_resp)
+    ffmpeg_client.get = AsyncMock(return_value=MagicMock(status_code=200))
+
+    stored_audio = None
+
+    def capture_add(obj):
+        nonlocal stored_audio
+        if hasattr(obj, "minio_path"):
+            stored_audio = obj
+            obj.id = 100
+            ts = datetime(2026, 3, 29, tzinfo=timezone.utc)
+            obj.uploaded_at = ts
+            obj.updated_at = ts
+
+    mock_db.add = MagicMock(side_effect=capture_add)
+    mock_db.commit = AsyncMock()
+    mock_db.refresh = AsyncMock()
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD), \
+         patch.object(main.internal_client, "stat_object", return_value=None), \
+         patch.object(main, "_ffmpeg_client", ffmpeg_client):
+        response = client.post(
+            "/v1/projects/1/audio-files/register",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"object_key": "projects/1/audio/abc.mp3"},
+        )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["id"] == 100
+    assert data["status"] == "uploaded"
+    assert data["normalized_path"] == "projects/1/audio/abc.normalized.wav"
+    assert data["duration_s"] == 42.5
+    assert stored_audio is not None
+    assert stored_audio.status == main.AudioFileStatus.UPLOADED
+
+
+def test_register_audio_success_invalid_duration_s(mock_db):
+    """Non-numeric duration_s from worker does not crash; stored as null."""
+    mock_project = make_mock_project()
+    proj_res = MagicMock()
+    proj_res.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = proj_res
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "status": "ok",
+        "output_key": "1/audio/abc.normalized.wav",
+        "duration_s": "not-a-number",
+    }
+    ffmpeg_client = AsyncMock()
+    ffmpeg_client.post = AsyncMock(return_value=mock_resp)
+
+    def capture_add(obj):
+        if hasattr(obj, "minio_path"):
+            obj.id = 102
+            ts = datetime(2026, 3, 29, tzinfo=timezone.utc)
+            obj.uploaded_at = ts
+            obj.updated_at = ts
+
+    mock_db.add = MagicMock(side_effect=capture_add)
+    mock_db.commit = AsyncMock()
+    mock_db.refresh = AsyncMock()
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD), \
+         patch.object(main.internal_client, "stat_object", return_value=None), \
+         patch.object(main, "_ffmpeg_client", ffmpeg_client):
+        response = client.post(
+            "/v1/projects/1/audio-files/register",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"object_key": "projects/1/audio/abc.mp3"},
+        )
+
+    assert response.status_code == 201
+    assert response.json()["duration_s"] is None
+    assert response.json()["status"] == "uploaded"
+
+
+def test_register_audio_ffmpeg_422(mock_db):
+    """FFmpeg worker 422 surfaces as 422 after register commits."""
+    mock_project = make_mock_project()
+    proj_res = MagicMock()
+    proj_res.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = proj_res
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 422
+    mock_resp.json.return_value = {"error": "FFmpeg failed: corrupt"}
+    ffmpeg_client = AsyncMock()
+    ffmpeg_client.post = AsyncMock(return_value=mock_resp)
+
+    def capture_add(obj):
+        if hasattr(obj, "minio_path"):
+            obj.id = 101
+
+    mock_db.add = MagicMock(side_effect=capture_add)
+    mock_db.commit = AsyncMock()
+    mock_db.refresh = AsyncMock()
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD), \
+         patch.object(main.internal_client, "stat_object", return_value=None), \
+         patch.object(main, "_ffmpeg_client", ffmpeg_client):
+        response = client.post(
+            "/v1/projects/1/audio-files/register",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"object_key": "projects/1/audio/bad.mp3"},
+        )
+
+    assert response.status_code == 422
+    assert "corrupt" in response.json()["error"]
+
+
+def test_normalize_on_demand_not_uploaded(mock_db):
+    """On-demand normalize rejects non-uploaded status."""
+    mock_project = make_mock_project()
+    mock_audio = MagicMock()
+    mock_audio.id = 1
+    mock_audio.project_id = 1
+    mock_audio.status = main.AudioFileStatus.IN_PROGRESS
+
+    proj_res = MagicMock()
+    proj_res.scalar_one_or_none.return_value = mock_project
+    af_res = MagicMock()
+    af_res.scalar_one_or_none.return_value = mock_audio
+
+    mock_db.execute = AsyncMock(side_effect=[proj_res, af_res])
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/projects/1/audio-files/1/normalize",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+    assert response.status_code == 400
+    assert "uploaded" in response.json()["error"]
+
+
+def test_normalize_on_demand_success(mock_db):
+    """On-demand normalize returns updated audio file."""
+    mock_project = make_mock_project()
+    mock_audio = MagicMock()
+    mock_audio.id = 7
+    mock_audio.project_id = 1
+    mock_audio.status = main.AudioFileStatus.UPLOADED
+    mock_audio.minio_path = "projects/1/audio/u.mp3"
+    mock_audio.filename = "u.mp3"
+    mock_audio.normalized_path = None
+    mock_audio.duration_s = None
+    mock_audio.validation_error = None
+    mock_audio.validation_attempted_at = None
+    mock_audio.uploaded_at = datetime(2026, 3, 29, tzinfo=timezone.utc)
+    mock_audio.updated_at = datetime(2026, 3, 29, tzinfo=timezone.utc)
+
+    proj_res = MagicMock()
+    proj_res.scalar_one_or_none.return_value = mock_project
+    af_res = MagicMock()
+    af_res.scalar_one_or_none.return_value = mock_audio
+
+    mock_db.execute = AsyncMock(side_effect=[proj_res, af_res])
+    mock_db.commit = AsyncMock()
+    mock_db.refresh = AsyncMock()
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "status": "ok",
+        "output_key": "1/audio/u.normalized.wav",
+        "duration_s": 9.0,
+    }
+    ffmpeg_client = AsyncMock()
+    ffmpeg_client.post = AsyncMock(return_value=mock_resp)
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD), \
+         patch.object(main, "_ffmpeg_client", ffmpeg_client):
+        response = client.post(
+            "/v1/projects/1/audio-files/7/normalize",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "uploaded"
+    assert mock_audio.status == main.AudioFileStatus.UPLOADED
+
+
+# ─── Story 2.4 — Assignment dashboard ─────────────────────────────────────────
+
+
+def test_project_status_not_found(mock_db):
+    """GET .../status returns 404 when project missing."""
+    mr = MagicMock()
+    mr.scalar_one_or_none.return_value = None
+    mock_db.execute.return_value = mr
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.get(
+            "/v1/projects/99/status",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+    assert response.status_code == 404
+
+
+def test_project_status_forbidden_wrong_owner(mock_db):
+    """Manager who does not own the project gets 403."""
+    mock_project = make_mock_project(manager_id="someone-else")
+    mr = MagicMock()
+    mr.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = mr
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.get(
+            "/v1/projects/1/status",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+    assert response.status_code == 403
+    assert "owner" in response.json()["error"].lower()
+
+
+def test_project_status_manager_owner_success(mock_db):
+    """Owner manager can read project status (AC3 happy path)."""
+    mock_project = make_mock_project(manager_id="user-123")
+    ts = datetime(2026, 3, 29, tzinfo=timezone.utc)
+    af = MagicMock()
+    af.id = 6
+    af.project_id = 1
+    af.filename = "owner.wav"
+    af.minio_path = "projects/1/audio/owner.wav"
+    af.normalized_path = "projects/1/audio/owner.normalized.wav"
+    af.duration_s = 5.0
+    af.status = main.AudioFileStatus.UPLOADED
+    af.validation_error = None
+    af.validation_attempted_at = None
+    af.uploaded_at = ts
+    af.updated_at = ts
+    af.assignment = None
+    mock_project.audio_files = [af]
+    mr = MagicMock()
+    mr.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = mr
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.get(
+            "/v1/projects/1/status",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["project_status"] == "draft"
+    assert body["audios"][0]["id"] == 6
+
+
+def test_project_status_admin_can_view(mock_db):
+    """Admin may read any project status."""
+    mock_project = make_mock_project(manager_id="someone-else")
+    ts = datetime(2026, 3, 29, tzinfo=timezone.utc)
+    af = MagicMock()
+    af.id = 5
+    af.project_id = 1
+    af.filename = "x.wav"
+    af.minio_path = "projects/1/audio/x.wav"
+    af.normalized_path = "projects/1/audio/x.normalized.wav"
+    af.duration_s = 3.0
+    af.status = main.AudioFileStatus.ASSIGNED
+    af.validation_error = None
+    af.validation_attempted_at = None
+    af.uploaded_at = ts
+    af.updated_at = ts
+    asg = MagicMock()
+    asg.transcripteur_id = "user-999"
+    asg.assigned_at = ts
+    af.assignment = asg
+    mock_project.audio_files = [af]
+    mr = MagicMock()
+    mr.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = mr
+    with patch.object(main, "decode_token", return_value=ADMIN_PAYLOAD):
+        response = client.get(
+            "/v1/projects/1/status",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["project_status"] == "draft"
+    assert len(body["audios"]) == 1
+    a0 = body["audios"][0]
+    assert a0["id"] == 5
+    assert a0["status"] == "assigned"
+    assert a0["assigned_to"] == "user-999"
+    assert a0["normalized_path"] == "projects/1/audio/x.normalized.wav"
+
+
+def test_assign_audio_success(mock_db):
+    """POST assign creates assignment and sets audio to assigned."""
+    mock_project = make_mock_project()
+    ts = datetime(2026, 3, 29, tzinfo=timezone.utc)
+    mock_audio = MagicMock()
+    mock_audio.id = 10
+    mock_audio.project_id = 1
+    mock_audio.status = main.AudioFileStatus.UPLOADED
+    mock_audio.normalized_path = "projects/1/audio/z.normalized.wav"
+    mock_audio.validation_error = None
+    mock_audio.filename = "z.wav"
+    mock_audio.minio_path = "projects/1/audio/z.wav"
+    mock_audio.duration_s = 1.0
+    mock_audio.validation_attempted_at = None
+    mock_audio.uploaded_at = ts
+    mock_audio.updated_at = ts
+    mock_audio.assignment = None
+
+    proj_res = MagicMock()
+    proj_res.scalar_one_or_none.return_value = mock_project
+    audio_res = MagicMock()
+    audio_res.scalar_one_or_none.return_value = mock_audio
+    reloaded = MagicMock()
+    reloaded.scalar_one.return_value = mock_audio
+
+    mock_db.execute = AsyncMock(side_effect=[proj_res, audio_res, reloaded])
+    mock_db.commit = AsyncMock()
+    mock_db.refresh = AsyncMock()
+
+    def capture_add(obj):
+        asg = MagicMock()
+        asg.transcripteur_id = getattr(obj, "transcripteur_id", "user-999")
+        asg.assigned_at = ts
+        mock_audio.assignment = asg
+
+    mock_db.add = MagicMock(side_effect=capture_add)
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/projects/1/assign",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"audio_id": 10, "transcripteur_id": "user-999"},
+        )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "assigned"
+    assert data["assigned_to"] == "user-999"
+
+
+def test_assign_audio_not_normalized(mock_db):
+    """400 when audio has no normalized_path."""
+    mock_project = make_mock_project()
+    mock_audio = MagicMock()
+    mock_audio.id = 11
+    mock_audio.project_id = 1
+    mock_audio.status = main.AudioFileStatus.UPLOADED
+    mock_audio.normalized_path = None
+    mock_audio.validation_error = None
+    mock_audio.assignment = None
+
+    proj_res = MagicMock()
+    proj_res.scalar_one_or_none.return_value = mock_project
+    audio_res = MagicMock()
+    audio_res.scalar_one_or_none.return_value = mock_audio
+    mock_db.execute = AsyncMock(side_effect=[proj_res, audio_res])
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/projects/1/assign",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"audio_id": 11, "transcripteur_id": "user-999"},
+        )
+    assert response.status_code == 400
+    assert "assignable" in response.json()["error"].lower()
+
+
+def test_assign_audio_conflict_after_transcribed(mock_db):
+    """409 when human workflow has reached transcribed (Story 2.4 AC4)."""
+    mock_project = make_mock_project()
+    mock_audio = MagicMock()
+    mock_audio.id = 12
+    mock_audio.project_id = 1
+    mock_audio.status = main.AudioFileStatus.TRANSCRIBED
+    mock_audio.normalized_path = "projects/1/audio/x.wav"
+    mock_audio.validation_error = None
+    mock_audio.assignment = None
+
+    proj_res = MagicMock()
+    proj_res.scalar_one_or_none.return_value = mock_project
+    audio_res = MagicMock()
+    audio_res.scalar_one_or_none.return_value = mock_audio
+    mock_db.execute = AsyncMock(side_effect=[proj_res, audio_res])
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/projects/1/assign",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"audio_id": 12, "transcripteur_id": "user-999"},
+        )
+    assert response.status_code == 409
+
+
+def test_assign_audio_conflict_after_validated(mock_db):
+    """409 when human workflow has reached validated (AC4 optional-409)."""
+    mock_project = make_mock_project()
+    mock_audio = MagicMock()
+    mock_audio.id = 13
+    mock_audio.project_id = 1
+    mock_audio.status = main.AudioFileStatus.VALIDATED
+    mock_audio.normalized_path = "projects/1/audio/v.wav"
+    mock_audio.validation_error = None
+    mock_audio.assignment = None
+
+    proj_res = MagicMock()
+    proj_res.scalar_one_or_none.return_value = mock_project
+    audio_res = MagicMock()
+    audio_res.scalar_one_or_none.return_value = mock_audio
+    mock_db.execute = AsyncMock(side_effect=[proj_res, audio_res])
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/projects/1/assign",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"audio_id": 13, "transcripteur_id": "user-999"},
+        )
+    assert response.status_code == 409
+
+
+def test_assign_audio_not_in_project_returns_404(mock_db):
+    """404 when audio id does not belong to the project in path."""
+    mock_project = make_mock_project()
+    proj_res = MagicMock()
+    proj_res.scalar_one_or_none.return_value = mock_project
+    audio_res = MagicMock()
+    audio_res.scalar_one_or_none.return_value = None
+    mock_db.execute = AsyncMock(side_effect=[proj_res, audio_res])
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/projects/1/assign",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"audio_id": 999, "transcripteur_id": "user-999"},
+        )
+    assert response.status_code == 404
+    assert "audio file" in response.json()["error"].lower()
+
+
+def test_assign_audio_integrity_conflict_returns_409(mock_db):
+    """Concurrent first assignment conflict returns explicit 409."""
+    mock_project = make_mock_project()
+    mock_audio = MagicMock()
+    mock_audio.id = 14
+    mock_audio.project_id = 1
+    mock_audio.status = main.AudioFileStatus.UPLOADED
+    mock_audio.normalized_path = "projects/1/audio/c.wav"
+    mock_audio.validation_error = None
+    mock_audio.assignment = None
+
+    proj_res = MagicMock()
+    proj_res.scalar_one_or_none.return_value = mock_project
+    audio_res = MagicMock()
+    audio_res.scalar_one_or_none.return_value = mock_audio
+    mock_db.execute = AsyncMock(side_effect=[proj_res, audio_res])
+    mock_db.commit = AsyncMock(side_effect=main.IntegrityError("stmt", "params", Exception("duplicate")))
+    mock_db.rollback = AsyncMock()
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/projects/1/assign",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"audio_id": 14, "transcripteur_id": "user-999"},
+        )
+    assert response.status_code == 409
+
+
+def test_assign_audio_wrong_manager(mock_db):
+    """403 when another manager tries to assign."""
+    mock_project = make_mock_project(manager_id="owner-1")
+    proj_res = MagicMock()
+    proj_res.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = proj_res
+
+    with patch.object(main, "decode_token", return_value=MANAGER_OTHER_PAYLOAD):
+        response = client.post(
+            "/v1/projects/1/assign",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"audio_id": 1, "transcripteur_id": "user-999"},
+        )
+    assert response.status_code == 403
+
+
+def test_me_audio_tasks_transcripteur(mock_db):
+    """Transcripteur sees assigned tasks."""
+    ts = datetime(2026, 3, 29, tzinfo=timezone.utc)
+    asg = MagicMock()
+    af = MagicMock()
+    af.id = 3
+    af.filename = "t.wav"
+    af.status = main.AudioFileStatus.ASSIGNED
+    proj = MagicMock()
+    proj.id = 7
+    proj.name = "Proj Seven"
+
+    mr = MagicMock()
+    mr.all.return_value = [(asg, af, proj)]
+    asg.assigned_at = ts
+    mock_db.execute.return_value = mr
+
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.get(
+            "/v1/me/audio-tasks",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["audio_id"] == 3
+    assert data[0]["project_id"] == 7
+    assert data[0]["project_name"] == "Proj Seven"
+
+
+def test_me_audio_tasks_forbidden_expert(mock_db):
+    """Expert role cannot list transcripteur tasks."""
+    with patch.object(main, "decode_token", return_value=EXPERT_PAYLOAD):
+        response = client.get(
+            "/v1/me/audio-tasks",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+    assert response.status_code == 403
+
+
+def test_me_audio_tasks_admin_override_target_sub(mock_db):
+    """Admin can inspect another transcripteur task list via query override."""
+    ts = datetime(2026, 3, 29, tzinfo=timezone.utc)
+    asg = MagicMock()
+    asg.assigned_at = ts
+    af = MagicMock()
+    af.id = 8
+    af.filename = "override.wav"
+    af.status = main.AudioFileStatus.ASSIGNED
+    proj = MagicMock()
+    proj.id = 2
+    proj.name = "Admin Debug"
+
+    mr = MagicMock()
+    mr.all.return_value = [(asg, af, proj)]
+    mock_db.execute = AsyncMock(return_value=mr)
+
+    with patch.object(main, "decode_token", return_value=ADMIN_PAYLOAD):
+        response = client.get(
+            "/v1/me/audio-tasks?transcripteur_id=user-999",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+    assert response.status_code == 200
+    assert response.json()[0]["audio_id"] == 8
+
+
+def test_project_status_transcripteur_forbidden(mock_db):
+    """Transcripteur cannot call manager status endpoint."""
+    mock_project = make_mock_project()
+    mr = MagicMock()
+    mr.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = mr
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.get(
+            "/v1/projects/1/status",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+    assert response.status_code == 403
+
+
+def test_list_projects_include_audio_summary(mock_db):
+    """?include=audio_summary adds aggregate fields without per-project N+1."""
+    mock_project = make_mock_project()
+    r1 = MagicMock()
+    r1.scalars.return_value.all.return_value = [mock_project]
+    r2 = MagicMock()
+    mock_row = MagicMock()
+    mock_row.project_id = 1
+    mock_row.uploaded = 2
+    mock_row.assigned = 1
+    mock_row.in_progress = 0
+    mock_row.transcribed = 0
+    mock_row.validated = 0
+    r2.all.return_value = [mock_row]
+    r3 = MagicMock()
+    r3.all.return_value = [(1, 1)]
+    mock_db.execute = AsyncMock(side_effect=[r1, r2, r3])
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.get(
+            "/v1/projects?include=audio_summary",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 1
+    assert payload[0]["audio_counts_by_status"]["uploaded"] == 2
+    assert payload[0]["unassigned_normalized_count"] == 1
+
+
+def test_register_completed_project_forbidden(mock_db):
+    """Cannot register audio on completed project."""
+    mock_project = make_mock_project(status_val="completed")
+    mr = MagicMock()
+    mr.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = mr
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/projects/1/audio-files/register",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"object_key": "projects/1/audio/x.mp3"},
         )
     assert response.status_code == 403

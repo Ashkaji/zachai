@@ -1,6 +1,6 @@
 # ZachAI: System Interfaces (API Mapping)
 
-**Dernière mise à jour :** 2026-03-27
+**Dernière mise à jour :** 2026-03-29
 **Serveur :** FastAPI Gateway
 **Auth :** Tous les endpoints requièrent `Authorization: Bearer <JWT Keycloak>` sauf mention contraire.
 
@@ -38,18 +38,32 @@ FastAPI ne manipule jamais les binaires — il orchestre les accès via Presigne
   - Action: Met à jour les labels d'une nature existante
 
 - **`POST /v1/projects`**
-  - Auth: Manager
+  - Auth: Manager / Admin
   - Body: `{name, nature_id, production_goal, description}`
   - Action: Crée le projet + déclenche Camunda 7 `project-lifecycle` (provisionnement Label Studio)
 
-- **`GET /v1/projects/{project_id}/status`**
-  - Auth: Manager du projet
-  - Retourne: `{project_status, audios: [{id, filename, status, assigned_to}]}`
+- **`GET /v1/projects`**
+  - Auth: Manager / Admin
+  - Query optionnel: `include=audio_summary` — ajoute par projet `audio_counts_by_status` (`uploaded`, `assigned`, `in_progress`, `transcribed`, `validated`) et `unassigned_normalized_count` (audios normalisés sans ligne `assignments`), via requêtes agrégées (pas de N+1).
 
-- **`POST /v1/projects/{project_id}/assign`**
-  - Auth: Manager
-  - Body: `{audio_id, transcripteur_id}`
-  - Action: Crée/met à jour l'assignation de l'audio
+- **`GET /v1/projects/{project_id}/status`** (Story 2.4)
+  - Auth: **Manager propriétaire** (`manager_id` = `sub`) ou **Admin**
+  - **404** si projet absent. **403** si Manager non propriétaire.
+  - Retourne: `{ "project_status": "draft|active|completed", "audios": [ { champs alignés sur la ressource audio + `"assigned_to"`, `"assigned_at"` } ] }`
+
+- **`POST /v1/projects/{project_id}/assign`** (Story 2.4)
+  - Auth: Manager propriétaire ou Admin
+  - Body: `{ "audio_id": int, "transcripteur_id": str }` — `transcripteur_id` = Keycloak `sub` (MVP: non validé via Admin API)
+  - **404** projet ou audio absent / audio hors projet. **400** si audio non éligible (pas normalisé sans erreur, ou normalisation en cours). **409** si statut `transcribed` ou `validated`.
+  - Upsert `assignments` (une ligne par `audio_id`); `AudioFile.status` → `assigned`.
+
+- **`GET /v1/me/audio-tasks`** (Story 2.4)
+  - Auth: **Transcripteur** ou **Admin** (support / debug)
+  - Query optionnel (Admin): `transcripteur_id=<sub>` pour inspecter les tâches d’un transcripteur donné.
+  - Liste des audios assignés au `sub` ciblé: `[{ "audio_id", "project_id", "project_name", "filename", "status", "assigned_at" }, ...]`
+  - **403** pour les autres rôles.
+
+**Sémantique post-FFmpeg** : après normalisation réussie, le statut reste `uploaded` avec `normalized_path` ; `transcribed` = phase transcripteur (PRD).
 
 ---
 
