@@ -19,7 +19,8 @@
       "Bash(MSYS_NO_PATHCONV=1 docker exec zachai-keycloak /opt/keycloak/bin/kcadm.sh config credentials --server http://localhost:8080 --realm master --user admin --password admin)",
       "Bash(echo \"Exit: $?\")",
       "Bash(grep -v \"^$\")",
-      "Bash(docker ps:*)"
+      "Bash(docker ps:*)",
+      "Bash(git:*)"
     ]
   }
 }

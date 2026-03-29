@@ -185,12 +185,17 @@ services:
       MINIO_SECURE: ${MINIO_SECURE:-false}
       # Presigned URLs use the externally reachable MinIO endpoint (browsers cannot resolve minio:9000)
       MINIO_PRESIGNED_ENDPOINT: ${MINIO_PRESIGNED_ENDPOINT}
+      # PostgreSQL — FastAPI reuses the shared postgres credentials (Story 2.1)
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     networks:
       - zachai-network
     depends_on:
       keycloak:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]

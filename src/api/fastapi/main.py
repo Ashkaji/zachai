@@ -1,13 +1,16 @@
 """
-ZachAI FastAPI Gateway — Story 1.3: Presigned URL Engine
-Lean gateway: JWT verification (Keycloak) + Presigned URL generation (MinIO).
+ZachAI FastAPI Gateway — Story 2.1: CRUD Natures & Label Schemas
+Extends Story 1.3: Presigned URL Engine + JWT verification (Keycloak) + MinIO.
+Adds: SQLAlchemy ORM (natures, label_schemas tables), Nature CRUD endpoints.
 FastAPI never touches audio binary data — upload goes directly browser→MinIO.
 """
 import os
 import logging
+import html
 from contextlib import asynccontextmanager
-from datetime import timedelta
-from typing import Annotated
+from datetime import timedelta, datetime
+from typing import Annotated, AsyncGenerator
+from urllib.parse import quote_plus
 
 import httpx
 from fastapi import FastAPI, HTTPException, Depends, Query, Request
@@ -15,7 +18,11 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError, ExpiredSignatureError
 from minio import Minio
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy import String, Boolean, Integer, ForeignKey, DateTime, func, select, delete
+from sqlalchemy.exc import IntegrityError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -28,6 +35,8 @@ REQUIRED_ENV_VARS = [
     "MINIO_ACCESS_KEY",
     "MINIO_SECRET_KEY",
     "MINIO_PRESIGNED_ENDPOINT",
+    "POSTGRES_USER",
+    "POSTGRES_PASSWORD",
 ]
 
 ALLOWED_GET_PREFIXES = ("projects/", "golden-set/", "snapshots/")
@@ -54,7 +63,7 @@ MINIO_PRESIGNED_ENDPOINT: str = os.environ["MINIO_PRESIGNED_ENDPOINT"]
 _MINIO_BUCKETS = ["projects", "golden-set", "snapshots", "models"]
 _MINIO_REGION = "us-east-1"
 
-# Internal client — connects to minio:9000 (Docker network) for admin ops (bucket existence checks).
+# Internal client — connects to minio:9000 (Docker network) for admin ops.
 internal_client = Minio(
     endpoint=MINIO_INTERNAL_ENDPOINT,
     access_key=os.environ["MINIO_ACCESS_KEY"],
@@ -64,7 +73,6 @@ internal_client = Minio(
 
 # Presigned URL client — uses the externally reachable endpoint (localhost:9000).
 # Region cache is pre-seeded so the SDK generates signed URLs without making any network call.
-# SigV4 signature will include 'host:localhost:9000' — valid for browser-to-MinIO uploads.
 presigned_client = Minio(
     endpoint=MINIO_PRESIGNED_ENDPOINT,
     access_key=os.environ["MINIO_ACCESS_KEY"],
@@ -75,6 +83,51 @@ presigned_client._region_map = {bucket: _MINIO_REGION for bucket in _MINIO_BUCKE
 
 # JWKS cache — populated at startup, avoids per-request Keycloak calls
 _jwks_cache: dict = {}
+
+# ─── PostgreSQL / SQLAlchemy ──────────────────────────────────────────────────
+
+POSTGRES_USER: str = os.environ["POSTGRES_USER"]
+POSTGRES_PASSWORD: str = os.environ["POSTGRES_PASSWORD"]
+DATABASE_URL: str = (
+    f"postgresql+asyncpg://{quote_plus(POSTGRES_USER)}:{quote_plus(POSTGRES_PASSWORD)}@postgres:5432/zachai"
+)
+
+engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+# ─── ORM Models ───────────────────────────────────────────────────────────────
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Nature(Base):
+    __tablename__ = "natures"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)  # sub (UUID) from JWT
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    labels: Mapped[list["LabelSchema"]] = relationship(
+        "LabelSchema", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class LabelSchema(Base):
+    __tablename__ = "label_schemas"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    nature_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("natures.id", ondelete="CASCADE"), nullable=False
+    )
+    label_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    label_color: Mapped[str] = mapped_column(String(20), nullable=False)
+    is_speech: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    is_required: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
 
 # ─── JWKS fetch ───────────────────────────────────────────────────────────────
 
@@ -95,23 +148,40 @@ async def fetch_jwks(issuer: str) -> dict:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _jwks_cache
+    # JWKS (existing) — tolerant: Keycloak may still be starting
     try:
         _jwks_cache = await fetch_jwks(KEYCLOAK_ISSUER)
         logger.info("JWKS loaded: %d key(s)", len(_jwks_cache.get("keys", [])))
     except Exception as exc:
-        logger.error("Failed to load JWKS from Keycloak: %s — JWT verification will fail until Keycloak is reachable", exc)
-        # Do not crash — Keycloak may still be starting; requests will fail auth until JWKS loads
+        logger.error(
+            "Failed to load JWKS from Keycloak: %s — JWT verification will fail until Keycloak is reachable",
+            exc,
+        )
+
+    # DB tables — tolerant: PostgreSQL may not be ready yet
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database tables initialized")
+    except Exception as exc:
+        logger.error(
+            "Failed to initialize DB tables: %s — DB operations will fail", exc
+        )
+
     yield
+
+    await engine.dispose()
 
 
 app = FastAPI(
     title="ZachAI Gateway",
-    description="Lean API gateway: presigned URL generation + JWT verification",
-    version="1.3.0",
+    description="Lean API gateway: presigned URL generation + JWT verification + Nature CRUD",
+    version="2.1.0",
     lifespan=lifespan,
 )
 
 # ─── Security ─────────────────────────────────────────────────────────────────
+
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
@@ -160,6 +230,14 @@ def get_current_user(
     return decode_token(credentials.credentials)
 
 
+# ─── DB Dependency ────────────────────────────────────────────────────────────
+
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSessionLocal() as session:
+        yield session
+
+
 # ─── Schemas ──────────────────────────────────────────────────────────────────
 
 
@@ -169,7 +247,72 @@ class PutRequestBody(BaseModel):
     content_type: str
 
 
-# ─── Routes ───────────────────────────────────────────────────────────────────
+class LabelIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    color: str = Field(..., pattern=r"^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$")
+    is_speech: bool = True
+    is_required: bool = False
+
+
+class NatureCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: str | None = Field(None, max_length=1000)
+    labels: list[LabelIn]
+
+
+class LabelsUpdateRequest(BaseModel):
+    labels: list[LabelIn]
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def generate_label_studio_xml(labels: list) -> str:
+    """Generate Label Studio labeling interface XML from a nature's label set.
+    Speech labels appear first; non-speech (Pause, Bruit, Musique) follow.
+    This XML is consumed by Camunda 7 in Story 2.2 to provision Label Studio projects.
+    """
+    speech = [lb for lb in labels if lb.is_speech]
+    non_speech = [lb for lb in labels if not lb.is_speech]
+
+    label_tags = "\n".join(
+        f'    <Label value="{html.escape(lb.label_name)}" background="{html.escape(lb.label_color)}"/>'
+        for lb in speech + non_speech
+    )
+
+    return (
+        "<View>\n"
+        '  <AudioPlus name="audio" value="$audio"/>\n'
+        '  <Labels name="label" toName="audio">\n'
+        f"{label_tags}\n"
+        "  </Labels>\n"
+        '  <TextArea name="transcription" toName="audio" rows="4" editable="true" placeholder="Transcription..."/>\n'
+        "</View>"
+    )
+
+
+def _nature_to_dict(nature: Nature) -> dict:
+    return {
+        "id": nature.id,
+        "name": nature.name,
+        "description": nature.description,
+        "created_by": nature.created_by,
+        "created_at": nature.created_at.isoformat(),
+        "labels": [
+            {
+                "id": lb.id,
+                "name": lb.label_name,
+                "color": lb.label_color,
+                "is_speech": lb.is_speech,
+                "is_required": lb.is_required,
+            }
+            for lb in nature.labels
+        ],
+        "label_studio_schema": generate_label_studio_xml(nature.labels),
+    }
+
+
+# ─── Routes — Presigned URLs (Story 1.3) ─────────────────────────────────────
 
 
 @app.get("/health")
@@ -217,7 +360,10 @@ def request_put(
 def request_get(
     payload: Annotated[dict, Depends(get_current_user)],
     project_id: str = Query(..., description="Project identifier"),
-    object_key: str = Query(..., description="MinIO object key (must start with 'projects/', 'golden-set/', or 'snapshots/')"),
+    object_key: str = Query(
+        ...,
+        description="MinIO object key (must start with 'projects/', 'golden-set/', or 'snapshots/')",
+    ),
 ) -> dict:
     """
     Generate a presigned MinIO GET URL for audio access.
@@ -247,3 +393,139 @@ def request_get(
         "presigned_url": presigned_url,
         "expires_in": 3600,
     }
+
+
+# ─── Routes — Nature CRUD (Story 2.1) ────────────────────────────────────────
+
+
+@app.post("/v1/natures", status_code=201)
+async def create_nature(
+    body: NatureCreateRequest,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    roles = get_roles(payload)
+    if not {"Manager", "Admin"}.intersection(roles):
+        raise HTTPException(status_code=403, detail={"error": "Manager or Admin role required"})
+
+    if len({lb.name for lb in body.labels}) != len(body.labels):
+        raise HTTPException(status_code=400, detail={"error": "Duplicate label names provided"})
+
+    creator_id = payload.get("sub", payload.get("preferred_username"))
+    if not creator_id:
+        raise HTTPException(status_code=401, detail={"error": "Creator identifier missing in token"})
+
+    try:
+        async with db.begin_nested():
+            nature = Nature(
+                name=body.name,
+                description=body.description,
+                created_by=creator_id,
+            )
+            db.add(nature)
+            await db.flush()  # populate nature.id before label inserts
+
+            for label in body.labels:
+                db.add(
+                    LabelSchema(
+                        nature_id=nature.id,
+                        label_name=label.name,
+                        label_color=label.color,
+                        is_speech=label.is_speech,
+                        is_required=label.is_required,
+                    )
+                )
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        # This covers both the duplicate Nature name and any potential LabelSchema conflicts
+        raise HTTPException(status_code=400, detail={"error": "Nature name already exists or data integrity violation"})
+
+    await db.refresh(nature)
+    return _nature_to_dict(nature)
+
+
+@app.get("/v1/natures")
+async def list_natures(
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list:
+    roles = get_roles(payload)
+    if not {"Manager", "Admin"}.intersection(roles):
+        raise HTTPException(status_code=403, detail={"error": "Manager or Admin role required"})
+
+    result = await db.execute(select(Nature))
+    natures = result.scalars().all()
+    return [
+        {
+            "id": n.id,
+            "name": n.name,
+            "description": n.description,
+            "created_by": n.created_by,
+            "created_at": n.created_at.isoformat(),
+            "label_count": len(n.labels),
+        }
+        for n in natures
+    ]
+
+
+@app.get("/v1/natures/{nature_id}")
+async def get_nature(
+    nature_id: int,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    roles = get_roles(payload)
+    if not {"Manager", "Admin"}.intersection(roles):
+        raise HTTPException(status_code=403, detail={"error": "Manager or Admin role required"})
+
+    result = await db.execute(select(Nature).where(Nature.id == nature_id))
+    nature = result.scalar_one_or_none()
+    if not nature:
+        raise HTTPException(status_code=404, detail={"error": "Nature not found"})
+
+    return _nature_to_dict(nature)
+
+
+@app.put("/v1/natures/{nature_id}/labels")
+async def update_nature_labels(
+    nature_id: int,
+    body: LabelsUpdateRequest,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    roles = get_roles(payload)
+    if not {"Manager", "Admin"}.intersection(roles):
+        raise HTTPException(status_code=403, detail={"error": "Manager or Admin role required"})
+
+    if len({lb.name for lb in body.labels}) != len(body.labels):
+        raise HTTPException(status_code=400, detail={"error": "Duplicate label names provided"})
+
+    result = await db.execute(select(Nature).where(Nature.id == nature_id))
+    nature = result.scalar_one_or_none()
+    if not nature:
+        raise HTTPException(status_code=404, detail={"error": "Nature not found"})
+
+    # Atomic replace: delete all existing labels then insert new ones
+    async with db.begin_nested():
+        await db.execute(delete(LabelSchema).where(LabelSchema.nature_id == nature_id))
+        for label in body.labels:
+            db.add(
+                LabelSchema(
+                    nature_id=nature_id,
+                    label_name=label.name,
+                    label_color=label.color,
+                    is_speech=label.is_speech,
+                    is_required=label.is_required,
+                )
+            )
+
+    await db.commit()
+    # Expire to force reload of labels relationship in the next select
+    db.expire(nature)
+    # Reload with fresh labels (selectin loading via relationship)
+    result = await db.execute(select(Nature).where(Nature.id == nature_id))
+    nature = result.scalar_one_or_none()
+    if not nature:
+        raise HTTPException(status_code=404, detail={"error": "Nature was concurrently deleted"})
+    return _nature_to_dict(nature)
