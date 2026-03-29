@@ -6,10 +6,11 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY api/fastapi/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py .
+COPY api/fastapi/main.py .
+COPY bpmn/project-lifecycle.bpmn ./bpmn/
 
 EXPOSE 8000
 

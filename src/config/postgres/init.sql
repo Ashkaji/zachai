@@ -17,3 +17,9 @@ SELECT 'CREATE DATABASE zachai'
 WHERE NOT EXISTS (
     SELECT FROM pg_database WHERE datname = 'zachai'
 )\gexec
+
+-- Camunda 7 workflow engine database (used by Camunda — Story 2.2)
+SELECT 'CREATE DATABASE camunda'
+WHERE NOT EXISTS (
+    SELECT FROM pg_database WHERE datname = 'camunda'
+)\gexec

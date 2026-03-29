@@ -1,10 +1,11 @@
 """
-Unit tests for ZachAI FastAPI Gateway — Stories 1.3 & 2.1
+Unit tests for ZachAI FastAPI Gateway — Stories 1.3, 2.1 & 2.2
 Tests use mocked Keycloak JWT verification, mocked MinIO client, and mocked AsyncSession.
 Run with: pytest test_main.py -v
 """
 import os
 import pytest
+import httpx
 from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi.testclient import TestClient
@@ -103,12 +104,25 @@ def make_mock_nature(
     return n
 
 
+class _FakeNestedTransaction:
+    """Mimics the async context manager returned by session.begin_nested()."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        return False
+
+
 @pytest.fixture
 def mock_db():
     """Override get_db dependency with an AsyncMock session; clean up after each test."""
     mock_session = AsyncMock()
-    # add() is sync on AsyncSession
+    # Sync methods on AsyncSession — must be plain MagicMock, not AsyncMock
     mock_session.add = MagicMock()
+    mock_session.expire = MagicMock()
+    # begin_nested() must return an async context manager, not a coroutine
+    mock_session.begin_nested = MagicMock(return_value=_FakeNestedTransaction())
 
     async def override():
         yield mock_session
@@ -385,10 +399,10 @@ def test_create_nature_with_labels(mock_db):
 
 
 def test_create_nature_duplicate(mock_db):
-    """POST /v1/natures returns 400 when name already exists."""
-    mock_result = MagicMock()
-    mock_result.scalar_one_or_none.return_value = make_mock_nature()  # duplicate found
-    mock_db.execute.return_value = mock_result
+    """POST /v1/natures returns 400 when name already exists (IntegrityError on flush)."""
+    from sqlalchemy.exc import IntegrityError as SAIntegrityError
+
+    mock_db.flush.side_effect = SAIntegrityError("duplicate key", params=None, orig=Exception())
 
     with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
         response = client.post(
@@ -398,7 +412,7 @@ def test_create_nature_duplicate(mock_db):
         )
 
     assert response.status_code == 400
-    assert response.json() == {"error": "Nature name already exists"}
+    assert "already exists" in response.json()["error"]
 
 
 def test_create_nature_transcripteur_forbidden(mock_db):
@@ -562,7 +576,7 @@ def test_update_labels_success(mock_db):
     mock_result_delete = MagicMock()
 
     mock_result_reload = MagicMock()
-    mock_result_reload.scalar_one.return_value = updated_nature
+    mock_result_reload.scalar_one_or_none.return_value = updated_nature
 
     mock_db.execute.side_effect = [mock_result_find, mock_result_delete, mock_result_reload]
 
@@ -654,3 +668,389 @@ def test_generate_xml_speech_labels_first():
     assert orateur_pos < bruit_pos
     assert traducteur_pos < pause_pos
     assert traducteur_pos < bruit_pos
+
+
+# ─── Helpers for Project mocking (Story 2.2) ────────────────────────────────
+
+
+def make_mock_project(
+    project_id=1,
+    name="Camp 2026",
+    description=None,
+    nature_id=1,
+    production_goal="livre",
+    status_val="draft",
+    manager_id="user-123",
+    process_instance_id=None,
+    label_studio_project_id=None,
+    nature=None,
+    audio_files=None,
+    created_at=None,
+    updated_at=None,
+):
+    if created_at is None:
+        created_at = datetime(2026, 3, 29, tzinfo=timezone.utc)
+    if updated_at is None:
+        updated_at = created_at
+    if nature is None:
+        nature = make_mock_nature()
+    if audio_files is None:
+        audio_files = []
+    p = MagicMock()
+    p.id = project_id
+    p.name = name
+    p.description = description
+    p.nature_id = nature_id
+    p.production_goal = production_goal
+    p.status = MagicMock(value=status_val)
+    p.manager_id = manager_id
+    p.process_instance_id = process_instance_id
+    p.label_studio_project_id = label_studio_project_id
+    p.nature = nature
+    p.audio_files = audio_files
+    p.created_at = created_at
+    p.updated_at = updated_at
+    return p
+
+
+# ─── Story 2.2: POST /v1/projects ──────────────────────────────────────────
+
+
+def test_create_project_success(mock_db):
+    """POST /v1/projects returns 201 with full project shape."""
+    mock_nature = make_mock_nature(labels=[])
+    # First execute: nature lookup (found)
+    nature_result = MagicMock()
+    nature_result.scalar_one_or_none.return_value = mock_nature
+    # Second execute: duplicate name check (not found)
+    dup_result = MagicMock()
+    dup_result.scalar_one_or_none.return_value = None
+    mock_db.execute = AsyncMock(side_effect=[nature_result, dup_result])
+
+    mock_project = make_mock_project(nature=mock_nature)
+
+    async def mock_refresh(obj):
+        obj.id = 1
+        obj.name = "Camp 2026"
+        obj.description = None
+        obj.nature_id = 1
+        obj.production_goal = "livre"
+        obj.status = MagicMock(value="draft")
+        obj.manager_id = "user-123"
+        obj.process_instance_id = None
+        obj.label_studio_project_id = None
+        obj.created_at = datetime(2026, 3, 29, tzinfo=timezone.utc)
+        obj.updated_at = datetime(2026, 3, 29, tzinfo=timezone.utc)
+        obj.nature = mock_nature
+        obj.audio_files = []
+
+    mock_db.refresh.side_effect = mock_refresh
+
+    # Mock Camunda client to fail gracefully (no Camunda in test)
+    mock_camunda_resp = MagicMock()
+    mock_camunda_resp.status_code = 200
+    mock_camunda_resp.json.return_value = {"id": "proc-123"}
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD), \
+         patch.object(main, "camunda_client") as mock_camunda:
+        mock_camunda.post = AsyncMock(return_value=mock_camunda_resp)
+        response = client.post(
+            "/v1/projects",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={
+                "name": "Camp 2026",
+                "nature_id": 1,
+                "production_goal": "livre",
+            },
+        )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["name"] == "Camp 2026"
+    assert data["production_goal"] == "livre"
+    assert data["status"] == "draft"
+    assert "labels" in data
+    assert "nature_name" in data
+    assert "created_at" in data
+
+
+def test_create_project_nature_not_found(mock_db):
+    """POST /v1/projects returns 400 when nature doesn't exist."""
+    nature_result = MagicMock()
+    nature_result.scalar_one_or_none.return_value = None
+    mock_db.execute = AsyncMock(return_value=nature_result)
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/projects",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"name": "P1", "nature_id": 999, "production_goal": "livre"},
+        )
+
+    assert response.status_code == 400
+    assert "not found" in response.json()["error"]
+
+
+def test_create_project_duplicate_name(mock_db):
+    """POST /v1/projects returns 400 when name already exists."""
+    mock_nature = make_mock_nature()
+    nature_result = MagicMock()
+    nature_result.scalar_one_or_none.return_value = mock_nature
+    dup_result = MagicMock()
+    dup_result.scalar_one_or_none.return_value = make_mock_project()
+    mock_db.execute = AsyncMock(side_effect=[nature_result, dup_result])
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/projects",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"name": "Existing", "nature_id": 1, "production_goal": "livre"},
+        )
+
+    assert response.status_code == 400
+    assert "already exists" in response.json()["error"]
+
+
+def test_create_project_transcripteur_forbidden(mock_db):
+    """POST /v1/projects returns 403 for Transcripteur role."""
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.post(
+            "/v1/projects",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"name": "P1", "nature_id": 1, "production_goal": "livre"},
+        )
+    assert response.status_code == 403
+
+
+def test_create_project_expert_forbidden(mock_db):
+    """POST /v1/projects returns 403 for Expert role."""
+    with patch.object(main, "decode_token", return_value=EXPERT_PAYLOAD):
+        response = client.post(
+            "/v1/projects",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"name": "P1", "nature_id": 1, "production_goal": "livre"},
+        )
+    assert response.status_code == 403
+
+
+def test_create_project_invalid_production_goal():
+    """POST /v1/projects returns 422 for invalid production_goal."""
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/projects",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"name": "P1", "nature_id": 1, "production_goal": "invalid"},
+        )
+    assert response.status_code == 422  # Pydantic validation error
+
+
+def test_create_project_camunda_unavailable(mock_db):
+    """POST /v1/projects returns 201 even when Camunda is unreachable."""
+    mock_nature = make_mock_nature(labels=[])
+    nature_result = MagicMock()
+    nature_result.scalar_one_or_none.return_value = mock_nature
+    dup_result = MagicMock()
+    dup_result.scalar_one_or_none.return_value = None
+    mock_db.execute = AsyncMock(side_effect=[nature_result, dup_result])
+
+    async def mock_refresh(obj):
+        obj.id = 1
+        obj.name = "Camp 2026"
+        obj.description = None
+        obj.nature_id = 1
+        obj.production_goal = "livre"
+        obj.status = MagicMock(value="draft")
+        obj.manager_id = "user-123"
+        obj.process_instance_id = None
+        obj.label_studio_project_id = None
+        obj.created_at = datetime(2026, 3, 29, tzinfo=timezone.utc)
+        obj.updated_at = datetime(2026, 3, 29, tzinfo=timezone.utc)
+        obj.nature = mock_nature
+        obj.audio_files = []
+
+    mock_db.refresh.side_effect = mock_refresh
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD), \
+         patch.object(main, "camunda_client") as mock_camunda:
+        mock_camunda.post = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
+        response = client.post(
+            "/v1/projects",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"name": "Camp 2026", "nature_id": 1, "production_goal": "livre"},
+        )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["process_instance_id"] is None  # Camunda was down
+
+
+# ─── Story 2.2: GET /v1/projects ────────────────────────────────────────────
+
+
+def test_list_projects_success(mock_db):
+    """GET /v1/projects returns 200 with list of projects."""
+    mock_project = make_mock_project()
+    mock_scalars = MagicMock()
+    mock_scalars.all.return_value = [mock_project]
+    mock_result = MagicMock()
+    mock_result.scalars.return_value = mock_scalars
+    mock_db.execute.return_value = mock_result
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.get(
+            "/v1/projects",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["name"] == "Camp 2026"
+    assert data[0]["nature_name"] == "Camp Biblique"
+
+
+def test_list_projects_empty(mock_db):
+    """GET /v1/projects returns 200 with empty list."""
+    mock_scalars = MagicMock()
+    mock_scalars.all.return_value = []
+    mock_result = MagicMock()
+    mock_result.scalars.return_value = mock_scalars
+    mock_db.execute.return_value = mock_result
+
+    with patch.object(main, "decode_token", return_value=ADMIN_PAYLOAD):
+        response = client.get(
+            "/v1/projects",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_list_projects_transcripteur_forbidden(mock_db):
+    """GET /v1/projects returns 403 for Transcripteur."""
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.get(
+            "/v1/projects",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+    assert response.status_code == 403
+
+
+# ─── Story 2.2: GET /v1/projects/{id} ──────────────────────────────────────
+
+
+def test_get_project_success(mock_db):
+    """GET /v1/projects/{id} returns 200 with full project."""
+    mock_project = make_mock_project()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = mock_result
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.get(
+            "/v1/projects/1",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == 1
+    assert data["name"] == "Camp 2026"
+    assert "labels" in data
+
+
+def test_get_project_not_found(mock_db):
+    """GET /v1/projects/{id} returns 404 when not found."""
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_db.execute.return_value = mock_result
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.get(
+            "/v1/projects/999",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+    assert response.status_code == 404
+    assert response.json() == {"error": "Project not found"}
+
+
+def test_get_project_expert_forbidden(mock_db):
+    """GET /v1/projects/{id} returns 403 for Expert."""
+    with patch.object(main, "decode_token", return_value=EXPERT_PAYLOAD):
+        response = client.get(
+            "/v1/projects/1",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+    assert response.status_code == 403
+
+
+# ─── Story 2.2: PUT /v1/projects/{id}/status ────────────────────────────────
+
+
+def test_update_status_draft_to_active(mock_db):
+    """PUT /v1/projects/{id}/status transitions draft → active."""
+    mock_project = make_mock_project(status_val="draft")
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = mock_result
+
+    # After commit+refresh, project.status should be active
+    async def mock_refresh(obj):
+        obj.status = MagicMock(value="active")
+
+    mock_db.refresh.side_effect = mock_refresh
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.put(
+            "/v1/projects/1/status",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"status": "active"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "active"
+
+
+def test_update_status_invalid_transition(mock_db):
+    """PUT /v1/projects/{id}/status rejects completed → draft."""
+    mock_project = make_mock_project(status_val="completed")
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = mock_result
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.put(
+            "/v1/projects/1/status",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"status": "draft"},
+        )
+
+    assert response.status_code == 400
+    assert "Cannot transition" in response.json()["error"]
+
+
+def test_update_status_not_found(mock_db):
+    """PUT /v1/projects/{id}/status returns 404 when not found."""
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_db.execute.return_value = mock_result
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.put(
+            "/v1/projects/999/status",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"status": "active"},
+        )
+    assert response.status_code == 404
+
+
+def test_update_status_transcripteur_forbidden(mock_db):
+    """PUT /v1/projects/{id}/status returns 403 for Transcripteur."""
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.put(
+            "/v1/projects/1/status",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"status": "active"},
+        )
+    assert response.status_code == 403

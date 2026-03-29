@@ -171,7 +171,8 @@ services:
 
   fastapi:
     build:
-      context: ./api/fastapi
+      context: .
+      dockerfile: api/fastapi/Dockerfile
     container_name: zachai-fastapi
     ports:
       - "8000:8000"    # API gateway — http://localhost:8000
@@ -188,6 +189,8 @@ services:
       # PostgreSQL — FastAPI reuses the shared postgres credentials (Story 2.1)
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Camunda 7 REST API — internal Docker DNS (Story 2.2)
+      CAMUNDA_REST_URL: http://camunda7:8080/engine-rest
     networks:
       - zachai-network
     depends_on:
@@ -197,6 +200,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      camunda7:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
       interval: 10s
@@ -205,11 +210,31 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  # camunda7:       # TODO: Story 2.2 — BPMN orchestration via External Task Workers.
-  #                 #                   Image: camunda/camunda-bpm-platform:run-7.24.0.
-  #                 #                   Ports: 8080 (REST+Cockpit), 9404 (Prometheus).
-  #                 #                   Depends on: postgres (service_healthy). DB: dedicated.
-  # camunda-workers: # TODO: Story 2.2 — will be added here after camunda7 is deployed.
+  camunda7:
+    image: camunda/camunda-bpm-platform:run-7.24.0
+    container_name: zachai-camunda7
+    ports:
+      - "8081:8080"    # REST API + Cockpit — http://localhost:8081/camunda/app/cockpit
+      - "9404:9404"    # Prometheus metrics
+    environment:
+      DB_DRIVER: org.postgresql.Driver
+      DB_URL: jdbc:postgresql://postgres:5432/camunda
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      WAIT_FOR: postgres:5432
+      WAIT_FOR_TIMEOUT: 60
+    networks:
+      - zachai-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/engine-rest/version || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
 
   # ── Layer 2: Compute & Inference ─────────────────────────────────────────────
 
@@ -247,9 +272,29 @@ services:
   #                 #                   Depends on: minio (service_healthy).
   #                 #                   Internal only — NOT exposed publicly.
 
-  # ── Layer 3: Orchestration Workers ───────────────────────────────────────────
-  # camunda-workers: # TODO: Story 2.2 — Python External Task Workers (long-polling pattern).
-  #                  #                   Depends on: camunda7 (service_healthy), fastapi (service_healthy).
+  # ── Layer 3: Orchestration Workers (Story 2.2) ──────────────────────────────
+
+  camunda-worker:
+    build:
+      context: ./workers/camunda-worker
+    container_name: zachai-camunda-worker
+    environment:
+      CAMUNDA_REST_URL: http://camunda7:8080/engine-rest
+      LABEL_STUDIO_URL: http://label-studio:8090
+      LABEL_STUDIO_API_KEY: ${LABEL_STUDIO_API_KEY:-}
+      # DB for project synchronization (Story 2.2)
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: zachai
+      DB_HOST: postgres
+    networks:
+      - zachai-network
+    depends_on:
+      camunda7:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
   # ── Layer 4: Annotation ───────────────────────────────────────────────────────
   # label-studio:   # TODO: Story 2.1 — Expert Loop annotation. Auto-provisioned per project by Camunda 7.

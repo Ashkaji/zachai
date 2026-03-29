@@ -1,7 +1,7 @@
 """
-ZachAI FastAPI Gateway — Story 2.1: CRUD Natures & Label Schemas
-Extends Story 1.3: Presigned URL Engine + JWT verification (Keycloak) + MinIO.
-Adds: SQLAlchemy ORM (natures, label_schemas tables), Nature CRUD endpoints.
+ZachAI FastAPI Gateway — Story 2.2: Project Creation & Label Studio Provisioning
+Extends Story 2.1: Nature CRUD + Story 1.3: Presigned URL Engine + JWT (Keycloak) + MinIO.
+Adds: Project + AudioFile ORM, Project CRUD endpoints, Camunda 7 BPMN deployment & process start.
 FastAPI never touches audio binary data — upload goes directly browser→MinIO.
 """
 import os
@@ -9,6 +9,8 @@ import logging
 import html
 from contextlib import asynccontextmanager
 from datetime import timedelta, datetime
+from enum import Enum
+from pathlib import Path
 from typing import Annotated, AsyncGenerator
 from urllib.parse import quote_plus
 
@@ -21,8 +23,10 @@ from minio import Minio
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy import String, Boolean, Integer, ForeignKey, DateTime, func, select, delete
+from sqlalchemy import String, Boolean, Integer, Float, ForeignKey, DateTime, func, select, delete
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.exc import IntegrityError
+from lxml import etree
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -95,6 +99,11 @@ DATABASE_URL: str = (
 engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
+# ─── Camunda 7 REST client ──────────────────────────────────────────────────
+
+CAMUNDA_REST_URL: str = os.environ.get("CAMUNDA_REST_URL", "http://camunda7:8080/engine-rest")
+camunda_client = httpx.AsyncClient(base_url=CAMUNDA_REST_URL, timeout=30.0)
+
 
 # ─── ORM Models ───────────────────────────────────────────────────────────────
 
@@ -129,6 +138,69 @@ class LabelSchema(Base):
     is_required: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
+class ProjectStatus(str, Enum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+
+
+class AudioFileStatus(str, Enum):
+    UPLOADED = "uploaded"
+    ASSIGNED = "assigned"
+    IN_PROGRESS = "in_progress"
+    TRANSCRIBED = "transcribed"
+    VALIDATED = "validated"
+
+
+class Project(Base):
+    __tablename__ = "projects"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    nature_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("natures.id", ondelete="RESTRICT"), nullable=False
+    )
+    production_goal: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[ProjectStatus] = mapped_column(
+        SAEnum(ProjectStatus), default=ProjectStatus.DRAFT, nullable=False
+    )
+    manager_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    process_instance_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    label_studio_project_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    nature: Mapped["Nature"] = relationship("Nature", lazy="selectin")
+    audio_files: Mapped[list["AudioFile"]] = relationship(
+        "AudioFile", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class AudioFile(Base):
+    __tablename__ = "audio_files"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    minio_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    normalized_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[AudioFileStatus] = mapped_column(
+        SAEnum(AudioFileStatus), default=AudioFileStatus.UPLOADED, nullable=False
+    )
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 # ─── JWKS fetch ───────────────────────────────────────────────────────────────
 
 
@@ -140,6 +212,43 @@ async def fetch_jwks(issuer: str) -> dict:
         resp = await client.get(jwks_url, timeout=10.0)
         resp.raise_for_status()
         return resp.json()
+
+
+# ─── BPMN deployment ─────────────────────────────────────────────────────────
+
+
+async def deploy_bpmn_workflows() -> None:
+    """Deploy BPMN workflows to Camunda 7 at startup. Tolerant — logs on failure."""
+    try:
+        # Try multiple paths for both local dev (src/api/fastapi/main.py) and Docker (/app/main.py)
+        potential_paths = [
+            Path(__file__).parent.parent.parent / "bpmn" / "project-lifecycle.bpmn",  # local dev
+            Path(__file__).parent / "bpmn" / "project-lifecycle.bpmn",               # Docker /app/bpmn
+            Path("/bpmn/project-lifecycle.bpmn"),                                    # Alternative mount
+        ]
+        
+        bpmn_file = None
+        for p in potential_paths:
+            if p.exists():
+                bpmn_file = p
+                break
+
+        if not bpmn_file:
+            logger.warning("BPMN file not found in potential paths — workflows not deployed")
+            return
+
+        logger.info("Deploying BPMN workflow from: %s", bpmn_file)
+        with open(bpmn_file, "rb") as f:
+            files = {"data": (bpmn_file.name, f)}
+            data = {"deployment-name": "zachai-workflows", "enable-duplicate-filtering": "true"}
+            resp = await camunda_client.post("/deployment/create", files=files, data=data)
+
+        if 200 <= resp.status_code < 300:
+            logger.info("BPMN workflows deployed to Camunda 7")
+        else:
+            logger.error("Failed to deploy BPMN: %s %s", resp.status_code, resp.text)
+    except Exception as exc:
+        logger.error("Exception deploying BPMN workflows: %s", exc)
 
 
 # ─── Application lifespan ─────────────────────────────────────────────────────
@@ -168,15 +277,19 @@ async def lifespan(app: FastAPI):
             "Failed to initialize DB tables: %s — DB operations will fail", exc
         )
 
+    # BPMN deployment — tolerant: Camunda may not be ready yet
+    await deploy_bpmn_workflows()
+
     yield
 
     await engine.dispose()
+    await camunda_client.aclose()
 
 
 app = FastAPI(
     title="ZachAI Gateway",
-    description="Lean API gateway: presigned URL generation + JWT verification + Nature CRUD",
-    version="2.1.0",
+    description="Lean API gateway: presigned URLs, JWT, Nature CRUD, Project CRUD, Camunda 7",
+    version="2.2.0",
     lifespan=lifespan,
 )
 
@@ -264,6 +377,22 @@ class LabelsUpdateRequest(BaseModel):
     labels: list[LabelIn]
 
 
+VALID_PRODUCTION_GOALS = {"livre", "sous-titres", "dataset", "archive"}
+
+
+class ProjectCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: str | None = Field(None, max_length=1000)
+    nature_id: int
+    production_goal: str = Field(
+        ..., pattern=r"^(livre|sous-titres|dataset|archive)$"
+    )
+
+
+class StatusUpdateRequest(BaseModel):
+    status: str
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -310,6 +439,48 @@ def _nature_to_dict(nature: Nature) -> dict:
         ],
         "label_studio_schema": generate_label_studio_xml(nature.labels),
     }
+
+
+def _project_to_dict(project: Project) -> dict:
+    return {
+        "id": project.id,
+        "name": project.name,
+        "description": project.description,
+        "nature_id": project.nature_id,
+        "nature_name": project.nature.name,
+        "production_goal": project.production_goal,
+        "status": project.status.value,
+        "manager_id": project.manager_id,
+        "process_instance_id": project.process_instance_id,
+        "label_studio_project_id": project.label_studio_project_id,
+        "created_at": project.created_at.isoformat(),
+        "labels": [
+            {
+                "id": lb.id,
+                "name": lb.label_name,
+                "color": lb.label_color,
+                "is_speech": lb.is_speech,
+                "is_required": lb.is_required,
+            }
+            for lb in project.nature.labels
+        ],
+        "audio_files": [
+            {
+                "id": af.id,
+                "filename": af.filename,
+                "status": af.status.value,
+                "uploaded_at": af.uploaded_at.isoformat(),
+            }
+            for af in project.audio_files
+        ],
+    }
+
+
+ALLOWED_STATUS_TRANSITIONS = {
+    "draft": ["active"],
+    "active": ["completed"],
+    "completed": [],
+}
 
 
 # ─── Routes — Presigned URLs (Story 1.3) ─────────────────────────────────────
@@ -529,3 +700,171 @@ async def update_nature_labels(
     if not nature:
         raise HTTPException(status_code=404, detail={"error": "Nature was concurrently deleted"})
     return _nature_to_dict(nature)
+
+
+# ─── Routes — Project CRUD (Story 2.2) ─────────────────────────────────────
+
+
+@app.post("/v1/projects", status_code=201)
+async def create_project(
+    body: ProjectCreateRequest,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    roles = get_roles(payload)
+    if not {"Manager", "Admin"}.intersection(roles):
+        raise HTTPException(status_code=403, detail={"error": "Manager or Admin role required"})
+
+    # Check nature exists
+    result = await db.execute(select(Nature).where(Nature.id == body.nature_id))
+    nature = result.scalar_one_or_none()
+    if not nature:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": f"Nature {body.nature_id} not found"},
+        )
+
+    # Check duplicate project name
+    result = await db.execute(select(Project).where(Project.name == body.name))
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail={"error": "Project name already exists"})
+
+    creator_id = payload.get("sub", payload.get("preferred_username"))
+    if not creator_id:
+        raise HTTPException(status_code=401, detail={"error": "Creator identifier missing in token"})
+
+    try:
+        async with db.begin_nested():
+            project = Project(
+                name=body.name,
+                description=body.description,
+                nature_id=body.nature_id,
+                production_goal=body.production_goal,
+                manager_id=creator_id,
+                status=ProjectStatus.DRAFT,
+            )
+            db.add(project)
+            await db.flush()  # populate project.id
+
+        # Start Camunda process (don't fail project creation if unavailable)
+        try:
+            label_schema_xml = generate_label_studio_xml(nature.labels)
+            try:
+                etree.fromstring(label_schema_xml.encode())
+            except etree.XMLSyntaxError as xml_err:
+                logger.error("Generated label_studio_schema is invalid XML: %s", xml_err)
+                # Skip Camunda — project is still created successfully
+                await db.commit()
+                await db.refresh(project)
+                return _project_to_dict(project)
+
+            variables = {
+                "projectId": {"value": project.id, "type": "Integer"},
+                "natureName": {"value": nature.name, "type": "String"},
+                "labelStudioSchema": {"value": label_schema_xml, "type": "String"},
+                "projectStatus": {"value": "draft", "type": "String"},
+            }
+            resp = await camunda_client.post(
+                "/process-definition/key/project-lifecycle/start",
+                json={"variables": variables, "withVariablesInReturn": True},
+            )
+            if 200 <= resp.status_code < 300:
+                project.process_instance_id = resp.json().get("id")
+                logger.info("Camunda process started: %s", project.process_instance_id)
+            else:
+                logger.error(
+                    "Camunda start failed: %s — project created but workflow not triggered",
+                    resp.status_code,
+                )
+        except Exception as exc:
+            logger.error(
+                "Exception starting Camunda process: %s — project created but workflow not triggered",
+                exc,
+            )
+
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail={"error": "Project name already exists"})
+
+    await db.refresh(project)
+    return _project_to_dict(project)
+
+
+@app.get("/v1/projects")
+async def list_projects(
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list:
+    roles = get_roles(payload)
+    if not {"Manager", "Admin"}.intersection(roles):
+        raise HTTPException(status_code=403, detail={"error": "Manager or Admin role required"})
+
+    result = await db.execute(select(Project))
+    projects = result.scalars().all()
+    return [
+        {
+            "id": p.id,
+            "name": p.name,
+            "nature_name": p.nature.name,
+            "status": p.status.value,
+            "manager_id": p.manager_id,
+            "created_at": p.created_at.isoformat(),
+        }
+        for p in projects
+    ]
+
+
+@app.get("/v1/projects/{project_id}")
+async def get_project(
+    project_id: int,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    roles = get_roles(payload)
+    if not {"Manager", "Admin"}.intersection(roles):
+        raise HTTPException(status_code=403, detail={"error": "Manager or Admin role required"})
+
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail={"error": "Project not found"})
+
+    return _project_to_dict(project)
+
+
+@app.put("/v1/projects/{project_id}/status")
+async def update_project_status(
+    project_id: int,
+    body: StatusUpdateRequest,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    roles = get_roles(payload)
+    if not {"Manager", "Admin"}.intersection(roles):
+        raise HTTPException(status_code=403, detail={"error": "Manager or Admin role required"})
+
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail={"error": "Project not found"})
+
+    new_status = body.status
+    valid_values = {s.value for s in ProjectStatus}
+    if new_status not in valid_values:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": f"Invalid status: {new_status}"},
+        )
+
+    current = project.status.value
+    if new_status not in ALLOWED_STATUS_TRANSITIONS.get(current, []):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": f"Cannot transition from {current} to {new_status}"},
+        )
+
+    project.status = ProjectStatus(new_status)
+    await db.commit()
+    await db.refresh(project)
+    return _project_to_dict(project)
