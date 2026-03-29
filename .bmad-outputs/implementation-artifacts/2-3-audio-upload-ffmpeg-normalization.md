@@ -1,309 +1,264 @@
 # Story 2.3: Audio Upload & FFmpeg Normalization
 
-Status: ready-for-dev
+Status: done
 
-<!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
+<!-- Note: Validation is optional. Run validate-create-story (`bmad-create-story` → Validate Story) before dev-story. -->
 
 ## Story
 
-As a Transcripteur or Manager,
-I can upload audio files (MP3, WAV, FLAC, etc.) to a project via presigned URL,
-so that the audio is automatically normalized (16-bit PCM, mono, 16kHz) by the FFmpeg worker and made available for transcription.
+As a Manager,
+I can upload audio files (MP4, MP3, AAC, FLAC, WAV, etc.) to a project via presigned URL,
+so that they are stored in MinIO and automatically normalized to 16 kHz mono PCM by the FFmpeg worker for transcription.
+
+*(Epic wording: [Source: docs/epics-and-stories.md#Epic-2]. Admin users share the same upload privileges as Manager where noted in AC 1.)*
 
 ---
 
 ## Acceptance Criteria
 
 1. **FastAPI Audio File Upload Endpoint:**
-   - `POST /v1/projects/{project_id}/audio-files/upload` — Auth: Manager or Admin JWT. Body: `{filename: str, content_type: str}` where content_type is `audio/*` or `video/*`. Returns HTTP 200 with `{object_key: str, presigned_url: str, expires_in: int}` (presigned PUT URL valid for 3600s). Returns HTTP 403 if role is Transcripteur or Expert. Returns HTTP 404 if project not found. Returns HTTP 400 if content_type not audio/video.
+   - `POST /v1/projects/{project_id}/audio-files/upload` — Auth: **Manager or Admin** JWT. Body: `{filename: str, content_type: str}` where `content_type` is `audio/*` or `video/*`.
+   - Returns HTTP 200 with `{object_key: str, presigned_url: str, expires_in: int}` (presigned PUT URL valid for **3600s**).
+   - Returns HTTP **403** if role is Transcripteur or Expert (or missing Manager/Admin).
+   - Returns HTTP 404 if project not found.
+   - Returns HTTP **403** if project `status` is `completed` (completed projects are immutable for uploads).
+   - Returns HTTP 400 if `content_type` is not audio/video.
 
 2. **Audio File Status Tracking in PostgreSQL:**
-   - `AudioFile` table already created in Story 2.2 with columns: `id (PK), project_id (FK→projects), filename, minio_path, normalized_path, duration_s, status (enum: uploaded|assigned|in_progress|transcribed|validated), uploaded_at, updated_at`.
-   - No schema changes needed (carried forward from Story 2.2).
-   - Indexes: PK on id, FK on project_id, optional index on status for queries.
+   - `AudioFile` table exists from Story 2.2 with columns: `id (PK), project_id (FK→projects), filename, minio_path, normalized_path, duration_s, status (enum: uploaded|assigned|in_progress|transcribed|validated), uploaded_at, updated_at`.
+   - **Add** nullable columns on `audio_files` (backward-compatible):
+     - `validation_error`: `String(1024)` — last FFmpeg/validation error message
+     - `validation_attempted_at`: `DateTime(timezone=True)` — timestamp of last normalization attempt
+   - **Do not** add `status="error"` to `AudioFileStatus` — errors are tracked via `validation_error` / HTTP responses (Stripe/AWS-style separation of state vs error metadata).
+   - Indexes: PK on `id`, FK on `project_id`, index on `(project_id, status)` for list queries.
 
 3. **Browser Upload → MinIO (Direct, No FastAPI Proxy):**
-   - FastAPI returns presigned PUT URL (via `presigned_client` using `MINIO_PRESIGNED_ENDPOINT`, e.g., `localhost:9000`).
-   - Browser uploads directly to MinIO: `PUT {presigned_url}` with audio file in body.
-   - FastAPI does NOT receive audio binary data (security + performance pattern from Story 1.3).
-   - Expected flow: Browser downloads presigned URL → Browser uploads → MinIO stores in `projects/{project_id}/audio/{uuid}.{ext}`.
+   - FastAPI returns presigned PUT URL (via `presigned_client` + `MINIO_PRESIGNED_ENDPOINT`, Story 1.3).
+   - Browser uploads directly to MinIO: `PUT {presigned_url}` with file body.
+   - FastAPI does **not** receive audio binary data.
 
 4. **Audio File Registration in Database:**
-   - After browser uploads to MinIO (managed externally by browser; FastAPI learns about it via webhook OR polling/scan OR explicit API call).
-   - `POST /v1/projects/{project_id}/audio-files/register` — Auth: Manager or Admin. Body: `{object_key: str}` (path in MinIO, e.g., `projects/proj-1/audio/uuid.mp3`). Returns HTTP 201 with `{id, project_id, filename, minio_path, status: "uploaded", uploaded_at}`. Creates AudioFile record with status=UPLOADED.
-   - Return 404 if project not found. Return 400 if object_key not found in MinIO or is outside `projects/{project_id}/audio/` prefix.
-   - Design decision: registration is explicit API call (not automatic) to avoid race conditions between browser upload and DB write.
+   - `POST /v1/projects/{project_id}/audio-files/register` — Auth: Manager or Admin. Body: `{object_key: str}`. Validates object exists in MinIO and key prefix `projects/{project_id}/audio/`.
+   - Returns HTTP 201 with `AudioFile` payload (include `validation_error`, `validation_attempted_at` when present).
+   - **Design:** Registration is an explicit API call (avoids upload/DB races).
+   - **On successful registration** (`status=uploaded`): FastAPI **immediately** triggers normalization (calls shared `normalize_audio_file` logic from Task 3 — same request lifecycle; commit DB state appropriately so retries remain consistent).
 
-5. **FFmpeg Normalization Triggering:**
-   - When AudioFile status is "uploaded", FastAPI can trigger normalization job via POST to FFmpeg worker: `http://ffmpeg-worker:8765/normalize`.
-   - Request body: `{input_bucket: "projects", input_key: "projects/proj-1/audio/uuid.mp3", output_bucket: "projects", output_key: "projects/proj-1/audio/uuid.normalized.wav"}`.
-   - FFmpeg worker returns: `{status: "ok", output_key: "...", duration_s: 125.5}` or error 413/422/500/504.
-   - Update AudioFile.status = "in_progress" before calling FFmpeg, then status = "transcribed" + normalized_path + duration_s after success.
-   - If FFmpeg fails (5xx): keep status = "uploaded", log error, return 500 to caller (operator should retry).
-   - If FFmpeg validation fails (4xx): status = "error" (future), log error, do not retry (fix input).
+5. **FFmpeg Normalization:**
+   - **Trigger:** Automatic when a file is registered (Task 2 → Task 3). Optional **on-demand** endpoint for ops/testing (Task 4).
+   - Worker URL: `{FFMPEG_WORKER_URL}/normalize` (internal Docker: `http://ffmpeg-worker:8765/normalize`).
+   - Request body: `{input_bucket: "projects", input_key: "<minio path>", output_bucket: "projects", output_key: "<same base>.normalized.wav"}`.
+   - Success response: `{status: "ok", output_key: "...", duration_s: float}`.
+   - Set `AudioFile.status = in_progress` before calling worker; on success set `transcribed`, `normalized_path`, `duration_s`, clear `validation_error` if applicable; on failure keep `uploaded`, set `validation_error` + `validation_attempted_at`.
+   - **5xx** from worker: operator may retry (log + return 500 to caller on sync path if applicable).
+   - **4xx** from worker: store message in `validation_error`; do not auto-retry; map to HTTP 413/422 per Task 8.
 
 6. **Error Handling:**
-   - Missing project → HTTP 404 `{"error": "Project {project_id} not found"}`.
-   - Invalid content_type → HTTP 400 `{"error": "content_type must be audio/* or video/*"}`.
-   - Project status not draft/active → HTTP 400 `{"error": "Project must be in draft or active status to accept audio files"}`.
-   - FFmpeg worker unavailable → HTTP 500 `{"error": "FFmpeg service unavailable, retry later"}` (log for ops).
-   - FFmpeg validation error (4xx) → HTTP 422 `{"error": "FFmpeg validation failed: {detail}"}`.
-   - All error responses follow `{"error": "..."}` flat format.
+   - Missing project → HTTP 404 `{"error": "..."}`.
+   - Invalid `content_type` → HTTP 400.
+   - Project not `draft` or `active` (e.g. `completed`) when accepting uploads/register → HTTP **403** `{"error": "Project must be in draft or active status to accept audio files"}` (wording may vary; flat `{"error": "..."}` only).
+   - FFmpeg worker unavailable → HTTP 500 `{"error": "FFmpeg service unavailable, retry later"}` (logged).
+   - FFmpeg validation (4xx) → HTTP 422 with detail in `{"error": "..."}`.
+   - All errors flat `{"error": "..."}` via existing handler (Story 2.1).
 
-7. **Compose.yml & Environment:**
-   - FFmpeg worker already deployed in Story 3.1 (no changes needed).
-   - FastAPI can reach FFmpeg worker via internal Docker network: `http://ffmpeg-worker:8765`.
-   - MinIO endpoint for browser uploads (MINIO_PRESIGNED_ENDPOINT) already configured in Story 1.3.
+7. **Compose & Environment:**
+   - FFmpeg worker service from Story 3.1; FastAPI reaches it on internal network.
+   - **`FFMPEG_WORKER_URL`**: add to `REQUIRED_ENV_VARS` in `main.py` (**no default** — fail fast, same pattern as `CAMUNDA_REST_URL`). Document in `.env.example` and `compose.yml` for `fastapi`.
 
 8. **Testing:**
-   - At least 8 tests covering: audio upload request (201), invalid content_type (400), missing project (404), role enforcement (403), file registration (201), FFmpeg trigger success/failure, status transitions.
-   - Mock FFmpeg worker HTTP calls at httpx level (similar to Camunda mocking in Story 2.2).
-   - DB sessions mocked via AsyncMock.
-   - All 51 tests from Stories 1.1–2.2 must still pass (no regressions).
-   - Test file registration with non-existent MinIO path (400).
+   - **≥ 8 new tests** covering: upload (200), invalid content_type (400), missing project (404), role enforcement (403), **completed project forbidden (403)**, register (201), MinIO missing object (400), FFmpeg success/failure paths, status transitions.
+   - Mock ffmpeg via `httpx` / patched client (Story 2.2 Camunda style). Mock DB with `AsyncMock` where existing fixtures apply.
+   - **All 51** existing tests in `src/api/fastapi/test_main.py` must still pass after changes.
 
 ---
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1** — Implement FastAPI audio upload request endpoint (AC: 1)
-  - [ ] Create `POST /v1/projects/{project_id}/audio-files/upload` endpoint
-  - [ ] Role check: Manager or Admin only (403 if Transcripteur/Expert)
-  - [ ] Validate project exists (404 if not)
-  - [ ] Validate content_type is audio/* or video/* (400 if invalid)
-  - [ ] Generate object_key: `projects/{project_id}/audio/{uuid}.{ext}`
-  - [ ] Call presigned_client.presigned_put_object() (Story 1.3 pattern)
-  - [ ] Return presigned URL + object_key + expires_in (3600s)
-  - [ ] Status code 200 on success
+- [x] **Task 1** — Implement FastAPI audio upload request endpoint (AC: 1, 6)
+  - [x] `POST /v1/projects/{project_id}/audio-files/upload`
+  - [x] Role: Manager or Admin only (403 Transcripteur/Expert)
+  - [x] Project exists (404)
+  - [x] Project `status` in `{draft, active}` only (403 if `completed`)
+  - [x] `content_type` audio/* or video/* (400)
+  - [x] `object_key`: `projects/{project_id}/audio/{uuid}.{ext}` from `filename`
+  - [x] `presigned_client.presigned_put_object(..., expires=3600)` (Story 1.3)
+  - [x] Response 200: `object_key`, `presigned_url`, `expires_in`
 
-- [ ] **Task 2** — Implement FastAPI audio file registration endpoint (AC: 4)
-  - [ ] Create `POST /v1/projects/{project_id}/audio-files/register` endpoint
-  - [ ] Role check: Manager or Admin only (403 if unauthorized)
-  - [ ] Validate project exists (404 if not)
-  - [ ] Parse body: object_key
-  - [ ] Validate object_key is within `projects/{project_id}/audio/` prefix (400 if not)
-  - [ ] Verify file exists in MinIO via stat_object() (400 if not)
-  - [ ] Create AudioFile record: status="uploaded", minio_path=object_key, filename from object_key
-  - [ ] Return 201 with AudioFile details
-  - [ ] Handle IntegrityError gracefully (duplicate registration)
+- [x] **Task 2** — Implement audio file registration + auto-normalize (AC: 4, 5)
+  - [x] `POST /v1/projects/{project_id}/audio-files/register`
+  - [x] Role: Manager or Admin; project exists; project status draft/active (403 if completed)
+  - [x] Validate `object_key` prefix; `internal_client.stat_object` (400 if missing)
+  - [x] Insert `AudioFile` (`uploaded`); handle `IntegrityError` → 400
+  - [x] After successful persist, invoke `normalize_audio_file` (Task 3) before returning 201 **or** ensure normalization runs in same logical flow with clear commit ordering (no orphaned `in_progress` if register rolls back)
 
-- [ ] **Task 3** — Implement FFmpeg normalization trigger logic (AC: 5)
-  - [ ] Create async function: `async def normalize_audio_file(audio_file: AudioFile, ffmpeg_url: str) -> dict`
-  - [ ] Update AudioFile.status = "in_progress" before calling FFmpeg
-  - [ ] Call FFmpeg worker POST /normalize with correct request body
-  - [ ] Parse response: extract output_key, duration_s
-  - [ ] Update AudioFile.status = "transcribed", normalized_path, duration_s
-  - [ ] Handle FFmpeg errors: 413 (too large), 422 (validation), 500/504 (service unavailable)
-  - [ ] Log all errors with context (project_id, audio_file_id, FFmpeg response)
-  - [ ] Return status dict or raise exception for caller to handle
+- [x] **Task 3** — FFmpeg normalization logic (AC: 5, 6)
+  - [x] `async def normalize_audio_file(db, audio_file: AudioFile, settings) -> ...` (signature as fits codebase)
+  - [x] `status → in_progress` → POST normalize → on OK `transcribed` + paths + `duration_s`
+  - [x] On 4xx: populate `validation_error`, `validation_attempted_at`; keep `uploaded`
+  - [x] On 5xx: same error columns; allow retry; log project_id, audio_file_id, FFmpeg response body
 
-- [ ] **Task 4** — Add endpoint to trigger normalization on-demand (AC: 5)
-  - [ ] Create `POST /v1/projects/{project_id}/audio-files/{audio_file_id}/normalize` endpoint (optional, for testing/ops)
-  - [ ] Role check: Manager or Admin only
-  - [ ] Validate project and audio_file exist (404 if not)
-  - [ ] Check audio_file.status = "uploaded" (400 if already in progress or completed)
-  - [ ] Call normalize_audio_file() from Task 3
-  - [ ] Return updated AudioFile with new status
-  - [ ] Handle FFmpeg errors with proper HTTP codes
+- [x] **Task 4** — Optional on-demand normalize (AC: 5)
+  - [x] `POST /v1/projects/{project_id}/audio-files/{audio_file_id}/normalize` — Manager/Admin; 404 if missing; 400 if status not `uploaded`; delegate Task 3; **202 Accepted** or 200 with updated entity (pick one and document; prefer 202 for long-ish work)
 
-- [ ] **Task 5** — Update DatabaseSchema and ORM (AC: 2)
-  - [ ] Verify AudioFile ORM model exists in src/api/fastapi/main.py (carried from Story 2.2)
-  - [ ] Verify status enum: uploaded|assigned|in_progress|transcribed|validated (already defined)
-  - [ ] Add index on (project_id, status) for efficient status queries
-  - [ ] No schema migrations needed (table already exists)
-  - [ ] Verify relationships: Project → [AudioFile] with cascade delete
+- [x] **Task 5** — ORM / schema (AC: 2)
+  - [x] Add `validation_error`, `validation_attempted_at` on `AudioFile` in `src/api/fastapi/main.py`
+  - [x] Add index `(project_id, status)` if not present
+  - [x] Alembic/migrations: project rule was “nullable columns OK”; add migration if repo uses Alembic for Postgres (if no migration tool, document manual DDL in dev notes)
 
-- [ ] **Task 6** — Configure FFmpeg worker integration (AC: 5, 7)
-  - [ ] Add FFmpeg worker URL to REQUIRED_ENV_VARS or with default: `FFMPEG_WORKER_URL=http://ffmpeg-worker:8765`
-  - [ ] Create async HTTP client for FFmpeg worker (similar to Camunda client pattern from Story 2.2)
-  - [ ] At startup (lifespan): test health check to FFmpeg worker (/health endpoint)
-  - [ ] Log warning if FFmpeg worker unavailable (non-blocking)
+- [x] **Task 6** — FFmpeg integration config (AC: 5, 7)
+  - [x] `FFMPEG_WORKER_URL` in `REQUIRED_ENV_VARS` (no default)
+  - [x] Shared `httpx.AsyncClient` or factory; lifespan health check `GET {base}/health` — **warning** if down, non-blocking startup (match Story 2.2 non-blocking external deps pattern)
 
-- [ ] **Task 7** — Implement Pydantic request/response models (AC: 1, 4)
-  - [ ] `AudioUploadRequest`: filename (str), content_type (str)
-  - [ ] `AudioUploadResponse`: object_key (str), presigned_url (str), expires_in (int)
-  - [ ] `AudioRegisterRequest`: object_key (str)
-  - [ ] `AudioFileResponse`: id, project_id, filename, minio_path, normalized_path, duration_s, status, uploaded_at, updated_at
-  - [ ] `AudioFileListResponse`: list of AudioFileResponse
+- [x] **Task 7** — Pydantic models (AC: 1, 4)
+  - [x] `AudioUploadRequest`: `filename` — min_length=1, max_length=255, strip whitespace, forbid control chars and `\/:*?"<>|`, require extension; `content_type` regex whitelist e.g. `^audio/|^video/` with allowed subtypes per product needs
+  - [x] `AudioUploadResponse`, `AudioRegisterRequest` (object_key path validation), `AudioFileResponse` (+ error fields), `AudioFileListResponse`
 
-- [ ] **Task 8** — Add error handling for audio operations (AC: 6)
-  - [ ] Custom validation for content_type (audio/*, video/*)
-  - [ ] Custom validation for object_key prefix (must be under `projects/{project_id}/audio/`)
-  - [ ] MinIO stat_object() error handling (404 if file not found, other errors → 500)
-  - [ ] FFmpeg worker error code mapping: 413→HTTP 413, 422→HTTP 422, 5xx→HTTP 500
-  - [ ] Ensure all errors return flat `{"error": "..."}` format (via exception handler from Story 2.1)
-  - [ ] Log all errors with context for ops debugging
+- [x] **Task 8** — Error handling (AC: 6)
+  - [x] Map worker 413→413, 422→422, 5xx→500; MinIO errors as specified
+  - [x] All `HTTPException(detail={"error": "..."})` consistent with custom handler
 
-- [ ] **Task 9** — Write unit + integration tests (AC: 8)
-  - [ ] Test `POST /v1/projects/{id}/audio-files/upload` success (200) with valid project + role
-  - [ ] Test invalid content_type (400)
-  - [ ] Test missing project (404)
-  - [ ] Test unauthorized role: Transcripteur/Expert (403)
-  - [ ] Test `POST /v1/projects/{id}/audio-files/register` success (201)
-  - [ ] Test register with non-existent object_key (400)
-  - [ ] Test register with object_key outside expected prefix (400)
-  - [ ] Test FFmpeg normalization trigger: success (status changes to "transcribed")
-  - [ ] Test FFmpeg worker timeout/error (status remains "uploaded")
-  - [ ] Mock FFmpeg worker HTTP calls (async httpx client)
-  - [ ] Mock MinIO stat_object() calls
-  - [ ] Verify all 51 previous tests still pass (no regressions)
+- [x] **Task 9** — Tests (AC: 8)
+  - [x] Cover AC 8 bullets; mock MinIO + ffmpeg HTTP
+  - [x] `pytest src/api/fastapi/test_main.py` — 51 + new tests green
 
-- [ ] **Task 10** — Compose.yml and environment updates (AC: 7)
-  - [ ] Verify ffmpeg-worker service exists and is healthy (already from Story 3.1)
-  - [ ] Update fastapi service: add FFMPEG_WORKER_URL env var (default: `http://ffmpeg-worker:8765`)
-  - [ ] Add FFmpeg worker to fastapi depends_on (condition: service_healthy) if not already present
-  - [ ] Update `.env.example` with FFMPEG_WORKER_URL documentation
-  - [ ] No new services needed (FFmpeg worker already running)
+- [x] **Task 10** — Compose / `.env.example` (AC: 7)
+  - [x] `fastapi` environment: `FFMPEG_WORKER_URL=http://ffmpeg-worker:8765`
+  - [x] `depends_on` health for ffmpeg-worker if not already
+
+### Review Findings (2026-03-29 — bmad-code-review)
+
+- [x] [Review][Patch] **Safe `duration_s` coercion** — Resolved: `_parse_duration_s()` logs and returns `None` on bad values; regression test `test_register_audio_success_invalid_duration_s`. [`main.py`]
+- [x] [Review][Patch] **Existing DB vs `create_all`** — Resolved: lifespan comment documents brownfield limitation; reference DDL under Dev Notes below.
+- [x] [Review][Defer] **Legacy presigned PUT** — `POST /v1/upload/request-put` remains Manager-only and uses string `project_id`; new project-scoped upload allows Admin and int `project_id`. Pre-existing surface from Story 1.3; unify or deprecate in a later story. [`main.py` ~714–727]
+
+---
+
+## Dev Notes
+
+### Architecture compliance
+
+- Presigned URLs after JWT + role check; binaries never through FastAPI ([Source: docs/architecture.md#5.-Sécurité]).
+- FFmpeg Worker internal-only ([Source: docs/architecture.md#Internal-Shield]).
+- `AudioFile` part of business model ([Source: docs/architecture.md#3.-Modèle-de-Données-Métier]).
+
+### Project structure & files
+
+- Primary implementation: `src/api/fastapi/main.py` (ORM, routes, env).
+- Tests: `src/api/fastapi/test_main.py`.
+- Compose / env: repository root `compose.yml` (or `docker-compose.yml`), `.env.example`.
+
+### Brownfield PostgreSQL (Story 2.3 schema)
+
+If `audio_files` already existed before Story 2.3, run equivalent DDL once (adjust schema name if needed):
+
+```sql
+ALTER TABLE audio_files ADD COLUMN IF NOT EXISTS validation_error VARCHAR(1024);
+ALTER TABLE audio_files ADD COLUMN IF NOT EXISTS validation_attempted_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS ix_audio_files_project_status ON audio_files (project_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_audio_files_project_minio_path ON audio_files (project_id, minio_path);
+```
+
+### References
+
+- Epic 2 Story 2.3: [docs/epics-and-stories.md](docs/epics-and-stories.md)
+- Story 2.2 patterns: `.bmad-outputs/implementation-artifacts/2-2-project-creation-label-studio-provisioning.md`
+- Story 1.3 presigned: `.bmad-outputs/implementation-artifacts/1-3-presigned-url-engine-fastapi.md`
+- FFmpeg worker contract: `.bmad-outputs/implementation-artifacts/3-1-ffmpeg-worker-normalization-batch.md`
 
 ---
 
 ## Developer Context: Code Patterns & Integration Points
 
-### Presigned URL Pattern (from Story 1.3)
+### Presigned URL (Story 1.3)
 
-The project uses TWO MinIO clients:
-- **`internal_client`** (for FastAPI ↔ MinIO): points to `MINIO_ENDPOINT` (e.g., `minio:9000`)
-- **`presigned_client`** (for browser ↔ MinIO): points to `MINIO_PRESIGNED_ENDPOINT` (e.g., `localhost:9000`)
+- `internal_client` — FastAPI ↔ MinIO inside Docker (`MINIO_ENDPOINT`).
+- `presigned_client` — URL hostname reachable by browser (`MINIO_PRESIGNED_ENDPOINT`).
+- Existing reference: `POST /v1/upload/request-put` in `main.py` — reuse patterns; new routes are project-scoped under `/v1/projects/{project_id}/audio-files/...`.
 
-Browser-side flow:
-1. Browser: `POST /v1/upload/request-put` → FastAPI
-2. FastAPI: `presigned_client.presigned_put_object(...)` → returns signed URL
-3. Browser: `PUT {signed_url}` → uploads directly to MinIO (FastAPI NOT involved)
-4. Browser: tells FastAPI (via callback API) that upload is complete
+### Error handling (Stories 2.1–2.2)
 
-For this story, the callback is: `POST /v1/projects/{id}/audio-files/register` with the object_key.
+- Flat `{"error": "..."}` via exception handler; use `HTTPException(status_code=..., detail={"error": "..."})`.
 
-### Error Handling Pattern (from Stories 2.1 & 2.2)
+### FFmpeg worker (Story 3.1)
 
-All FastAPI endpoints follow a consistent pattern:
-```python
-@app.post("/v1/path")
-async def endpoint(...):
-    roles = get_roles(payload)
-    if not {"Manager", "Admin"}.intersection(roles):
-        raise HTTPException(status_code=403, detail={"error": "..."})
+- `POST /normalize` body and responses as in AC 5; `GET /health`.
 
-    result = await db.execute(select(Model).where(...))
-    obj = result.scalar_one_or_none()
-    if not obj:
-        raise HTTPException(status_code=404, detail={"error": "..."})
+### Testing fixture (Story 2.2)
 
-    try:
-        # do work
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail={"error": "..."})
-
-    return {"field": obj.field, ...}
-```
-
-Custom exception handler returns flat `{"error": "..."}` format (already configured in main.py from Story 2.1).
-
-### FFmpeg Worker Integration (from Story 3.1)
-
-The FFmpeg worker is a separate FastAPI service running on `ffmpeg-worker:8765`.
-
-**POST /normalize** endpoint:
-- **Request**: `{"input_bucket": "projects", "input_key": "projects/proj-1/audio/file.mp3", "output_bucket": "projects", "output_key": "projects/proj-1/audio/file.normalized.wav"}`
-- **Response (200)**: `{"status": "ok", "output_key": "...", "duration_s": 125.5}`
-- **Response (413)**: `{"error": "File too large: X bytes"}` — exceeded MAX_FILE_SIZE
-- **Response (422)**: `{"error": "FFmpeg command failed: ..."}` — invalid audio format or FFmpeg error
-- **Response (500)**: `{"error": "MinIO download failed: ..."}` or `{"error": "MinIO upload failed: ..."}` — I/O issues
-- **Response (504)**: `{"error": "FFmpeg timeout"}` — took too long
-
-**GET /health**: Returns `{"status": "ok"}` if worker is healthy.
-
-### Testing Pattern (from Stories 2.1 & 2.2)
-
-Test fixture:
-```python
-@pytest.fixture
-def mock_db():
-    mock_session = AsyncMock()
-    mock_session.add = MagicMock()
-    mock_session.begin_nested = MagicMock(return_value=_FakeNestedTransaction())
-    async def override():
-        yield mock_session
-    main.app.dependency_overrides[main.get_db] = override
-    yield mock_session
-    main.app.dependency_overrides.pop(main.get_db, None)
-```
-
-Mocking external services:
-```python
-with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD), \
-     patch.object(main.presigned_client, "presigned_put_object", return_value="http://..."), \
-     patch.object(main, "ffmpeg_client") as mock_ffmpeg:
-    mock_ffmpeg.post.return_value = AsyncMock(status_code=200, json=lambda: {"status": "ok", "duration_s": 125})
-    response = client.post(...)
-    assert response.status_code == 200
-```
+- `mock_db` with `dependency_overrides[get_db]`; patch `decode_token`, MinIO clients, and ffmpeg HTTP client.
 
 ---
 
-## Previous Story Intelligence
+## Previous Story Intelligence (2.2)
 
-**Story 2.2 Deliverables Used:**
-- `AudioFile` ORM model (ready to use, no changes)
-- `Project` ↔ `AudioFile` relationship with cascade delete
-- Error handling pattern with flat `{"error": "..."}` format
-- Role-based access control pattern (Manager/Admin only)
-- HTTPException usage for all error cases
-
-**Story 3.1 Deliverables Used:**
-- FFmpeg worker running on `ffmpeg-worker:8765` with `/normalize` and `/health` endpoints
-- MinIO integration pattern for file I/O (get_object, put_object, stat_object)
-- Subprocess management and error handling
-
-**Story 1.3 Deliverables Used:**
-- Presigned URL generation via MinIO `presigned_put_object()`
-- Two-client pattern: `internal_client` + `presigned_client`
-- Browser-side upload flow (no FastAPI binary proxy)
+- `Project` / `AudioFile` ORMs and Camunda integration live in `main.py`.
+- Role checks use `get_roles(payload)` and set intersections with `Manager`/`Admin`.
+- Async SQLAlchemy + `IntegrityError` rollback pattern established.
 
 ---
 
 ## Git Intelligence Summary
 
-Recent commits show:
-1. Story 2.2 patterns: Async/await, httpx client for Camunda, role checks, transaction management
-2. Story 3.1 patterns: Subprocess spawning, MinIO get/put, error handling for external services
-3. Story 2.1 patterns: SQLAlchemy async ORM, Pydantic models, HTTPException custom handler, testing mocks
-
-Recommendation: Follow exact same patterns from Stories 2.1 & 2.2 for consistency. Use `httpx.AsyncClient` for FFmpeg worker calls (matching Camunda pattern).
+Recent commits: Story 2.3 story draft; Story 2.2 deferred patches applied; sprint status updates. Implementation for 2.3 not merged — gateway still exposes legacy `/v1/upload/request-put` (Manager-only) and project CRUD from 2.2.
 
 ---
 
 ## Test Coverage Checklist
 
-- [ ] Upload request (presigned URL generation)
-- [ ] Invalid content_type validation
-- [ ] Missing project (404)
-- [ ] Unauthorized role (403)
-- [ ] File registration success
-- [ ] File not found in MinIO (400)
-- [ ] Invalid object_key prefix (400)
-- [ ] FFmpeg normalization success (status → "transcribed", duration populated)
-- [ ] FFmpeg error handling (413, 422, 500, 504)
-- [ ] FFmpeg worker unavailable (500 with logged error)
-- [ ] All 51 pre-existing tests still pass
+- [x] Upload presigned URL happy path
+- [x] Invalid content_type
+- [x] Missing project
+- [x] Wrong role (403)
+- [x] Completed project (403)
+- [x] Register success + auto-normalize success
+- [x] Register + FFmpeg 4xx / 5xx
+- [x] Register invalid key / MinIO absent
+- [x] No regressions (51 baseline tests)
 
 ---
 
-## Story Completion Status
+## Story Completion Status (BMad create-story)
 
-**Created:** 2026-03-29
-**Status:** ready-for-dev
-**Context Engine Analysis:** Complete developer guide with acceptance criteria, implementation tasks, code patterns, integration points, and comprehensive test strategy.
+**Regenerated:** 2026-03-29  
+**Status:** done  
 
-**Quality Checklist:**
-- ✅ Dependencies mapped (2.2, 3.1, 1.3)
-- ✅ Code patterns extracted and documented
-- ✅ FFmpeg worker API contract defined
-- ✅ Error handling strategy aligned with project standards
-- ✅ Testing approach clarified with examples
-- ✅ 10 implementation tasks specified
-- ✅ 11+ test cases outlined
-- ✅ Environment and compose.yml requirements noted
+**Context engine:** Epic 2.3 text, architecture.md, live `main.py` (`AudioFile`, `ProjectStatus`, presigned pattern, `REQUIRED_ENV_VARS`), PATCH-GUIDE resolutions (roles aligned to Manager narrative + Admin in AC; validation columns; no `error` status enum; FFMPEG required; auto-normalize on register).  
 
-**Developer is ready to implement with zero ambiguity.**
+**Dev agent record:** see below.
+
+---
+
+## Change Log
+
+- **2026-03-29** — Story 2.3 implemented: project-scoped upload/register/normalize routes, `FFMPEG_WORKER_URL`, ORM columns + composite index + unique (project_id, minio_path), 13 new FastAPI tests (64 total).
+- **2026-03-29** — Code review (batch patch): `_parse_duration_s`, lifespan `create_all` brownfield note, `test_register_audio_success_invalid_duration_s`; story marked **done**.
+
+---
+
+## Dev Agent Record
+
+### Agent Model Used
+
+Composer / GPT-5.1 (Cursor agent)
+
+### Debug Log References
+
+- `pytest src/api/fastapi/test_main.py` — 64 passed
+- MinIO `S3Error` uses `(response, code, message, ...)` constructor in minio 7.x
+
+### Completion Notes List
+
+- On-demand normalize returns **200** with full `AudioFile` JSON (sync completion).
+- `call_ffmpeg_normalize` maps worker **413/422** to same HTTP status after DB update; other worker errors → **500**. Connection errors → **500**.
+- `AudioUploadRequest.content_type` validated in route for explicit **400** (not only Pydantic 422).
+- `make_mock_project` in tests now uses real `ProjectStatus` enums so draft/active/completed guards behave correctly.
+- **Post-review:** `_parse_duration_s()` for robust FFmpeg JSON; lifespan documents `create_all` vs migrations; brownfield DDL in Dev Notes; 65 tests.
+
+### File List
+
+- `src/api/fastapi/main.py`
+- `src/api/fastapi/test_main.py`
+- `src/compose.yml`
+- `src/.env.example`
+- `.bmad-outputs/implementation-artifacts/sprint-status.yaml`
+- `.bmad-outputs/implementation-artifacts/2-3-audio-upload-ffmpeg-normalization.md`
+

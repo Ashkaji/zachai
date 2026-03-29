@@ -191,6 +191,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       # Camunda 7 REST API — internal Docker DNS (Story 2.2)
       CAMUNDA_REST_URL: http://camunda7:8080/engine-rest
+      # FFmpeg Worker — audio normalization (Story 2.3)
+      FFMPEG_WORKER_URL: http://ffmpeg-worker:8765
     networks:
       - zachai-network
     depends_on:
@@ -201,6 +203,8 @@ services:
       postgres:
         condition: service_healthy
       camunda7:
+        condition: service_healthy
+      ffmpeg-worker:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
