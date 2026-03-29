@@ -30,3 +30,9 @@
 
 - **Inference timeout vs threaded native run**: `anyio.fail_after` can return HTTP 504 while the blocking `WhisperPipeline.generate` call continues on the worker thread until completion — acceptable v1 limitation unless process pool or cancelable API is introduced (`src/workers/openvino-worker/main.py`).
 - **MinIO stat then download (TOCTOU)**: object can disappear after `stat_object` and before `fget_object`; client may see 500 instead of 404 — rare operational race (`src/workers/openvino-worker/main.py`).
+
+## Deferred from: code review of 3-3-model-registry-hot-reload.md (2026-03-29)
+
+- **`retired_engines` list growth**: successful hot-reloads append retired `WhisperEngine` instances without eviction; consider a maxlen or periodic cleanup after N reloads to cap memory/native handles in very long-lived workers (`src/workers/openvino-worker/main.py`).
+- **IR layout validation**: story AC3 mentions verifying OpenVINO IR layout; implementation validates via non-empty sync + `WhisperPipeline.load()` on reload failure path — optional explicit file manifest check deferred.
+- **`model_lock` scope**: single lock serializes all inference and blocks swap during long `transcribe` calls — intentional for safety; document operational expectation that reload may lag behind pointer updates under heavy ASR load (`src/workers/openvino-worker/main.py`).

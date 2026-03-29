@@ -281,6 +281,11 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
       MINIO_SECURE: ${MINIO_SECURE:-false}
+      MODEL_REGISTRY_BUCKET: ${MODEL_REGISTRY_BUCKET:-models}
+      MODEL_POINTER_KEY: ${MODEL_POINTER_KEY:-latest}
+      MODEL_POLL_INTERVAL_SECONDS: ${MODEL_POLL_INTERVAL_SECONDS:-60}
+      WHISPER_MODEL_CACHE_DIR: ${WHISPER_MODEL_CACHE_DIR:-/var/cache/openvino-models}
+      MAX_MODEL_TREE_TOTAL_BYTES: ${MAX_MODEL_TREE_TOTAL_BYTES:-10737418240}
       WHISPER_MODEL_PATH: ${WHISPER_MODEL_PATH}
       OV_DEVICE: ${OV_DEVICE:-CPU}
       INFER_TIMEOUT_SECONDS: ${INFER_TIMEOUT_SECONDS:-900}
@@ -306,7 +311,12 @@ services:
     restart: unless-stopped
     # Port 8770 is internal only — NOT mapped to host (architecture.md § 5 — Internal Shield)
     #
-    # Models are not baked into the image. Mount host-exported OpenVINO Whisper IR, e.g.:
+    # Story 3.3: registry hot-reload — ensure WHISPER_MODEL_CACHE_DIR is writable (default path is
+    # inside the container filesystem). For large IR trees, add a named volume, e.g.:
+    #   volumes:
+    #     - openvino_model_cache:/var/cache/openvino-models
+    #
+    # Fallback when models/latest is missing: mount host-exported OpenVINO Whisper IR, e.g.:
     #   volumes:
     #     - ${WHISPER_MODEL_HOST_PATH:?set path to exported model dir}:/models/whisper-base-ov:ro
     # and set WHISPER_MODEL_PATH=/models/whisper-base-ov in .env

@@ -1,5 +1,5 @@
 # generated: 2026-03-19
-# last_updated: 2026-03-29 — Story 3.2 code review complete (done)
+# last_updated: 2026-03-29 — Story 3.3 code review complete (done)
 # project: zachai
 # Stories completed include 3.2 (OpenVINO worker); next backlog in Epic 3: 3.3
 # project_key: NOKEY
@@ -83,7 +83,7 @@ development_status:
   # Sprint 2
   3-2-openvino-whisper-inference-preannotation: done
   # Sprint 3
-  3-3-model-registry-hot-reload: backlog
+  3-3-model-registry-hot-reload: done
   epic-3-retrospective: optional
 
   # ─── EPIC 4 — Flywheel d'Apprentissage Continu (Sprint 4-6) ──────────────
