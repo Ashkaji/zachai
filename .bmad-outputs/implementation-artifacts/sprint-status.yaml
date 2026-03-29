@@ -1,7 +1,7 @@
 # generated: 2026-03-19
-# last_updated: 2026-03-29 — Story 2.2 code review complete, 8 patches applied, done ✅
+# last_updated: 2026-03-29 — Story 2.3 created & ready-for-dev, Story 2.2 code review done ✅
 # project: zachai
-# Stories completed: 1.1, 1.2, 1.3, 2.1, 2.2 (5/7 in Epic 2)
+# Stories completed: 1.1, 1.2, 1.3, 2.1, 2.2 (5/7 in Epic 2); Ready: 2.3
 # project_key: NOKEY
 # tracking_system: file-system
 # story_location: .bmad-outputs/implementation-artifacts
@@ -46,6 +46,7 @@
 generated: 2026-03-19
 last_updated: 2026-03-29
 project: zachai
+# Story 2.3 created 2026-03-29
 # Story 1.3 completed 2026-03-28
 # Story 3.1 completed 2026-03-28
 # Story 2.1 completed 2026-03-28
@@ -70,7 +71,7 @@ development_status:
   2-1-crud-natures-label-schemas: done
   # Sprint 4 (CONVERGENCE)
   2-2-project-creation-label-studio-provisioning: done
-  2-3-audio-upload-ffmpeg-normalization: backlog
+  2-3-audio-upload-ffmpeg-normalization: ready-for-dev
   # Sprint 6
   2-4-assignment-dashboard: backlog
   epic-2-retrospective: optional
