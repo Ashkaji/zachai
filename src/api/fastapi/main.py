@@ -792,8 +792,16 @@ async def create_project(
                 json={"variables": variables, "withVariablesInReturn": True},
             )
             if 200 <= resp.status_code < 300:
-                project.process_instance_id = resp.json().get("id")
-                logger.info("Camunda process started: %s", project.process_instance_id)
+                camunda_data = resp.json()
+                process_id = camunda_data.get("id")
+                if not process_id:
+                    logger.error(
+                        "Camunda response missing 'id' field: %s — project created but workflow not triggered",
+                        camunda_data,
+                    )
+                else:
+                    project.process_instance_id = process_id
+                    logger.info("Camunda process started: %s", project.process_instance_id)
             else:
                 logger.error(
                     "Camunda start failed: %s — project created but workflow not triggered",

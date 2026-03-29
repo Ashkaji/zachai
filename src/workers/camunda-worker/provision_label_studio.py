@@ -71,6 +71,10 @@ async def process_provision_task(client: httpx.AsyncClient, task: dict) -> None:
     logger.info("Processing task %s: project_id=%s", task_id, project_id)
 
     try:
+        # NOTE: This worker is NOT idempotent. If Label Studio creation succeeds but DB sync fails,
+        # a retry will create a duplicate project on Label Studio. This is accepted as an operational
+        # risk — Camunda DLQ tasks will be visible in Cockpit for manual cleanup, and ops can delete
+        # duplicate projects via Label Studio UI. Idempotency via external_id would add query overhead.
         ls_resp = await client.post(
             f"{LABEL_STUDIO_URL}/api/projects/",
             headers={"Authorization": f"Token {LABEL_STUDIO_API_KEY}"},
@@ -84,7 +88,8 @@ async def process_provision_task(client: httpx.AsyncClient, task: dict) -> None:
             },
         )
 
-        if 200 <= ls_resp.status_code < 300:
+        # Accept 201 Created (standard for resource creation) or 200 OK (some APIs)
+        if ls_resp.status_code in (200, 201):
             ls_project_id = ls_resp.json().get("id")
             if not ls_project_id:
                 raise Exception("Label Studio response missing project id")
