@@ -54,3 +54,7 @@
 - **W6 — Frontend sequential correction submission**: `submitCorrections` fires N sequential `fetch` calls per debounce cycle; performance optimization for future story.
 - **W7 — `GOLDEN_SET_THRESHOLD` accepts 0 or negative**: threshold env var is parsed but never consumed until Story 4.3; validate range then.
 - **W8 — `api-mapping.md` describes Camunda trigger but code doesn't fire it**: pre-existing docs text; Camunda trigger is a Story 4.3 concern.
+
+## Deferred from: code review of 4-3-lora-finetuning-auto-trigger-camunda.md (2026-03-29)
+
+- **Compose builds for Postgres/Keycloak (`src/docker/*`)**: Changes are outside story 4.3 file list but address Docker Desktop Windows bind mounts; ensure CI or README covers building from `src/` context when using compose.

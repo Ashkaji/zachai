@@ -1912,12 +1912,15 @@ def test_expert_validation_webhook_writes_golden_set(mock_db):
     af_r.scalar_one_or_none.return_value = mock_af
     mock_ctr = MagicMock()
     mock_ctr.count = 3
+    mock_ctr.threshold = 1000
     ctr_r = MagicMock()
     ctr_r.scalar_one_or_none.return_value = mock_ctr
     mock_db.execute = AsyncMock(side_effect=[dup_r, af_r, ctr_r])
     mock_db.commit = AsyncMock()
 
-    with patch.object(main.internal_client, "put_object") as mock_put:
+    with patch.object(main.internal_client, "put_object") as mock_put, \
+         patch.object(main, "camunda_client") as mock_camunda:
+        mock_camunda.post = AsyncMock()
         response = client.post(
             "/v1/callback/expert-validation",
             headers=_webhook_headers(),
@@ -1931,6 +1934,7 @@ def test_expert_validation_webhook_writes_golden_set(mock_db):
     mock_put.assert_called_once()
     assert mock_ctr.count == 4
     mock_db.commit.assert_called_once()
+    mock_camunda.post.assert_not_called()
 
 
 def test_expert_validation_webhook_idempotent_repeat(mock_db):
@@ -1996,12 +2000,15 @@ def test_golden_set_internal_entry_success(mock_db):
     af_r.scalar_one_or_none.return_value = mock_af
     mock_ctr = MagicMock()
     mock_ctr.count = 10
+    mock_ctr.threshold = 1000
     ctr_r = MagicMock()
     ctr_r.scalar_one_or_none.return_value = mock_ctr
     mock_db.execute = AsyncMock(side_effect=[dup_r, af_r, ctr_r])
     mock_db.commit = AsyncMock()
 
-    with patch.object(main.internal_client, "put_object") as mock_put:
+    with patch.object(main.internal_client, "put_object") as mock_put, \
+         patch.object(main, "camunda_client") as mock_camunda:
+        mock_camunda.post = AsyncMock()
         response = client.post(
             "/v1/golden-set/entry",
             headers={
@@ -2021,6 +2028,262 @@ def test_golden_set_internal_entry_success(mock_db):
     assert response.json()["idempotent"] is False
     mock_put.assert_called_once()
     assert mock_ctr.count == 11
+    mock_camunda.post.assert_not_called()
+
+
+# ─── Story 4.3: Golden Set threshold → Camunda lora-fine-tuning ─────────────
+
+
+def test_golden_set_internal_entry_triggers_camunda_on_threshold_crossing(mock_db):
+    """Counter crosses threshold → POST .../lora-fine-tuning/start with typed variables."""
+    dup_r = MagicMock()
+    dup_r.scalar_one_or_none.return_value = None
+    mock_af = MagicMock()
+    mock_af.project_id = 1
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_af
+    mock_ctr = MagicMock()
+    mock_ctr.count = 9
+    mock_ctr.threshold = 10
+    ctr_r = MagicMock()
+    ctr_r.scalar_one_or_none.return_value = mock_ctr
+    mock_db.execute = AsyncMock(side_effect=[dup_r, af_r, ctr_r])
+    mock_db.commit = AsyncMock()
+    mock_camunda_resp = MagicMock()
+    mock_camunda_resp.status_code = 200
+    mock_camunda_resp.json.return_value = {"id": "proc-lora-1"}
+
+    with patch.object(main.internal_client, "put_object"), \
+         patch.object(main, "camunda_client") as mock_camunda:
+        mock_camunda.post = AsyncMock(return_value=mock_camunda_resp)
+        response = client.post(
+            "/v1/golden-set/entry",
+            headers={
+                "X-ZachAI-Golden-Set-Internal-Secret": os.environ["GOLDEN_SET_INTERNAL_SECRET"]
+            },
+            json={
+                "audio_id": 1,
+                "segment_start": 0.0,
+                "segment_end": 1.0,
+                "corrected_text": "hi",
+                "source": "frontend_correction",
+                "weight": "standard",
+            },
+        )
+
+    assert response.status_code == 200
+    mock_camunda.post.assert_called_once()
+    url = mock_camunda.post.call_args[0][0]
+    assert "lora-fine-tuning/start" in url
+    variables = mock_camunda.post.call_args[1]["json"]["variables"]
+    assert variables["goldenSetCount"] == {"value": 10, "type": "Integer"}
+    assert variables["threshold"] == {"value": 10, "type": "Integer"}
+    assert variables["triggeredAt"]["type"] == "String"
+    assert len(variables["triggeredAt"]["value"]) > 10
+
+
+def test_golden_set_internal_entry_idempotent_no_camunda(mock_db):
+    """Idempotent short-circuit → no Camunda start."""
+    dup_r = MagicMock()
+    dup_r.scalar_one_or_none.return_value = 999
+    mock_db.execute = AsyncMock(return_value=dup_r)
+
+    with patch.object(main.internal_client, "put_object") as mock_put, \
+         patch.object(main, "camunda_client") as mock_camunda:
+        mock_camunda.post = AsyncMock()
+        response = client.post(
+            "/v1/golden-set/entry",
+            headers={
+                "X-ZachAI-Golden-Set-Internal-Secret": os.environ["GOLDEN_SET_INTERNAL_SECRET"]
+            },
+            json={
+                "audio_id": 1,
+                "segment_start": 0.0,
+                "segment_end": 1.0,
+                "corrected_text": "hi",
+                "source": "frontend_correction",
+                "weight": "standard",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["idempotent"] is True
+    mock_put.assert_not_called()
+    mock_camunda.post.assert_not_called()
+
+
+def test_golden_set_internal_entry_below_threshold_no_camunda(mock_db):
+    """Increment does not cross threshold → no Camunda."""
+    dup_r = MagicMock()
+    dup_r.scalar_one_or_none.return_value = None
+    mock_af = MagicMock()
+    mock_af.project_id = 1
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_af
+    mock_ctr = MagicMock()
+    mock_ctr.count = 3
+    mock_ctr.threshold = 100
+    ctr_r = MagicMock()
+    ctr_r.scalar_one_or_none.return_value = mock_ctr
+    mock_db.execute = AsyncMock(side_effect=[dup_r, af_r, ctr_r])
+    mock_db.commit = AsyncMock()
+
+    with patch.object(main.internal_client, "put_object"), \
+         patch.object(main, "camunda_client") as mock_camunda:
+        mock_camunda.post = AsyncMock()
+        response = client.post(
+            "/v1/golden-set/entry",
+            headers={
+                "X-ZachAI-Golden-Set-Internal-Secret": os.environ["GOLDEN_SET_INTERNAL_SECRET"]
+            },
+            json={
+                "audio_id": 1,
+                "segment_start": 0.0,
+                "segment_end": 1.0,
+                "corrected_text": "hi",
+                "source": "frontend_correction",
+                "weight": "standard",
+            },
+        )
+
+    assert response.status_code == 200
+    mock_camunda.post.assert_not_called()
+
+
+def test_golden_set_internal_entry_camunda_connect_error_still_2xx(mock_db):
+    """Camunda ConnectError → ingest still 2xx; commit already done."""
+    dup_r = MagicMock()
+    dup_r.scalar_one_or_none.return_value = None
+    mock_af = MagicMock()
+    mock_af.project_id = 1
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_af
+    mock_ctr = MagicMock()
+    mock_ctr.count = 9
+    mock_ctr.threshold = 10
+    ctr_r = MagicMock()
+    ctr_r.scalar_one_or_none.return_value = mock_ctr
+    mock_db.execute = AsyncMock(side_effect=[dup_r, af_r, ctr_r])
+    mock_db.commit = AsyncMock()
+
+    with patch.object(main.internal_client, "put_object"), \
+         patch.object(main, "camunda_client") as mock_camunda:
+        mock_camunda.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        response = client.post(
+            "/v1/golden-set/entry",
+            headers={
+                "X-ZachAI-Golden-Set-Internal-Secret": os.environ["GOLDEN_SET_INTERNAL_SECRET"]
+            },
+            json={
+                "audio_id": 1,
+                "segment_start": 0.0,
+                "segment_end": 1.0,
+                "corrected_text": "hi",
+                "source": "frontend_correction",
+                "weight": "standard",
+            },
+        )
+
+    assert response.status_code == 200
+    mock_db.commit.assert_called_once()
+
+
+def test_golden_set_internal_entry_camunda_invalid_json_still_2xx(mock_db):
+    """Camunda 200 with unparseable body → ingest still 2xx; commit already done."""
+    dup_r = MagicMock()
+    dup_r.scalar_one_or_none.return_value = None
+    mock_af = MagicMock()
+    mock_af.project_id = 1
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_af
+    mock_ctr = MagicMock()
+    mock_ctr.count = 9
+    mock_ctr.threshold = 10
+    ctr_r = MagicMock()
+    ctr_r.scalar_one_or_none.return_value = mock_ctr
+    mock_db.execute = AsyncMock(side_effect=[dup_r, af_r, ctr_r])
+    mock_db.commit = AsyncMock()
+
+    mock_camunda_resp = MagicMock()
+    mock_camunda_resp.status_code = 200
+    mock_camunda_resp.json.side_effect = ValueError("not json")
+
+    with patch.object(main.internal_client, "put_object"), \
+         patch.object(main, "camunda_client") as mock_camunda:
+        mock_camunda.post = AsyncMock(return_value=mock_camunda_resp)
+        response = client.post(
+            "/v1/golden-set/entry",
+            headers={
+                "X-ZachAI-Golden-Set-Internal-Secret": os.environ["GOLDEN_SET_INTERNAL_SECRET"]
+            },
+            json={
+                "audio_id": 1,
+                "segment_start": 0.0,
+                "segment_end": 1.0,
+                "corrected_text": "hi",
+                "source": "frontend_correction",
+                "weight": "standard",
+            },
+        )
+
+    assert response.status_code == 200
+    mock_db.commit.assert_called_once()
+
+
+def test_golden_set_status_manager_ok(mock_db):
+    """GET /v1/golden-set/status — Manager sees counter fields."""
+    mock_row = MagicMock()
+    mock_row.count = 42
+    mock_row.threshold = 1000
+    mock_row.last_training_at = None
+    ctr_r = MagicMock()
+    ctr_r.scalar_one_or_none.return_value = mock_row
+    mock_db.execute = AsyncMock(return_value=ctr_r)
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.get(
+            "/v1/golden-set/status",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "count": 42,
+        "threshold": 1000,
+        "last_training_at": None,
+        "next_trigger_at": None,
+    }
+
+
+def test_golden_set_status_missing_row_defaults(mock_db):
+    """No GoldenSetCounter row → 200 with zeros and env threshold default."""
+    ctr_r = MagicMock()
+    ctr_r.scalar_one_or_none.return_value = None
+    mock_db.execute = AsyncMock(return_value=ctr_r)
+
+    with patch.object(main, "decode_token", return_value=ADMIN_PAYLOAD):
+        response = client.get(
+            "/v1/golden-set/status",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 0
+    assert data["threshold"] == main.GOLDEN_SET_THRESHOLD
+    assert data["last_training_at"] is None
+    assert data["next_trigger_at"] is None
+
+
+def test_golden_set_status_transcripteur_forbidden(mock_db):
+    """GET /v1/golden-set/status — Transcripteur → 403."""
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.get(
+            "/v1/golden-set/status",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 403
 
 
 # ─── Story 4.2: Frontend correction route & transcription read ───────────────
@@ -2078,13 +2341,16 @@ def test_frontend_correction_happy_path_transcripteur(mock_db):
     persist_af_r.scalar_one_or_none.return_value = mock_audio
     mock_ctr = MagicMock()
     mock_ctr.count = 5
+    mock_ctr.threshold = 1000
     ctr_r = MagicMock()
     ctr_r.scalar_one_or_none.return_value = mock_ctr
     mock_db.execute = AsyncMock(side_effect=[af_r, dup_r, persist_af_r, ctr_r])
     mock_db.commit = AsyncMock()
 
     with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD), \
-         patch.object(main.internal_client, "put_object") as mock_put:
+         patch.object(main.internal_client, "put_object") as mock_put, \
+         patch.object(main, "camunda_client") as mock_camunda:
+        mock_camunda.post = AsyncMock()
         response = client.post(
             "/v1/golden-set/frontend-correction",
             headers={"Authorization": "Bearer dummy.token.here"},
@@ -2096,6 +2362,7 @@ def test_frontend_correction_happy_path_transcripteur(mock_db):
     assert data["idempotent"] is False
     mock_put.assert_called_once()
     assert mock_ctr.count == 6
+    mock_camunda.post.assert_not_called()
 
 
 def test_frontend_correction_wrong_user_403(mock_db):
@@ -2180,13 +2447,16 @@ def test_frontend_correction_admin_bypass_assignment(mock_db):
     persist_af_r.scalar_one_or_none.return_value = mock_audio
     mock_ctr = MagicMock()
     mock_ctr.count = 0
+    mock_ctr.threshold = 1000
     ctr_r = MagicMock()
     ctr_r.scalar_one_or_none.return_value = mock_ctr
     mock_db.execute = AsyncMock(side_effect=[af_r, dup_r, persist_af_r, ctr_r])
     mock_db.commit = AsyncMock()
 
     with patch.object(main, "decode_token", return_value=ADMIN_PAYLOAD), \
-         patch.object(main.internal_client, "put_object"):
+         patch.object(main.internal_client, "put_object"), \
+         patch.object(main, "camunda_client") as mock_camunda:
+        mock_camunda.post = AsyncMock()
         response = client.post(
             "/v1/golden-set/frontend-correction",
             headers={"Authorization": "Bearer dummy.token.here"},
@@ -2194,6 +2464,7 @@ def test_frontend_correction_admin_bypass_assignment(mock_db):
         )
 
     assert response.status_code == 200
+    mock_camunda.post.assert_not_called()
 
 
 def test_frontend_correction_status_409_after_submit(mock_db):

@@ -1,7 +1,7 @@
 """
-ZachAI FastAPI Gateway — Story 4.1: Golden Set expert loop (Label Studio webhook + internal ingest)
+ZachAI FastAPI Gateway — Story 4.1–4.3: Golden Set + LoRA threshold → Camunda 7
 Extends Story 2.4: Assignment dashboard + FFmpeg semantics fix.
-Adds GoldenSetEntry / GoldenSetCounter, POST /v1/golden-set/entry, POST /v1/callback/expert-validation.
+Golden Set: POST /v1/golden-set/entry, frontend-correction, expert webhook; threshold crossing starts `lora-fine-tuning` BPMN (Story 4.3).
 FastAPI never touches audio binary data — upload goes directly browser→MinIO.
 """
 import os
@@ -126,6 +126,9 @@ try:
 except (TypeError, ValueError):
     logger.warning("GOLDEN_SET_THRESHOLD=%r is not a valid integer; falling back to 1000", _raw_threshold)
     GOLDEN_SET_THRESHOLD: int = 1000
+
+# Camunda process definition key for LoRA pipeline orchestration (Story 4.3; PRD §4.6)
+LORA_FINETUNING_PROCESS_KEY: str = "lora-fine-tuning"
 
 # Shared secrets — cached at startup (Story 4.1)
 _LABEL_STUDIO_WEBHOOK_SECRET: str = (os.environ.get("LABEL_STUDIO_WEBHOOK_SECRET") or "").strip()
@@ -334,32 +337,45 @@ async def fetch_jwks(issuer: str) -> dict:
 
 # ─── BPMN deployment ─────────────────────────────────────────────────────────
 
+_BPMN_DEPLOY_NAMES: tuple[str, ...] = ("project-lifecycle.bpmn", "lora-fine-tuning.bpmn")
+
 
 async def deploy_bpmn_workflows() -> None:
     """Deploy BPMN workflows to Camunda 7 at startup. Tolerant — logs on failure."""
     try:
-        # Try multiple paths for both local dev (src/api/fastapi/main.py) and Docker (/app/main.py)
-        potential_paths = [
-            Path(__file__).parent.parent.parent / "bpmn" / "project-lifecycle.bpmn",  # local dev
-            Path(__file__).parent / "bpmn" / "project-lifecycle.bpmn",               # Docker /app/bpmn
-            Path("/bpmn/project-lifecycle.bpmn"),                                    # Alternative mount
+        potential_dirs = [
+            Path(__file__).parent.parent.parent / "bpmn",
+            Path(__file__).parent / "bpmn",
+            Path("/bpmn"),
         ]
-        
-        bpmn_file = None
-        for p in potential_paths:
-            if p.exists():
-                bpmn_file = p
+        bpmn_dir: Path | None = None
+        for d in potential_dirs:
+            if (d / "project-lifecycle.bpmn").exists():
+                bpmn_dir = d
                 break
 
-        if not bpmn_file:
-            logger.warning("BPMN file not found in potential paths — workflows not deployed")
+        if not bpmn_dir:
+            logger.warning("BPMN directory not found in potential paths — workflows not deployed")
             return
 
-        logger.info("Deploying BPMN workflow from: %s", bpmn_file)
-        with open(bpmn_file, "rb") as f:
-            files = {"data": (bpmn_file.name, f)}
+        bpmn_paths = [bpmn_dir / name for name in _BPMN_DEPLOY_NAMES if (bpmn_dir / name).exists()]
+        if not bpmn_paths:
+            logger.warning("No BPMN files found under %s", bpmn_dir)
+            return
+
+        logger.info("Deploying BPMN workflows from %s: %s", bpmn_dir, [p.name for p in bpmn_paths])
+        file_handles: list = []
+        try:
+            multipart: list = []
+            for p in bpmn_paths:
+                fh = open(p, "rb")
+                file_handles.append(fh)
+                multipart.append(("data", (p.name, fh, "application/xml")))
             data = {"deployment-name": "zachai-workflows", "enable-duplicate-filtering": "true"}
-            resp = await camunda_client.post("/deployment/create", files=files, data=data)
+            resp = await camunda_client.post("/deployment/create", files=multipart, data=data)
+        finally:
+            for fh in file_handles:
+                fh.close()
 
         if 200 <= resp.status_code < 300:
             logger.info("BPMN workflows deployed to Camunda 7")
@@ -430,7 +446,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ZachAI Gateway",
     description="Lean API gateway: presigned URLs, JWT, Nature CRUD, Project CRUD, audio upload, Golden Set, Camunda 7",
-    version="2.6.0",
+    version="2.7.0",
     lifespan=lifespan,
 )
 
@@ -647,6 +663,20 @@ class GoldenSetEntryRequest(BaseModel):
         if v not in ("high", "standard"):
             raise ValueError("weight must be high or standard")
         return v
+
+
+class GoldenSetStatusResponse(BaseModel):
+    """GET /v1/golden-set/status — Story 4.3."""
+
+    count: int = Field(..., ge=0)
+    threshold: int
+    last_training_at: str | None = Field(
+        None, description="Set when a training run completes (Story 4.4); null until then."
+    )
+    next_trigger_at: str | None = Field(
+        None,
+        description="Reserved for future scheduler semantics; always null in Story 4.3.",
+    )
 
 
 class FrontendCorrectionRequest(BaseModel):
@@ -911,6 +941,57 @@ def verify_golden_set_internal_secret(request: Request) -> None:
     )
 
 
+async def start_lora_finetuning_camunda(golden_set_count: int, threshold: int) -> None:
+    """
+    POST /process-definition/key/lora-fine-tuning/start — fire-and-forget for ingest path (Story 4.3).
+    Logs failures; never raises to callers.
+    """
+    path = f"/process-definition/key/{LORA_FINETUNING_PROCESS_KEY}/start"
+    triggered_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    variables = {
+        "goldenSetCount": {"value": golden_set_count, "type": "Integer"},
+        "threshold": {"value": threshold, "type": "Integer"},
+        "triggeredAt": {"value": triggered_at, "type": "String"},
+    }
+    try:
+        resp = await camunda_client.post(
+            path,
+            json={"variables": variables, "withVariablesInReturn": True},
+        )
+        if 200 <= resp.status_code < 300:
+            body = resp.json()
+            proc_id = body.get("id")
+            logger.info(
+                "golden_set_lora_camunda_start_ok golden_set_count=%s threshold=%s process_key=%s "
+                "camunda_status=%s process_instance_id=%s",
+                golden_set_count,
+                threshold,
+                LORA_FINETUNING_PROCESS_KEY,
+                resp.status_code,
+                proc_id,
+            )
+        else:
+            logger.error(
+                "golden_set_lora_camunda_start_http_error golden_set_count=%s threshold=%s process_key=%s "
+                "camunda_status=%s process_instance_id=%s",
+                golden_set_count,
+                threshold,
+                LORA_FINETUNING_PROCESS_KEY,
+                resp.status_code,
+                None,
+            )
+    except Exception as exc:
+        logger.error(
+            "golden_set_lora_camunda_start_error golden_set_count=%s threshold=%s process_key=%s "
+            "camunda_status=%s process_instance_id=%s",
+            golden_set_count,
+            threshold,
+            LORA_FINETUNING_PROCESS_KEY,
+            type(exc).__name__,
+            None,
+        )
+
+
 async def persist_golden_set_entry(
     db: AsyncSession,
     body: GoldenSetEntryRequest,
@@ -919,7 +1000,7 @@ async def persist_golden_set_entry(
 ) -> dict:
     """
     Durable Golden Set ingest: idempotent DB row + MinIO JSON + counter increment (Story 4.1).
-    Does not start Camunda (Story 4.3).
+    On a real increment, may start Camunda `lora-fine-tuning` when threshold is newly crossed (Story 4.3).
     """
     t0 = time.perf_counter()
     ik = (body.idempotency_key or "").strip() or _default_golden_idempotency_key(body)
@@ -983,22 +1064,25 @@ async def persist_golden_set_entry(
         raise HTTPException(status_code=500, detail={"error": "Storage error during golden set write"})
 
     minio_key = f"{GOLDEN_SET_BUCKET}/{object_rel}"
+    should_start_lora = False
+    lora_new_count = 0
+    lora_threshold = 0
     try:
         entry = GoldenSetEntry(
-        audio_id=body.audio_id,
-        segment_start=body.segment_start,
-        segment_end=body.segment_end,
-        original_text=body.original_text,
-        corrected_text=body.corrected_text,
-        label=body.label,
-        source=body.source,
-        weight=body.weight,
-        idempotency_key=ik,
-        minio_object_key=minio_key,
-        sha256_hex=digest,
-        label_studio_task_id=body.label_studio_task_id,
-        label_studio_annotation_id=body.label_studio_annotation_id,
-    )
+            audio_id=body.audio_id,
+            segment_start=body.segment_start,
+            segment_end=body.segment_end,
+            original_text=body.original_text,
+            corrected_text=body.corrected_text,
+            label=body.label,
+            source=body.source,
+            weight=body.weight,
+            idempotency_key=ik,
+            minio_object_key=minio_key,
+            sha256_hex=digest,
+            label_studio_task_id=body.label_studio_task_id,
+            label_studio_annotation_id=body.label_studio_annotation_id,
+        )
         db.add(entry)
 
         cr = await db.execute(
@@ -1017,7 +1101,22 @@ async def persist_golden_set_entry(
                 )
                 ctr = cr2.scalar_one()
                 db.add(entry)
-        ctr.count = GoldenSetCounter.count + 1
+
+        previous_count = int(ctr.count)
+        db_threshold = int(ctr.threshold)
+        new_count = previous_count + 1
+        ctr.count = new_count
+        if db_threshold <= 0:
+            logger.warning(
+                "golden_set_lora_skip_non_positive_threshold golden_set_count=%s threshold=%s process_key=%s",
+                new_count,
+                db_threshold,
+                LORA_FINETUNING_PROCESS_KEY,
+            )
+        elif previous_count < db_threshold <= new_count:
+            should_start_lora = True
+            lora_new_count = new_count
+            lora_threshold = db_threshold
 
         await db.commit()
     except IntegrityError:
@@ -1049,6 +1148,8 @@ async def persist_golden_set_entry(
         minio_key,
         ms,
     )
+    if should_start_lora:
+        await start_lora_finetuning_camunda(lora_new_count, lora_threshold)
     return {
         "status": "ok",
         "idempotent": False,
@@ -1895,6 +1996,34 @@ async def post_golden_set_entry(
     """Internal ingest — service API key (not Keycloak). See docs/api-mapping.md §4."""
     verify_golden_set_internal_secret(request)
     return await persist_golden_set_entry(db, body)
+
+
+@app.get("/v1/golden-set/status", response_model=GoldenSetStatusResponse)
+async def get_golden_set_status(
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> GoldenSetStatusResponse:
+    """Golden Set counter snapshot — Manager or Admin. Story 4.3."""
+    roles = get_roles(payload)
+    if not {"Manager", "Admin"}.intersection(roles):
+        raise HTTPException(status_code=403, detail={"error": "Manager or Admin role required"})
+
+    r = await db.execute(select(GoldenSetCounter).where(GoldenSetCounter.id == 1))
+    row = r.scalar_one_or_none()
+    if row is None:
+        return GoldenSetStatusResponse(
+            count=0,
+            threshold=GOLDEN_SET_THRESHOLD,
+            last_training_at=None,
+            next_trigger_at=None,
+        )
+    last_tr = row.last_training_at.isoformat() if row.last_training_at else None
+    return GoldenSetStatusResponse(
+        count=int(row.count),
+        threshold=int(row.threshold),
+        last_training_at=last_tr,
+        next_trigger_at=None,
+    )
 
 
 @app.post("/v1/golden-set/frontend-correction")

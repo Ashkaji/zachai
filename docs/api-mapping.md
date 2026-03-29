@@ -90,7 +90,7 @@ FastAPI ne manipule jamais les binaires — il orchestre les accès via Presigne
 - **`POST /v1/golden-set/entry`**
   - Auth: Service interne (FastAPI → lui-même, depuis les webhooks)
   - Body: `{audio_id, segment_start, segment_end, corrected_text, label?, source, weight}`
-  - Action: Insère entrée + incrémente compteur + vérifie seuil → déclenche Camunda 7 si seuil atteint
+  - Action: Après persistance réussie et incrément **non idempotent** du compteur PostgreSQL (`GoldenSetCounter`), si le seuil est **nouvellement franchi** (`previous_count < threshold <= new_count` sur la ligne verrouillée), démarrage **asynchrone** du processus Camunda 7 **`lora-fine-tuning`** (REST fire-and-forget — échec Camunda **ne** fait **pas** échouer la réponse HTTP d’ingestion).
 
 - **`POST /v1/golden-set/frontend-correction`** (Story 4.2)
   - Auth: **Keycloak JWT** — rôle **Transcripteur** (ou **Admin** pour support). **Pas** de secret interne.
@@ -101,7 +101,7 @@ FastAPI ne manipule jamais les binaires — il orchestre les accès via Presigne
     - **409** si `AudioFile.status` ∉ `{assigned, in_progress}`.
   - Le serveur force `source = "frontend_correction"`, `weight = "standard"` — les clients **ne doivent pas** envoyer ces champs.
   - Idempotence optionnelle via `client_mutation_id` (UUID).
-  - Délègue à la même routine `persist_golden_set_entry` que Story 4.1.
+  - Délègue à la même routine `persist_golden_set_entry` que Story 4.1 — **même logique de seuil / Camunda** après écriture réelle.
 
 - **`GET /v1/audio-files/{audio_file_id}/transcription`** (Story 4.2)
   - Auth: **Transcripteur** assigné ou **Admin**
@@ -110,7 +110,7 @@ FastAPI ne manipule jamais les binaires — il orchestre les accès via Presigne
 
 - **`GET /v1/golden-set/status`**
   - Auth: Admin / Manager
-  - Retourne: `{count, threshold, last_training_at, next_trigger_at}`
+  - Retourne: `{count, threshold, last_training_at, next_trigger_at}` (`next_trigger_at` réservé — `null` tant que la planification n’est pas définie ; `last_training_at` alimenté après fin d’entraînement, Story 4.4).
 
 ---
 

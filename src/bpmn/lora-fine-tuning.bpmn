@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                   xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                   xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                   xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                   xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                   id="Definitions_lora"
+                   targetNamespace="http://zachai/lora-fine-tuning"
+                   exporter="ZachAI" exporterVersion="2.2.0">
+
+  <bpmn:process id="lora-fine-tuning" name="LoRA Fine-tuning" isExecutable="true" camunda:historyTimeToLive="P30D">
+
+    <bpmn:startEvent id="StartEvent_LoRA" name="Threshold reached">
+      <bpmn:outgoing>Flow_LoRA_1</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:sequenceFlow id="Flow_LoRA_1" sourceRef="StartEvent_LoRA" targetRef="RunLoRATraining"/>
+
+    <bpmn:serviceTask id="RunLoRATraining" name="Run LoRA training"
+                      camunda:type="external" camunda:topic="lora-training">
+      <bpmn:incoming>Flow_LoRA_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_LoRA_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:sequenceFlow id="Flow_LoRA_2" sourceRef="RunLoRATraining" targetRef="EndEvent_LoRA"/>
+
+    <bpmn:endEvent id="EndEvent_LoRA" name="Training task created">
+      <bpmn:incoming>Flow_LoRA_2</bpmn:incoming>
+    </bpmn:endEvent>
+
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_LoRA">
+    <bpmndi:BPMNPlane id="BPMNPlane_LoRA" bpmnElement="lora-fine-tuning">
+      <bpmndi:BPMNShape id="BPMNShape_StartEvent_LoRA" bpmnElement="StartEvent_LoRA">
+        <dc:Bounds x="179" y="99" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="BPMNEdge_Flow_LoRA_1" bpmnElement="Flow_LoRA_1">
+        <di:waypoint x="215" y="117"/>
+        <di:waypoint x="270" y="117"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNShape id="BPMNShape_RunLoRATraining" bpmnElement="RunLoRATraining">
+        <dc:Bounds x="270" y="77" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="BPMNEdge_Flow_LoRA_2" bpmnElement="Flow_LoRA_2">
+        <di:waypoint x="370" y="117"/>
+        <di:waypoint x="432" y="117"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNShape id="BPMNShape_EndEvent_LoRA" bpmnElement="EndEvent_LoRA">
+        <dc:Bounds x="432" y="99" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+
+</bpmn:definitions>
