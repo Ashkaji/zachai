@@ -19,6 +19,7 @@ os.environ.setdefault("MINIO_SECURE", "false")
 os.environ.setdefault("MINIO_PRESIGNED_ENDPOINT", "localhost:9000")
 os.environ.setdefault("POSTGRES_USER", "zachai")
 os.environ.setdefault("POSTGRES_PASSWORD", "changeme")
+os.environ.setdefault("CAMUNDA_REST_URL", "http://camunda7:8080/engine-rest")
 
 # Mock JWKS fetch at module import time so startup doesn't hit Keycloak
 MOCK_JWKS = {"keys": [{"kid": "test-key", "kty": "RSA", "alg": "RS256", "use": "sig"}]}
@@ -792,13 +793,20 @@ def test_create_project_nature_not_found(mock_db):
 
 
 def test_create_project_duplicate_name(mock_db):
-    """POST /v1/projects returns 400 when name already exists."""
+    """POST /v1/projects returns 400 when name already exists (IntegrityError on flush)."""
+    from sqlalchemy.exc import IntegrityError as SAIntegrityError
+
     mock_nature = make_mock_nature()
     nature_result = MagicMock()
     nature_result.scalar_one_or_none.return_value = mock_nature
-    dup_result = MagicMock()
-    dup_result.scalar_one_or_none.return_value = make_mock_project()
-    mock_db.execute = AsyncMock(side_effect=[nature_result, dup_result])
+    mock_db.execute = AsyncMock(return_value=nature_result)
+
+    # Simulate duplicate name: flush() raises IntegrityError
+    from sqlalchemy.pool import NullPool
+    mock_db.flush = AsyncMock(side_effect=SAIntegrityError(
+        "UNIQUE constraint failed", None, None
+    ))
+    mock_db.rollback = AsyncMock()
 
     with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
         response = client.post(
@@ -841,7 +849,8 @@ def test_create_project_invalid_production_goal():
             headers={"Authorization": "Bearer dummy.token.here"},
             json={"name": "P1", "nature_id": 1, "production_goal": "invalid"},
         )
-    assert response.status_code == 422  # Pydantic validation error
+    assert response.status_code == 400  # Invalid production_goal per AC 6
+    assert "production_goal must be one of" in response.json()["error"]
 
 
 def test_create_project_camunda_unavailable(mock_db):

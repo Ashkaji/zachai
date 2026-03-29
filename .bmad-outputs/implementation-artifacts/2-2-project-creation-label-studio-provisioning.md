@@ -1182,4 +1182,60 @@ Applied 10 critical/high-priority fixes from quality review:
 
 **Quality:** Story 2.2 is now publication-ready with all critical security and functional issues resolved.
 
+---
+
+## Review Findings
+
+**Code Review Date:** 2026-03-29
+**Reviewers:** Blind Hunter (code quality), Edge Case Hunter (integration), Acceptance Auditor (spec compliance)
+**Result:** 19 findings consolidated → 2 decisions resolved, 8 patches applied, 3 patches deferred (architectural), 5 deferred (pre-existing/design)
+
+### Decisions Resolved ✅
+
+- [x] [Review][Decision] **Foreign Key Cascade Strategy on Nature** → **Option 1: Document Immutability** ✅ Added comment explaining RESTRICT cascade strategy and soft-delete plan [main.py:163-165]
+
+- [x] [Review][Decision] **production_goal Status Code: 422 vs 400** → **Option 2: Custom 400 Handler** ✅ Added RequestValidationError handler to return HTTP 400 for production_goal validation failures [main.py:312-325]
+
+### Patches Applied ✅ (8 of 11 applied; 3 deferred for architectural review)
+
+**APPLIED (8 patches):**
+
+- [x] [Review][Patch] **Duplicate Project Name Race Condition** (HIGH) → **FIXED** ✅ Removed ineffective pre-check, now rely solely on IntegrityError + unique constraint [main.py:740-757]
+
+- [x] [Review][Patch] **XML Validation Order** (MEDIUM) → **FIXED** ✅ Moved XML generation and validation BEFORE project creation to prevent orphan projects [main.py:750-758]
+
+- [x] [Review][Patch] **Camunda Exception Handling Too Broad** (HIGH) → **FIXED** ✅ Narrowed to `except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError)` [main.py:789-793]
+
+- [x] [Review][Patch] **Missing LABEL_STUDIO_API_KEY Validation** (MEDIUM) → **FIXED** ✅ Added startup check in worker: raises ValueError if empty [provision_label_studio.py:19-25]
+
+- [x] [Review][Patch] **Camunda URL Not in REQUIRED_ENV_VARS** (MEDIUM) → **FIXED** ✅ Added "CAMUNDA_REST_URL" to REQUIRED_ENV_VARS, removed default [main.py:37-46, 106]
+
+- [x] [Review][Patch] **LABEL_STUDIO_API_KEY Placeholder in .env** (MEDIUM) → **FIXED** ✅ Updated .env.example with clear instructions and placeholder value [.env.example:78-82]
+
+- [x] [Review][Patch] **Missing Explicit Index on Project.name** (MEDIUM) → **FIXED** ✅ Added explicit unique index via __table_args__, moved unique constraint from column to index [main.py:160, 182-183]
+
+- [x] [Review][Patch] **Camunda Worker Missing Health Check** (LOW) → **FIXED** ✅ Added process-level healthcheck to camunda-worker in compose.yml [compose.yml:299-304]
+
+**DEFERRED (3 patches — require architectural decisions):**
+
+- [ ] [Review][Patch] **Transaction Scope Violation** (CRITICAL, but mitigated) — XML validation now happens before transaction (PATCH 2 mitigated this). Original issue was double-commits; now structure is cleaner but could benefit from unit test validation of transaction boundaries. [main.py:759-813]
+
+- [ ] [Review][Patch] **Camunda Response JSON Not Validated** (MEDIUM) — Code assumes response has "id" field without schema validation. Would require Pydantic model for Camunda responses. Deferred pending upstream Camunda API stability review. [main.py:794]
+
+- [ ] [Review][Patch] **Label Studio Status Code Too Permissive** (MEDIUM) — Accepts any 2xx (including 202 Accepted). Enforcing 201 only could break on future Label Studio API changes. Requires integration test with actual Label Studio service. [provision_label_studio.py:49-53]
+
+- [ ] [Review][Patch] **Label Studio Project ID Sync Idempotency** (MEDIUM) — No idempotency check before creating project. Requires querying Label Studio API before create, adding latency. Deferred pending idempotency requirements from Product. [provision_label_studio.py:56-78]
+
+### Deferred (Pre-Existing or Design)
+
+- [x] [Review][Defer] **Project ID Timing in Camunda** (MEDIUM) — Project may not be durable when Camunda starts process (issue #5 from Blind Hunter). Distributed systems timing edge case; acceptable eventual consistency model.
+
+- [x] [Review][Defer] **KEYCLOAK JWKS Fetch Failure** (LOW) — Startup doesn't fail if JWKS unreachable (issue #12 from Blind Hunter). Pre-existing from Story 1.3; outside scope.
+
+- [x] [Review][Defer] **Concurrency: Camunda Updates Committed Project** (MEDIUM) — Project visible with null process_instance_id between commit and update (issue #6 from Edge Case Hunter). By design; eventual consistency model is explicit.
+
+- [x] [Review][Defer] **Status Transition State Machine** (LOW) — No intermediate "PROVISIONING" state between DRAFT and ACTIVE. Design decision; simplistic but acceptable for this epic (issue #10 from Edge Case Hunter).
+
+- [x] [Review][Defer] **Worker DB Connection Pooling** (LOW) — Per-call asyncpg.connect() instead of connection pool. Performance optimization; not a blocker (issue #14 from Edge Case Hunter).
+
 Developer has everything needed for flawless implementation of Story 2.2! 🚀

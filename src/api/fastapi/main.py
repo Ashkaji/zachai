@@ -17,13 +17,14 @@ from urllib.parse import quote_plus
 import httpx
 from fastapi import FastAPI, HTTPException, Depends, Query, Request
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError, ExpiredSignatureError
 from minio import Minio
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy import String, Boolean, Integer, Float, ForeignKey, DateTime, func, select, delete
+from sqlalchemy import String, Boolean, Integer, Float, ForeignKey, DateTime, func, select, delete, Index
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.exc import IntegrityError
 from lxml import etree
@@ -41,6 +42,7 @@ REQUIRED_ENV_VARS = [
     "MINIO_PRESIGNED_ENDPOINT",
     "POSTGRES_USER",
     "POSTGRES_PASSWORD",
+    "CAMUNDA_REST_URL",
 ]
 
 ALLOWED_GET_PREFIXES = ("projects/", "golden-set/", "snapshots/")
@@ -101,7 +103,7 @@ AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_co
 
 # ─── Camunda 7 REST client ──────────────────────────────────────────────────
 
-CAMUNDA_REST_URL: str = os.environ.get("CAMUNDA_REST_URL", "http://camunda7:8080/engine-rest")
+CAMUNDA_REST_URL: str = os.environ["CAMUNDA_REST_URL"]
 camunda_client = httpx.AsyncClient(base_url=CAMUNDA_REST_URL, timeout=30.0)
 
 
@@ -155,8 +157,12 @@ class AudioFileStatus(str, Enum):
 class Project(Base):
     __tablename__ = "projects"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    # Name must be unique across all projects (enforced by explicit index in __table_args__)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    # RESTRICT cascade: Natures are immutable once projects reference them. Prevents accidental
+    # deletion of nature definitions that could orphan projects. If archival is needed in future
+    # stories, add soft-delete (is_deleted flag) to Nature table rather than loosening this constraint.
     nature_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("natures.id", ondelete="RESTRICT"), nullable=False
     )
@@ -173,6 +179,9 @@ class Project(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+    # Explicitly define unique index on name for clarity and performance
+    __table_args__ = (Index("ix_projects_name_unique", "name", unique=True),)
 
     nature: Mapped["Nature"] = relationship("Nature", lazy="selectin")
     audio_files: Mapped[list["AudioFile"]] = relationship(
@@ -305,6 +314,24 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     else:
         body = {"error": str(detail)}
     return JSONResponse(status_code=exc.status_code, content=body)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handle Pydantic validation errors. Return 400 for production_goal mismatches per spec AC 6."""
+    errors = exc.errors()
+    # Check if error is about production_goal field
+    for error in errors:
+        if error.get("loc") and "production_goal" in error.get("loc", ()):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "production_goal must be one of: livre, sous-titres, dataset, archive"},
+            )
+    # For other validation errors, return 422 (Pydantic default)
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+    )
 
 
 _bearer_scheme = HTTPBearer(auto_error=False)
@@ -724,14 +751,19 @@ async def create_project(
             detail={"error": f"Nature {body.nature_id} not found"},
         )
 
-    # Check duplicate project name
-    result = await db.execute(select(Project).where(Project.name == body.name))
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail={"error": "Project name already exists"})
-
     creator_id = payload.get("sub", payload.get("preferred_username"))
     if not creator_id:
         raise HTTPException(status_code=401, detail={"error": "Creator identifier missing in token"})
+
+    # Validate label schema BEFORE creating project to avoid orphaned projects with invalid schemas
+    label_schema_xml = generate_label_studio_xml(nature.labels)
+    try:
+        etree.fromstring(label_schema_xml.encode())
+    except etree.XMLSyntaxError as xml_err:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": f"Generated label schema is invalid XML: {str(xml_err)}"},
+        )
 
     try:
         async with db.begin_nested():
@@ -748,15 +780,6 @@ async def create_project(
 
         # Start Camunda process (don't fail project creation if unavailable)
         try:
-            label_schema_xml = generate_label_studio_xml(nature.labels)
-            try:
-                etree.fromstring(label_schema_xml.encode())
-            except etree.XMLSyntaxError as xml_err:
-                logger.error("Generated label_studio_schema is invalid XML: %s", xml_err)
-                # Skip Camunda — project is still created successfully
-                await db.commit()
-                await db.refresh(project)
-                return _project_to_dict(project)
 
             variables = {
                 "projectId": {"value": project.id, "type": "Integer"},
@@ -776,9 +799,9 @@ async def create_project(
                     "Camunda start failed: %s — project created but workflow not triggered",
                     resp.status_code,
                 )
-        except Exception as exc:
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError) as exc:
             logger.error(
-                "Exception starting Camunda process: %s — project created but workflow not triggered",
+                "Camunda unavailable (network error): %s — project created but workflow not triggered",
                 exc,
             )
 

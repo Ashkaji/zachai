@@ -17,6 +17,13 @@ CAMUNDA_REST_URL = os.environ.get("CAMUNDA_REST_URL", "http://camunda7:8080/engi
 LABEL_STUDIO_URL = os.environ.get("LABEL_STUDIO_URL", "http://label-studio:8090")
 LABEL_STUDIO_API_KEY = os.environ.get("LABEL_STUDIO_API_KEY", "")
 
+# Validate required environment variables
+if not LABEL_STUDIO_API_KEY:
+    raise ValueError(
+        "LABEL_STUDIO_API_KEY environment variable is required. "
+        "Get your API token from Label Studio UI: Settings → Account & Settings → API token."
+    )
+
 # DB Credentials (Story 2.2 sync)
 DB_USER = os.environ.get("POSTGRES_USER", "zachai")
 DB_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "zachai")

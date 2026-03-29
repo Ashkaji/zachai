@@ -20,7 +20,16 @@
       "Bash(echo \"Exit: $?\")",
       "Bash(grep -v \"^$\")",
       "Bash(docker ps:*)",
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "Bash(grep -E \"\\\\.\\(md|yaml\\)$\")",
+      "WebFetch(domain:api.labelstud.io)",
+      "Bash(python -m pytest test_main.py -v --tb=line)",
+      "Bash(python -m pytest test_main.py -v --tb=short)",
+      "Bash(python -m pytest src/api/fastapi/test_main.py -v --tb=short)",
+      "Bash(grep -B 5 -A 15 \"else:$\")",
+      "Bash(python -m pytest src/api/fastapi/test_main.py::test_create_project_invalid_production_goal -xvs)",
+      "Bash(python -m pytest src/api/fastapi/test_main.py -x)",
+      "Bash(python -m pytest src/api/fastapi/test_main.py::test_create_project_duplicate_name -xvs)"
     ]
   }
 }
