@@ -1,5 +1,5 @@
 # generated: 2026-03-19
-# last_updated: 2026-03-30 — Story 5.1 code review + patch batch (done)
+# last_updated: 2026-03-30 — Story 5.4 review fixes complete (done)
 # project: zachai
 # Next backlog after 5.2: Epic 5 story 5-1 (or per sprint plan)
 # project_key: NOKEY
@@ -107,7 +107,7 @@ development_status:
   # Sprint 5
   5-1-realtime-sync-hocuspocus-yjs: done
   5-3-bidirectional-audio-text-sync: done
-  5-4-automatic-snapshot-persistence: backlog
+  5-4-automatic-snapshot-persistence: done
   5-5-realtime-grammar-check-languagetool: backlog
   epic-5-retrospective: optional
 
@@ -126,3 +126,4 @@ development_status:
   7-2-whisper-open-api: backlog
   7-3-biblical-citation-detection: backlog
   epic-7-retrospective: optional
+

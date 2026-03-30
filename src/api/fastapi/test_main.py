@@ -10,6 +10,7 @@ import fakeredis.aioredis
 from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 
 # Set required environment variables before importing main
 os.environ.setdefault("KEYCLOAK_ISSUER", "http://keycloak:8080/realms/zachai")
@@ -26,6 +27,8 @@ os.environ.setdefault("LABEL_STUDIO_WEBHOOK_SECRET", "test-label-studio-webhook-
 os.environ.setdefault("GOLDEN_SET_INTERNAL_SECRET", "test-golden-set-internal-secret")
 os.environ.setdefault("GOLDEN_SET_BUCKET", "golden-set")
 os.environ.setdefault("MODEL_READY_CALLBACK_SECRET", "test-model-ready-secret")
+os.environ.setdefault("SNAPSHOT_CALLBACK_SECRET", "test-snapshot-secret")
+os.environ.setdefault("EXPORT_WORKER_URL", "http://export-worker:8780")
 # Unreachable Redis so lifespan leaves _redis_client None; per-test editor ticket tests patch FakeRedis
 os.environ.setdefault("REDIS_URL", "redis://127.0.0.1:63999/0")
 
@@ -3054,3 +3057,101 @@ def test_editor_ticket_invalid_permission_422(mock_db, fake_redis):
         )
 
     assert response.status_code == 422
+
+
+# ─── Story 5.4: POST /v1/editor/callback/snapshot ────────────────────────────
+
+SNAPSHOT_CALLBACK_BODY = {
+    "document_id": 1,
+    "yjs_state_binary": "ZmFrZS15anMtc3RhdGU=",
+}
+
+
+def _snapshot_headers():
+    return {"X-ZachAI-Snapshot-Secret": os.environ["SNAPSHOT_CALLBACK_SECRET"]}
+
+
+def test_snapshot_callback_no_secret(mock_db):
+    response = client.post("/v1/editor/callback/snapshot", json=SNAPSHOT_CALLBACK_BODY)
+    assert response.status_code == 401
+
+
+def test_snapshot_callback_wrong_secret(mock_db):
+    response = client.post(
+        "/v1/editor/callback/snapshot",
+        headers={"X-ZachAI-Snapshot-Secret": "wrong"},
+        json=SNAPSHOT_CALLBACK_BODY,
+    )
+    assert response.status_code == 403
+
+
+def test_snapshot_callback_invalid_body_422(mock_db):
+    response = client.post(
+        "/v1/editor/callback/snapshot",
+        headers=_snapshot_headers(),
+        json={"document_id": 1, "yjs_state_binary": "!!!"},
+    )
+    assert response.status_code == 422
+
+
+def test_snapshot_callback_missing_audio_404(mock_db):
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = None
+    mock_db.execute = AsyncMock(return_value=af_r)
+    response = client.post(
+        "/v1/editor/callback/snapshot",
+        headers=_snapshot_headers(),
+        json=SNAPSHOT_CALLBACK_BODY,
+    )
+    assert response.status_code == 404
+
+
+def test_snapshot_callback_worker_unavailable_503(mock_db):
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = _make_mock_audio_with_assignment()
+    mock_db.execute = AsyncMock(return_value=af_r)
+    with patch.object(main, "_export_worker_client", None):
+        response = client.post(
+            "/v1/editor/callback/snapshot",
+            headers=_snapshot_headers(),
+            json=SNAPSHOT_CALLBACK_BODY,
+        )
+    assert response.status_code == 503
+
+
+def test_snapshot_callback_export_failure_502(mock_db):
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = _make_mock_audio_with_assignment()
+    mock_db.execute = AsyncMock(return_value=af_r)
+    with patch.object(main, "_export_snapshot_via_worker", new=AsyncMock(side_effect=HTTPException(status_code=502, detail={"error": "Snapshot export failed"}))):
+        response = client.post(
+            "/v1/editor/callback/snapshot",
+            headers=_snapshot_headers(),
+            json=SNAPSHOT_CALLBACK_BODY,
+        )
+    assert response.status_code == 502
+
+
+def test_snapshot_callback_success_persists_metadata(mock_db):
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = _make_mock_audio_with_assignment()
+    mock_db.execute = AsyncMock(return_value=af_r)
+    mock_db.commit = AsyncMock()
+    worker_ok = {
+        "snapshot_id": "20260330T120000Z-abc123def0",
+        "json_object_key": "snapshots/1/20260330T120000Z-abc123def0.json",
+        "docx_object_key": "snapshots/1/20260330T120000Z-abc123def0.docx",
+        "yjs_sha256": "a" * 64,
+        "json_sha256": "b" * 64,
+        "docx_sha256": "c" * 64,
+    }
+    with patch.object(main, "_export_snapshot_via_worker", new=AsyncMock(return_value=worker_ok)):
+        response = client.post(
+            "/v1/editor/callback/snapshot",
+            headers=_snapshot_headers(),
+            json=SNAPSHOT_CALLBACK_BODY,
+        )
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "snapshot_id": worker_ok["snapshot_id"]}
+    mock_db.add.assert_called_once()
+    mock_db.commit.assert_called_once()

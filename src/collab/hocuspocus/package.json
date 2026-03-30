@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsc && node dist/index.js"
+    "dev": "tsc && node dist/index.js",
+    "test": "npm run build && node --test dist/snapshotScheduler.test.js"
   },
   "dependencies": {
     "@hocuspocus/extension-redis": "2.13.7",

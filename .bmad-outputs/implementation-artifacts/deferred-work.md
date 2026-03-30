@@ -70,3 +70,8 @@
 ## Deferred from: code review of 5-1-realtime-sync-hocuspocus-yjs.md (2026-03-30)
 
 - **Optional Hocuspocus/ticket automated tests not added**: Story 5.1 marks a Node integration test for ticket consume as optional; no new automated coverage was required for acceptance.
+
+## Deferred from: code review of 5-4-automatic-snapshot-persistence.md (2026-03-30)
+
+- **DLQ escalation vs explicit admin alert**: Explicit operator alert channel (pager/webhook/metrics) is deferred to a dedicated ops-observability story; current ERROR+DLQ visibility is sufficient for Story 5.4 scope.
+

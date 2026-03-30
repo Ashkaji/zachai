@@ -7,6 +7,7 @@ FastAPI never touches audio binary data — upload goes directly browser→MinIO
 """
 import os
 import io
+import base64
 import uuid
 import hmac
 import math
@@ -140,6 +141,8 @@ LORA_FINETUNING_PROCESS_KEY: str = "lora-fine-tuning"
 _LABEL_STUDIO_WEBHOOK_SECRET: str = (os.environ.get("LABEL_STUDIO_WEBHOOK_SECRET") or "").strip()
 _GOLDEN_SET_INTERNAL_SECRET: str = (os.environ.get("GOLDEN_SET_INTERNAL_SECRET") or "").strip()
 _MODEL_READY_CALLBACK_SECRET: str = (os.environ.get("MODEL_READY_CALLBACK_SECRET") or "").strip()
+_SNAPSHOT_CALLBACK_SECRET: str = (os.environ.get("SNAPSHOT_CALLBACK_SECRET") or "").strip()
+EXPORT_WORKER_URL: str = (os.environ.get("EXPORT_WORKER_URL") or "http://export-worker:8780").rstrip("/")
 _CHANGEME_PREFIXES = ("changeme",)
 if _LABEL_STUDIO_WEBHOOK_SECRET and _LABEL_STUDIO_WEBHOOK_SECRET.startswith(_CHANGEME_PREFIXES):
     logger.warning("LABEL_STUDIO_WEBHOOK_SECRET uses a default 'changeme' value — override in production")
@@ -147,11 +150,15 @@ if _GOLDEN_SET_INTERNAL_SECRET and _GOLDEN_SET_INTERNAL_SECRET.startswith(_CHANG
     logger.warning("GOLDEN_SET_INTERNAL_SECRET uses a default 'changeme' value — override in production")
 if _MODEL_READY_CALLBACK_SECRET and _MODEL_READY_CALLBACK_SECRET.startswith(_CHANGEME_PREFIXES):
     logger.warning("MODEL_READY_CALLBACK_SECRET uses a default 'changeme' value — override in production")
+if _SNAPSHOT_CALLBACK_SECRET and _SNAPSHOT_CALLBACK_SECRET.startswith(_CHANGEME_PREFIXES):
+    logger.warning("SNAPSHOT_CALLBACK_SECRET uses a default 'changeme' value — override in production")
 
 _GOLDEN_SET_ACTIONS = frozenset({"ANNOTATION_CREATED", "ANNOTATION_UPDATED", "ANNOTATION_SUBMITTED"})
 
 # FFmpeg worker HTTP client — created in lifespan (real AsyncClient; tests avoid import-time mock issues)
 _ffmpeg_client: httpx.AsyncClient | None = None
+# Export worker HTTP client — Story 5.4 snapshot pipeline
+_export_worker_client: httpx.AsyncClient | None = None
 
 # Redis — WSS editor tickets (Story 5.2); optional at runtime if ping fails (mint → 503)
 _redis_client: redis_asyncio.Redis | None = None
@@ -350,6 +357,28 @@ class YjsLog(Base):
     __table_args__ = (Index("ix_yjs_logs_document_id_id", "document_id", "id"),)
 
 
+class SnapshotArtifact(Base):
+    """Snapshot export metadata for timeline/restore workflows (Story 5.4)."""
+
+    __tablename__ = "snapshot_artifacts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    snapshot_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    document_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("audio_files.id", ondelete="CASCADE"), nullable=False
+    )
+    json_object_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    docx_object_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    yjs_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    json_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    docx_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="hocuspocus-idle-callback")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (Index("ix_snapshot_artifacts_document_created", "document_id", "created_at"),)
+
+
 class ModelReadyIdempotency(Base):
     """One row per successful model-ready callback (Story 4.4) — dedupes worker retries."""
 
@@ -428,7 +457,7 @@ async def deploy_bpmn_workflows() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _jwks_cache, _ffmpeg_client, _redis_client
+    global _jwks_cache, _ffmpeg_client, _redis_client, _export_worker_client
     # JWKS (existing) — tolerant: Keycloak may still be starting
     try:
         _jwks_cache = await fetch_jwks(KEYCLOAK_ISSUER)
@@ -520,6 +549,19 @@ async def lifespan(app: FastAPI):
         logger.error("REDIS_URL empty — POST /v1/editor/ticket will return 503")
         _redis_client = None
 
+    # Export worker — Story 5.4 (snapshot conversion/upload pipeline).
+    if EXPORT_WORKER_URL:
+        _export_worker_client = httpx.AsyncClient(base_url=EXPORT_WORKER_URL, timeout=30.0)
+        try:
+            hr = await _export_worker_client.get("/health", timeout=5.0)
+            if hr.status_code != 200:
+                logger.warning("Export worker /health returned HTTP %s", hr.status_code)
+        except Exception as exc:
+            logger.warning("Export worker unreachable at startup — snapshot callback may fail: %s", exc)
+    else:
+        logger.warning("EXPORT_WORKER_URL empty — snapshot callback endpoint will return 503")
+        _export_worker_client = None
+
     yield
 
     if _ffmpeg_client is not None:
@@ -528,6 +570,9 @@ async def lifespan(app: FastAPI):
     if _redis_client is not None:
         await _redis_client.aclose()
         _redis_client = None
+    if _export_worker_client is not None:
+        await _export_worker_client.aclose()
+        _export_worker_client = None
     await engine.dispose()
     await camunda_client.aclose()
 
@@ -890,6 +935,22 @@ class EditorTicketResponse(BaseModel):
     ttl: int = Field(default=60, description="Seconds until Redis key expires (Story 5.2).")
 
 
+class EditorSnapshotCallbackRequest(BaseModel):
+    """POST /v1/editor/callback/snapshot — Hocuspocus idle snapshot callback (Story 5.4)."""
+
+    document_id: int = Field(..., gt=0)
+    yjs_state_binary: str = Field(..., min_length=1, max_length=8_000_000)
+
+    @field_validator("yjs_state_binary")
+    @classmethod
+    def _validate_snapshot_base64(cls, v: str) -> str:
+        try:
+            base64.b64decode(v.encode("ascii"), validate=True)
+        except Exception as exc:
+            raise ValueError("yjs_state_binary must be valid base64") from exc
+        return v
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -1134,6 +1195,41 @@ def verify_model_ready_callback_secret(request: Request) -> None:
         header_name="X-ZachAI-Model-Ready-Secret",
         unconfigured_msg="Model-ready callback is not configured",
     )
+
+
+def verify_snapshot_callback_secret(request: Request) -> None:
+    _verify_shared_secret(
+        request,
+        expected_secret=_SNAPSHOT_CALLBACK_SECRET,
+        header_name="X-ZachAI-Snapshot-Secret",
+        unconfigured_msg="Snapshot callback is not configured",
+    )
+
+
+async def _export_snapshot_via_worker(body: EditorSnapshotCallbackRequest) -> dict:
+    global _export_worker_client
+    if _export_worker_client is None:
+        raise HTTPException(status_code=503, detail={"error": "Export worker unavailable"})
+    if not _SNAPSHOT_CALLBACK_SECRET:
+        raise HTTPException(status_code=503, detail={"error": "Snapshot callback is not configured"})
+    try:
+        resp = await _export_worker_client.post(
+            "/snapshot-export",
+            json={"document_id": body.document_id, "yjs_state_binary": body.yjs_state_binary},
+            headers={"X-ZachAI-Snapshot-Secret": _SNAPSHOT_CALLBACK_SECRET},
+        )
+    except httpx.RequestError as exc:
+        logger.error("snapshot_worker_request_error document_id=%s error=%s", body.document_id, exc)
+        raise HTTPException(status_code=502, detail={"error": "Snapshot export worker unreachable"})
+    if not (200 <= resp.status_code < 300):
+        logger.error(
+            "snapshot_worker_http_error document_id=%s status=%s body=%s",
+            body.document_id,
+            resp.status_code,
+            resp.text,
+        )
+        raise HTTPException(status_code=502, detail={"error": "Snapshot export failed"})
+    return resp.json()
 
 
 async def start_lora_finetuning_camunda(golden_set_count: int, threshold: int) -> None:
@@ -2477,6 +2573,62 @@ async def post_editor_ticket(
         raise HTTPException(status_code=503, detail={"error": "Redis unavailable"})
 
     return EditorTicketResponse(ticket_id=ticket_id, ttl=editor_ticket.WSS_TICKET_TTL_SEC)
+
+
+@app.post("/v1/editor/callback/snapshot")
+async def post_editor_snapshot_callback(
+    request: Request,
+    body: EditorSnapshotCallbackRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """
+    Hocuspocus idle snapshot callback (Story 5.4).
+    Secured with shared secret; forwards to export-worker then persists snapshot metadata.
+    """
+    verify_snapshot_callback_secret(request)
+
+    # Ensure document exists (document_id == audio_files.id by design).
+    af_result = await db.execute(select(AudioFile).where(AudioFile.id == body.document_id))
+    af = af_result.scalar_one_or_none()
+    if af is None:
+        raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
+
+    t0 = time.perf_counter()
+    export_out = await _export_snapshot_via_worker(body)
+
+    snapshot_id = str(export_out.get("snapshot_id") or "")
+    json_object_key = str(export_out.get("json_object_key") or "")
+    docx_object_key = str(export_out.get("docx_object_key") or "")
+    yjs_sha = str(export_out.get("yjs_sha256") or "")
+    json_sha = str(export_out.get("json_sha256") or "")
+    docx_sha = str(export_out.get("docx_sha256") or "")
+    if not all([snapshot_id, json_object_key, docx_object_key, yjs_sha, json_sha, docx_sha]):
+        raise HTTPException(status_code=502, detail={"error": "Snapshot export returned incomplete payload"})
+
+    db.add(
+        SnapshotArtifact(
+            snapshot_id=snapshot_id,
+            document_id=body.document_id,
+            json_object_key=json_object_key,
+            docx_object_key=docx_object_key,
+            yjs_sha256=yjs_sha,
+            json_sha256=json_sha,
+            docx_sha256=docx_sha,
+            source="hocuspocus-idle-callback",
+        )
+    )
+    await db.commit()
+
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    logger.info(
+        "snapshot_callback_ok document_id=%s snapshot_id=%s json_key=%s docx_key=%s duration_ms=%.0f",
+        body.document_id,
+        snapshot_id,
+        json_object_key,
+        docx_object_key,
+        elapsed_ms,
+    )
+    return {"status": "ok", "snapshot_id": snapshot_id}
 
 
 @app.post("/v1/callback/expert-validation")

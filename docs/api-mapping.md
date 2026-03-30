@@ -163,8 +163,19 @@ Les **External Task Workers** (Python) polent Camunda 7 (`/engine-rest/external-
 
 - **`POST /v1/editor/callback/snapshot`**
   - Source: Hocuspocus (webhook après inactivité)
-  - Body: `{document_id, yjs_state_binary}`
-  - Action: Export Worker génère DOCX/JSON → upload MinIO `snapshots/` avec checksum SHA-256
+  - Auth: secret partagé — en-tête **`X-ZachAI-Snapshot-Secret`** (ou `Authorization: Bearer <secret>`)
+  - Body: `{ "document_id": int, "yjs_state_binary": "<base64>" }`
+  - Action:
+    - FastAPI vérifie le secret + l’existence de `audio_files.id == document_id`
+    - Appelle `export-worker /snapshot-export`
+    - Export Worker génère DOCX/JSON, upload MinIO `snapshots/{document_id}/...`, valide checksum SHA-256
+    - Persiste les métadonnées dans `snapshot_artifacts` (snapshot_id, object keys, checksums)
+  - Erreurs:
+    - **401/403** secret absent ou invalide
+    - **404** document audio inconnu
+    - **422** payload invalide (base64, champs manquants, taille)
+    - **502** export-worker en erreur HTTP
+    - **503** export-worker non joignable / non configuré
 
 - **`GET /v1/editor/active-users/{document_id}`**
   - Auth: Membre du projet

@@ -6,7 +6,7 @@
 #   Layer 2 — Compute:    ffmpeg-worker, openvino, camunda7    [TODO: Story 3.1, 3.2, 2.2]
 #   Layer 3 — Gateway:    fastapi, camunda-workers             [TODO: Story 1.3, 2.2]
 #   Layer 4 — Annotation: label-studio                        [TODO: Story 2.1]
-#   Layer 5 — Collab:     hocuspocus (Story 5.1), languagetool, export-worker [TODO: 5.4, 5.5]
+#   Layer 5 — Collab:     hocuspocus (Story 5.1), export-worker (Story 5.4), languagetool [TODO: 5.5]
 #   Layer 6 — Frontend:   frontend                            [TODO: Story (React)]
 #
 # SMOKE TEST — run after 'docker compose up -d':
@@ -220,6 +220,9 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       # WSS ticket TTL (seconds) — configurable for long editing sessions.
       WSS_TICKET_TTL_SEC: ${WSS_TICKET_TTL_SEC:-3600}
+      # Snapshot callback/export pipeline (Story 5.4)
+      SNAPSHOT_CALLBACK_SECRET: ${SNAPSHOT_CALLBACK_SECRET:-changeme-snapshot-callback}
+      EXPORT_WORKER_URL: ${EXPORT_WORKER_URL:-http://export-worker:8780}
     networks:
       - zachai-network
     depends_on:
@@ -234,6 +237,8 @@ services:
       camunda7:
         condition: service_healthy
       ffmpeg-worker:
+        condition: service_healthy
+      export-worker:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
@@ -429,6 +434,9 @@ services:
       POSTGRES_PORT: "5432"
       POSTGRES_DB: zachai
       LOG_LEVEL: ${HOCUSPOCUS_LOG_LEVEL:-info}
+      SNAPSHOT_IDLE_MS: ${SNAPSHOT_IDLE_MS:-15000}
+      SNAPSHOT_CALLBACK_URL: ${SNAPSHOT_CALLBACK_URL:-http://fastapi:8000/v1/editor/callback/snapshot}
+      SNAPSHOT_CALLBACK_SECRET: ${SNAPSHOT_CALLBACK_SECRET:-changeme-snapshot-callback}
     networks:
       - zachai-network
     depends_on:
@@ -451,9 +459,31 @@ services:
   # languagetool:   # TODO: Story 5.5 — Grammar checker. RAM-intensive — cgroups quotas required.
   #                 #                   Image: erikvl87/languagetool:latest. Port: 8010.
   #                 #                   Depends on: (none). Fallback: FastAPI returns 429 + local regex.
-  # export-worker:  # TODO: Story 5.4 — DOCX/JSON snapshot exporter (Node.js). Triggered by Hocuspocus webhook.
-  #                 #                   Validates SHA-256 checksum before MinIO upload.
-  #                 #                   Depends on: minio (service_healthy).
+  export-worker:
+    build:
+      context: ./workers/export-worker
+    container_name: zachai-export-worker
+    environment:
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      SNAPSHOT_BUCKET: ${SNAPSHOT_BUCKET:-snapshots}
+      SNAPSHOT_CALLBACK_SECRET: ${SNAPSHOT_CALLBACK_SECRET:-changeme-snapshot-callback}
+      EXPORT_WORKER_MAX_RETRIES: ${EXPORT_WORKER_MAX_RETRIES:-3}
+      EXPORT_WORKER_DLQ_DIR: ${EXPORT_WORKER_DLQ_DIR:-/tmp/export-worker-dlq}
+    networks:
+      - zachai-network
+    depends_on:
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8780/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
 
   # ── Layer 6: Frontend (Story 4.2) ─────────────────────────────────────────────
   # Dev mode: run `npm run dev` in src/frontend/ with VITE_API_BASE=http://localhost:8000

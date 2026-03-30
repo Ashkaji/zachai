@@ -6,6 +6,7 @@ import { Redis as HocuspocusRedis } from "@hocuspocus/extension-redis";
 import { Redis } from "ioredis";
 import pg from "pg";
 import * as Y from "yjs";
+import { createIdleSnapshotScheduler } from "./snapshotScheduler.js";
 
 const WSS_TICKET_PREFIX = "wss:ticket:";
 const HOCUSPOCUS_REDIS_PREFIX = process.env.HOCUSPOCUS_REDIS_PREFIX ?? "hp:crdt:";
@@ -16,6 +17,20 @@ const LOG_LEVEL = (process.env.LOG_LEVEL ?? "info").toLowerCase();
 
 const REDIS_URL = (process.env.REDIS_URL ?? "").trim();
 const DATABASE_URL = (process.env.DATABASE_URL ?? "").trim();
+const DEFAULT_SNAPSHOT_IDLE_MS = 15_000;
+const MAX_SNAPSHOT_IDLE_MS = 300_000;
+
+function parseSnapshotIdleMs(raw: string | undefined): number {
+  const parsed = Number.parseInt(raw ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SNAPSHOT_IDLE_MS;
+  return Math.min(parsed, MAX_SNAPSHOT_IDLE_MS);
+}
+
+const SNAPSHOT_IDLE_MS = parseSnapshotIdleMs(process.env.SNAPSHOT_IDLE_MS);
+const SNAPSHOT_CALLBACK_URL = (
+  process.env.SNAPSHOT_CALLBACK_URL ?? "http://fastapi:8000/v1/editor/callback/snapshot"
+).trim();
+const SNAPSHOT_CALLBACK_SECRET = (process.env.SNAPSHOT_CALLBACK_SECRET ?? "").trim();
 
 function log(level: string, msg: string, extra?: Record<string, unknown>) {
   const allowed = LOG_LEVEL === "debug" ? ["debug", "info", "warn", "error"] : ["info", "warn", "error"];
@@ -119,6 +134,59 @@ async function storeDocumentState(documentId: number, document: Y.Doc): Promise<
   }
 }
 
+async function postSnapshotCallback(documentId: number, document: Y.Doc): Promise<void> {
+  if (!SNAPSHOT_CALLBACK_SECRET) {
+    log("warn", "snapshot callback disabled: SNAPSHOT_CALLBACK_SECRET missing");
+    return;
+  }
+  if (!SNAPSHOT_CALLBACK_URL) {
+    log("warn", "snapshot callback disabled: SNAPSHOT_CALLBACK_URL missing");
+    return;
+  }
+  const state = Y.encodeStateAsUpdate(document);
+  const body = JSON.stringify({
+    document_id: documentId,
+    yjs_state_binary: Buffer.from(state).toString("base64"),
+  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch(SNAPSHOT_CALLBACK_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "X-ZachAI-Snapshot-Secret": SNAPSHOT_CALLBACK_SECRET,
+      },
+      body,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      log("warn", "snapshot callback failed", {
+        document_id: documentId,
+        status: response.status,
+        body: text.slice(0, 300),
+      });
+      return;
+    }
+    log("info", "snapshot callback success", { document_id: documentId, status: response.status });
+  } catch (error) {
+    log("warn", "snapshot callback transport error", {
+      document_id: documentId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+const latestDocuments = new Map<number, Y.Doc>();
+const snapshotScheduler = createIdleSnapshotScheduler(SNAPSHOT_IDLE_MS, async (documentId) => {
+  const currentDoc = latestDocuments.get(documentId);
+  if (!currentDoc) return;
+  await postSnapshotCallback(documentId, currentDoc);
+});
+
 const server = Server.configure({
   port: PORT,
   address: HOST,
@@ -175,13 +243,29 @@ const server = Server.configure({
   async onLoadDocument({ documentName, document }) {
     const documentId = parseInt(documentName, 10);
     if (Number.isNaN(documentId)) return;
+    latestDocuments.set(documentId, document);
     await loadDocumentState(documentId, document);
   },
 
   async onStoreDocument({ documentName, document }) {
     const documentId = parseInt(documentName, 10);
     if (Number.isNaN(documentId)) return;
+    latestDocuments.set(documentId, document);
     await storeDocumentState(documentId, document);
+  },
+
+  async onChange({ documentName, document }) {
+    const documentId = parseInt(documentName, 10);
+    if (Number.isNaN(documentId)) return;
+    latestDocuments.set(documentId, document);
+    snapshotScheduler.onUpdate(documentId);
+  },
+
+  async afterUnloadDocument({ documentName }) {
+    const documentId = parseInt(documentName, 10);
+    if (Number.isNaN(documentId)) return;
+    latestDocuments.delete(documentId);
+    snapshotScheduler.purge(documentId);
   },
 });
 
@@ -192,6 +276,7 @@ log("info", `Redis collab prefix: ${HOCUSPOCUS_REDIS_PREFIX}`);
 
 function shutdown() {
   log("info", "shutting down");
+  snapshotScheduler.dispose();
   void server.destroy();
   void redisTicket.quit();
   void redisCollab.quit();
@@ -201,3 +286,4 @@ function shutdown() {
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+

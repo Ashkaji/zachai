@@ -32,7 +32,7 @@ ZachAI est une plateforme 100% open-source de transcription et d'archivage audio
 | Inférence | OpenVINO + Whisper (Apache/MIT) | Normalisation audio, transcription, pré-annotation |
 | Annotation | Label Studio Community (Apache 2.0) | Expert Loop, annotation segmentée |
 | Grammaire | LanguageTool (LGPL) | Vérification grammaticale temps-réel |
-| Export | Node.js Worker (MIT) | Conversion DOCX/JSON asynchrone |
+| Export | Python FastAPI Worker (MIT stack) | Conversion DOCX/JSON asynchrone + upload snapshots |
 | Frontend | React + Tiptap (MIT) | Interface transcription + dashboard |
 
 ---
@@ -92,6 +92,7 @@ L'ordre de démarrage est géré automatiquement via les health checks (voir [`d
 **Interfaces disponibles après démarrage :**
 - API FastAPI : `http://localhost:8000`
 - Hocuspocus (WSS éditeur, CRDT) : `ws://localhost:11234` par défaut sur l’hôte (voir `HOCUSPOCUS_HOST_PORT` dans `src/.env.example` ; le conteneur écoute en **1234**) — avec le frontend (`npm run dev` dans `src/frontend`, variables `VITE_*`)
+- Export Worker (snapshots) : `http://localhost:8780/health` (interne au pipeline snapshot, utile pour triage Story 5.4)
 - Camunda Cockpit : `http://localhost:8081/camunda/app/cockpit` (voir compose pour le port hôte)
 - MinIO Console : `http://localhost:9001`
 - Keycloak Admin : `http://localhost:8180`
