@@ -35,11 +35,15 @@ export const WhisperSegment = Mark.create({
   },
 
   renderHTML({ HTMLAttributes }) {
+    const attrs = HTMLAttributes as WhisperSegmentAttrs & { [key: string]: unknown };
+    const { audioStart, audioEnd, sourceText: _sourceText, ...rest } = attrs;
     return [
       "span",
-      mergeAttributes(HTMLAttributes, {
+      mergeAttributes(rest, {
         "data-whisper-segment": "",
-        style: "background: rgba(59,130,246,0.08); border-bottom: 2px solid rgba(59,130,246,0.3);",
+        "data-audio-start": audioStart,
+        "data-audio-end": audioEnd,
+        class: "zachai-whisper-segment",
       }),
       0,
     ];

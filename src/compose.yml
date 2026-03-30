@@ -218,6 +218,8 @@ services:
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
       # Redis — Story 5.2 (WSS tickets; namespaces: wss:ticket:, lt:cache:, …)
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      # WSS ticket TTL (seconds) — configurable for long editing sessions.
+      WSS_TICKET_TTL_SEC: ${WSS_TICKET_TTL_SEC:-3600}
     networks:
       - zachai-network
     depends_on:

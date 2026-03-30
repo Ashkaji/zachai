@@ -23,3 +23,25 @@
   user-select: none;
   white-space: nowrap;
 }
+
+/* Story 5.3 — whisper segment + karaoke active highlight */
+.zachai-whisper-segment {
+  background: rgba(59, 130, 246, 0.08);
+  border-bottom: 2px solid rgba(59, 130, 246, 0.3);
+}
+
+.zachai-karaoke-active {
+  background: rgba(59, 130, 246, 0.18);
+  border-bottom-color: rgba(59, 130, 246, 0.85);
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.65);
+  animation: zachai-karaoke-pulse 900ms ease-in-out infinite alternate;
+}
+
+@keyframes zachai-karaoke-pulse {
+  from {
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.45);
+  }
+  to {
+    box-shadow: 0 0 16px rgba(59, 130, 246, 0.85);
+  }
+}

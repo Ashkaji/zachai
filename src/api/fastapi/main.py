@@ -2326,6 +2326,79 @@ async def get_audio_transcription(
     return {"segments": []}
 
 
+# ─── Routes — Audio media URL (Story 5.3) ─────────────────────────────────────
+
+
+@app.get("/v1/audio-files/{audio_file_id}/media")
+async def get_audio_media(
+    audio_file_id: int,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Return a presigned MinIO URL for normalized audio playback (Story 5.3)."""
+    roles = get_roles(payload)
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(status_code=401, detail={"error": "Subject missing in token"})
+
+    if not {"Transcripteur", "Expert", "Admin"}.intersection(roles):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "Transcripteur, Expert, or Admin role required"},
+        )
+
+    result = await db.execute(
+        select(AudioFile)
+        .where(AudioFile.id == audio_file_id)
+        .options(selectinload(AudioFile.assignment))
+    )
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
+
+    # Match editor permission gates (Story 5.2): assignment + status for Transcripteur, project active for Expert.
+    if "Admin" not in roles:
+        if "Expert" in roles:
+            proj_r = await db.execute(select(Project).where(Project.id == af.project_id))
+            proj = proj_r.scalar_one_or_none()
+            if proj is None or proj.status != ProjectStatus.ACTIVE:
+                raise HTTPException(status_code=403, detail={"error": "Project is not active"})
+        elif "Transcripteur" in roles:
+            asg = af.assignment
+            if not asg or asg.transcripteur_id != sub:
+                raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
+            if af.status not in (AudioFileStatus.ASSIGNED, AudioFileStatus.IN_PROGRESS):
+                raise HTTPException(
+                    status_code=409,
+                    detail={"error": "Audio file status does not allow editor access"},
+                )
+        else:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "Transcripteur, Expert, or Admin role required"},
+            )
+
+    # Normalized audio must exist and be free of validation errors.
+    if not _audio_normalized_eligible(af):
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "Audio is not eligible for playback (missing normalized audio)"},
+        )
+
+    bucket_name, object_name = _parse_bucket_and_object(af.normalized_path)
+    try:
+        presigned_url = presigned_client.presigned_get_object(
+            bucket_name=bucket_name,
+            object_name=object_name,
+            expires=timedelta(hours=1),
+        )
+    except Exception as exc:
+        logger.error("MinIO presigned_get_object failed: %s", exc)
+        raise HTTPException(status_code=503, detail={"error": "MinIO unavailable"})
+
+    return {"presigned_url": presigned_url, "expires_in": 3600}
+
+
 @app.post("/v1/editor/ticket")
 async def post_editor_ticket(
     body: EditorTicketRequest,

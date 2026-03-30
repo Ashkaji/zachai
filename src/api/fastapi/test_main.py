@@ -2570,6 +2570,110 @@ def test_transcription_get_admin_can_view(mock_db):
     assert response.json() == {"segments": []}
 
 
+# ─── Story 5.3: GET /v1/audio-files/{id}/media ──────────────────────────────
+
+
+def test_audio_media_happy_path_transcripteur_assigned(mock_db):
+    """GET /v1/audio-files/{id}/media: assigned Transcripteur + normalized audio → 200."""
+    mock_audio = _make_mock_audio_with_assignment(transcripteur_id="user-999", status_val="assigned")
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_audio
+    mock_db.execute = AsyncMock(return_value=af_r)
+
+    fake_url = "http://localhost:9000/projects/1/audio/test.normalized.wav?X-Amz-Signature=abc"
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD), \
+         patch.object(main.presigned_client, "presigned_get_object", return_value=fake_url):
+        response = client.get(
+            "/v1/audio-files/1/media",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["presigned_url"] == fake_url
+    assert response.json()["expires_in"] == 3600
+
+
+def test_audio_media_wrong_user_403(mock_db):
+    """GET /v1/audio-files/{id}/media: Transcripteur not assigned → 403."""
+    mock_audio = _make_mock_audio_with_assignment(transcripteur_id="other-user", status_val="assigned")
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_audio
+    mock_db.execute = AsyncMock(return_value=af_r)
+
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.get(
+            "/v1/audio-files/1/media",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 403
+    assert "error" in response.json()
+
+
+def test_audio_media_wrong_role_403(mock_db):
+    """GET /v1/audio-files/{id}/media: Manager role forbidden → 403."""
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.get(
+            "/v1/audio-files/1/media",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 403
+    assert "error" in response.json()
+
+
+def test_audio_media_missing_audio_404(mock_db):
+    """GET /v1/audio-files/{id}/media: unknown audio → 404."""
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = None
+    mock_db.execute = AsyncMock(return_value=af_r)
+
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.get(
+            "/v1/audio-files/999/media",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 404
+    assert "error" in response.json()
+
+
+def test_audio_media_normalized_missing_409(mock_db):
+    """GET /v1/audio-files/{id}/media: normalized_path missing → 409."""
+    mock_audio = _make_mock_audio_with_assignment(transcripteur_id="user-999", status_val="assigned")
+    mock_audio.normalized_path = None  # not eligible for playback
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_audio
+    mock_db.execute = AsyncMock(return_value=af_r)
+
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.get(
+            "/v1/audio-files/1/media",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 409
+    assert "error" in response.json()
+
+
+def test_audio_media_presigned_generation_failure_503(mock_db):
+    """GET /v1/audio-files/{id}/media: presigned_get_object fails → 503."""
+    mock_audio = _make_mock_audio_with_assignment(transcripteur_id="user-999", status_val="assigned")
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_audio
+    mock_db.execute = AsyncMock(return_value=af_r)
+
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD), \
+         patch.object(main.presigned_client, "presigned_get_object", side_effect=Exception("minio down")):
+        response = client.get(
+            "/v1/audio-files/1/media",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 503
+    assert "error" in response.json()
+
+
 # ─── Story 4.4: POST /v1/callback/model-ready ─────────────────────────────────
 
 
@@ -2712,7 +2816,7 @@ async def test_editor_ticket_transcripteur_happy(mock_db, fake_redis):
 
     assert response.status_code == 200
     data = response.json()
-    assert data["ttl"] == 60
+    assert data["ttl"] == editor_ticket_mod.WSS_TICKET_TTL_SEC
     tid = data["ticket_id"]
     assert len(tid) == 36
 
@@ -2743,7 +2847,7 @@ def test_editor_ticket_expert_active_project(mock_db, fake_redis):
         )
 
     assert response.status_code == 200
-    assert response.json()["ttl"] == 60
+    assert response.json()["ttl"] == editor_ticket_mod.WSS_TICKET_TTL_SEC
 
 
 def test_editor_ticket_expert_inactive_project_403(mock_db, fake_redis):

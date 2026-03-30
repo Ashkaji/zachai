@@ -1,6 +1,6 @@
 # Story 5.3: bidirectional-audio-text-sync
 
-Status: ready-for-dev
+Status: in-progress
 
 ## Story
 **As a** Transcripteur,
@@ -49,47 +49,47 @@ Status: ready-for-dev
    2. Real-time grammar verification: Story 5.5.
 
 ## Tasks / Subtasks
-- [ ] **Backend: playable audio URL endpoint**
-  - [ ] Add a new FastAPI GET route in `src/api/fastapi/main.py` (or an imported module) to return a presigned MinIO URL for the normalized audio of `audio_file_id`.
-    - [ ] Endpoint proposal: `GET /v1/audio-files/{audio_file_id}/media` returning `{ presigned_url, expires_in: 3600 }` (or align with the project’s existing media naming, but update `docs/api-mapping.md` to match).
-    - [ ] Reuse auth + authorization gates from `/v1/editor/ticket` logic (Story 5.2) and transcription gate patterns (Story 4.2).
-    - [ ] Enforce `_audio_normalized_eligible(af)` (normalized_path not None, `validation_error is None`).
-    - [ ] Generate presigned GET from `af.normalized_path` using the existing `presigned_client.presigned_get_object`.
-  - [ ] Update `docs/api-mapping.md` with the final route name + auth requirements and error semantics.
-  - [ ] Add automated backend tests in `src/api/fastapi/test_main.py` covering:
-    - happy path for assigned Transcripteur,
-    - 403 for wrong user,
-    - 403 for wrong role,
-    - 404 for unknown audio id,
-    - 409 when normalized audio is missing / not eligible,
-    - 503 if MinIO/presigned generation fails.
+- [x] **Backend: playable audio URL endpoint**
+  - [x] Add a new FastAPI GET route in `src/api/fastapi/main.py` (or an imported module) to return a presigned MinIO URL for the normalized audio of `audio_file_id`.
+    - [x] Endpoint proposal: `GET /v1/audio-files/{audio_file_id}/media` returning `{ presigned_url, expires_in: 3600 }` (or align with the project’s existing media naming, but update `docs/api-mapping.md` to match).
+    - [x] Reuse auth + authorization gates from `/v1/editor/ticket` logic (Story 5.2) and transcription gate patterns (Story 4.2).
+    - [x] Enforce `_audio_normalized_eligible(af)` (normalized_path not None, `validation_error is None`).
+    - [x] Generate presigned GET from `af.normalized_path` using the existing `presigned_client.presigned_get_object`.
+  - [x] Update `docs/api-mapping.md` with the final route name + auth requirements and error semantics.
+  - [x] Add automated backend tests in `src/api/fastapi/test_main.py` covering:
+    - [x] happy path for assigned Transcripteur,
+    - [x] 403 for wrong user,
+    - [x] 403 for wrong role,
+    - [x] 404 for unknown audio id,
+    - [x] 409 when normalized audio is missing / not eligible,
+    - [x] 503 if MinIO/presigned generation fails.
 
-- [ ] **Frontend: audio element + presigned URL fetch**
-  - [ ] In `src/frontend/src/editor/TranscriptionEditor.tsx`, add:
+- [x] **Frontend: audio element + presigned URL fetch**
+  - [x] In `src/frontend/src/editor/TranscriptionEditor.tsx`, add:
     - a dedicated `HTMLAudioElement` via `useRef<HTMLAudioElement | null>()`,
     - state for `audioLoadStatus` / errors,
     - and logic to fetch the backend media URL after:
       - `audioId` and `token` are available,
       - and collaboration ticket mint completes (reuse existing `status` area).
-  - [ ] Ensure URL fetch happens once per `audioId` (cache in a ref), and is cancelled/retried safely on unmount and audioId changes.
-  - [ ] Set `audio.preload = "auto"` and wire `onloadedmetadata`, `onerror`, `onplaying`, `onpause`, and `onended` handlers.
+  - [x] Ensure URL fetch happens once per `audioId` (cache in a ref), and is cancelled/retried safely on unmount and audioId changes.
+  - [x] Set `audio.preload = "auto"` and wire `onloadedmetadata`, `onerror`, `onplaying`, `onpause`, and `onended` handlers.
 
-- [ ] **Frontend: word/segment click → seek**
-  - [ ] Update `src/frontend/src/editor/WhisperSegmentMark.ts` so the rendered span exposes `data-audio-start` and `data-audio-end` (derived from mark attrs).
-    - [ ] Keep a class name for styling (avoid inline styles that make later “active” styling hard to override).
-  - [ ] Add DOM event delegation in `TranscriptionEditor.tsx`:
+- [x] **Frontend: word/segment click → seek**
+  - [x] Update `src/frontend/src/editor/WhisperSegmentMark.ts` so the rendered span exposes `data-audio-start` and `data-audio-end` (derived from mark attrs).
+    - [x] Keep a class name for styling (avoid inline styles that make later “active” styling hard to override).
+  - [x] Add DOM event delegation in `TranscriptionEditor.tsx`:
     - On click target inside `span[data-whisper-segment]`, parse `data-audio-start` (and optionally `data-audio-end`),
     - Call `audio.currentTime = audioStart` and `audio.play()`,
     - Immediately update the karaoke highlight to match the clicked segment (do not wait for the next audio frame).
 
-- [ ] **Frontend: karaoke-style active highlight (decorations)**
-  - [ ] Implement a client-only ProseMirror decoration strategy (no document mutation):
+- [x] **Frontend: karaoke-style active highlight (decorations)**
+  - [x] Implement a client-only ProseMirror decoration strategy (no document mutation):
     - Create/update a decoration set that highlights the currently active `whisperSegment`.
     - Use `requestAnimationFrame` while audio is playing to compute active segment from `audio.currentTime`.
-  - [ ] Build an efficient lookup:
+  - [x] Build an efficient lookup:
     - Collect all `whisperSegment` mark ranges and their `[audioStart, audioEnd)` from the current editor state when the doc changes (editor update handler),
     - Then highlight selection is O(log N) or efficient enough for long-form documents.
-  - [ ] Add CSS in `src/frontend/src/editor/collaboration.css` for:
+  - [x] Add CSS in `src/frontend/src/editor/collaboration.css` for:
     - normal whisper segment styling,
     - active karaoke highlight styling (blue halo / underline animation if desired).
 
@@ -161,6 +161,8 @@ _(none)_
 ### Completion Notes List
 - This story is designed to extend the current collaboration editor implementation (Story 5.1 + 5.2) with purely client-side karaoke highlight logic.
 - Backend provides a normalized audio presigned URL endpoint with strict permission checks.
+- Implemented `GET /v1/audio-files/{audio_file_id}/media`, updated `docs/api-mapping.md`, and added Story 5.3 backend tests.
+- Frontend now fetches normalized audio via the new endpoint, supports click-to-seek on `whisperSegment` spans, and drives karaoke active highlighting via client-only ProseMirror decorations.
 
 ### File List
 - `src/frontend/src/editor/TranscriptionEditor.tsx`
@@ -171,7 +173,7 @@ _(none)_
 - `docs/api-mapping.md`
 
 ## Traduction française (référence)
-**Statut :** `ready-for-dev`
+**Statut :** `in-progress`
 
 **Histoire :** En tant que Transcripteur, je veux cliquer sur un mot/segment dans l’éditeur collaboratif pour faire jouer l’audio au timestamp correspondant (< 50ms) et voir le mot/segment actif surligné (karaoké) pendant la lecture, afin que la correction audio soit fluide.
 

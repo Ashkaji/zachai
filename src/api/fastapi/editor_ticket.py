@@ -1,7 +1,8 @@
 """
 WSS handshake tickets (Story 5.2).
 
-Redis key: wss:ticket:{ticket_id} — JSON {"sub", "document_id", "permissions"}, TTL 60s.
+Redis key: wss:ticket:{ticket_id} — JSON {"sub", "document_id", "permissions"}, TTL configurable
+via env `WSS_TICKET_TTL_SEC` (default 3600s).
 
 Story 5.1 (Hocuspocus) must validate by **GETDEL** (or equivalent atomic consume) so the ticket
 is single-use: only one successful handshake consumes the key; replays and races see nil.
@@ -9,11 +10,12 @@ is single-use: only one successful handshake consumes the key; replays and races
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from typing import Any
 
 WSS_TICKET_KEY_PREFIX = "wss:ticket:"
-WSS_TICKET_TTL_SEC = 60
+WSS_TICKET_TTL_SEC = max(30, int(os.getenv("WSS_TICKET_TTL_SEC", "3600")))
 
 
 def ticket_key(ticket_id: str) -> str:
