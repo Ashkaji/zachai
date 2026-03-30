@@ -29,12 +29,18 @@ const DEV_FIXTURE_SEGMENTS: Segment[] = [
   { start: 2.5, end: 5.0, text: "bienvenue au camp biblique." },
   { start: 5.0, end: 8.0, text: "Aujourd'hui nous allons étudier le livre de la Genèse." },
 ];
+const MAX_RECONNECT_ATTEMPTS = 8;
 
 type AudioLoadStatus = "idle" | "loading" | "ready" | "error";
 
 function roundAudioTime(t: number): number {
   // 1ms precision is enough for click/seek boundaries and makes stringified dataset values match.
   return Math.round(t * 1000) / 1000;
+}
+
+function shouldRetryTicketHttpStatus(status: number): boolean {
+  // Retry only transient errors. Auth/permission/validation errors need user action.
+  return status === 429 || status >= 500;
 }
 
 function collabWsBase(): string {
@@ -195,6 +201,10 @@ export function TranscriptionEditor() {
 
     const scheduleReconnect = (reason: string) => {
       if (cancelled || reconnectPending) return;
+      if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        setCollabLine(`${reason} — reconnect stopped after ${MAX_RECONNECT_ATTEMPTS} attempts`);
+        return;
+      }
       reconnectPending = true;
       const waitMs = Math.min(1000 * 2 ** reconnectAttempts, 10000);
       reconnectAttempts += 1;
@@ -227,7 +237,11 @@ export function TranscriptionEditor() {
           } catch {
             /* ignore */
           }
-          scheduleReconnect(`Ticket HTTP ${tr.status}${hint}`);
+          if (shouldRetryTicketHttpStatus(tr.status)) {
+            scheduleReconnect(`Ticket HTTP ${tr.status}${hint}`);
+          } else {
+            setCollabLine(`Ticket HTTP ${tr.status}${hint}`);
+          }
           return;
         }
         const { ticket_id } = (await tr.json()) as { ticket_id: string };

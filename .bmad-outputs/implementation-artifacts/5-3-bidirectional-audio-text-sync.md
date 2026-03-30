@@ -1,6 +1,6 @@
 # Story 5.3: bidirectional-audio-text-sync
 
-Status: in-progress
+Status: review
 
 ## Story
 **As a** Transcripteur,
@@ -93,8 +93,8 @@ Status: in-progress
     - normal whisper segment styling,
     - active karaoke highlight styling (blue halo / underline animation if desired).
 
-- [ ] **Manual & automated verification**
-  - [ ] Manual test notes:
+- [x] **Manual & automated verification**
+  - [x] Manual test notes:
     - two browsers logged in with same token type,
     - click multiple segments and verify seek and highlight,
     - confirm typing/corrections still debounce and submit only on text edits.
@@ -163,6 +163,7 @@ _(none)_
 - Backend provides a normalized audio presigned URL endpoint with strict permission checks.
 - Implemented `GET /v1/audio-files/{audio_file_id}/media`, updated `docs/api-mapping.md`, and added Story 5.3 backend tests.
 - Frontend now fetches normalized audio via the new endpoint, supports click-to-seek on `whisperSegment` spans, and drives karaoke active highlighting via client-only ProseMirror decorations.
+- Hardened long editing sessions by adding bounded automatic ticket remint/reconnect policy for transient collaboration failures.
 
 ### File List
 - `src/frontend/src/editor/TranscriptionEditor.tsx`
@@ -173,7 +174,7 @@ _(none)_
 - `docs/api-mapping.md`
 
 ## Traduction française (référence)
-**Statut :** `in-progress`
+**Statut :** `review`
 
 **Histoire :** En tant que Transcripteur, je veux cliquer sur un mot/segment dans l’éditeur collaboratif pour faire jouer l’audio au timestamp correspondant (< 50ms) et voir le mot/segment actif surligné (karaoké) pendant la lecture, afin que la correction audio soit fluide.
 
