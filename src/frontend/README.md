@@ -21,7 +21,7 @@ to the FastAPI gateway (default `http://localhost:8000`).
 | `VITE_KEYCLOAK_URL` | `http://localhost:8180` | Keycloak server URL |
 | `VITE_KEYCLOAK_REALM` | `zachai` | Keycloak realm name |
 | `VITE_KEYCLOAK_CLIENT_ID` | `zachai-frontend` | OIDC public client ID (PKCE) |
-| `VITE_HOCUSPOCUS_URL` | `ws://localhost:1234` | Hocuspocus / Yjs WebSocket (voir Story 5.1). Si absent, le client utilise `ws://<hostname>:1234`. |
+| `VITE_HOCUSPOCUS_URL` | `ws://localhost:11234` | Hocuspocus / Yjs WebSocket (voir Story 5.1). Si absent, le client utilise `ws://` ou `wss://` + `<hostname>:11234` (port hôte Compose par défaut). |
 
 ## Real-time collaboration (Story 5.1)
 
@@ -33,8 +33,10 @@ to the FastAPI gateway (default `http://localhost:8000`).
 
 Uses **OIDC Authorization Code + PKCE** via `react-oidc-context` / `oidc-client-ts`.
 The public client `zachai-frontend` must exist in the Keycloak realm
-(see `src/config/realms/zachai-realm.json`). No client secret is used —
-PKCE is the recommended flow for SPAs.
+(see `src/config/realms/zachai-realm.json`). **Valid redirect URIs** must include
+`http://localhost:5173/*` (Vite dev); if you still see **Invalid parameter: redirect_uri**,
+update the client in Keycloak Admin or re-import the realm — an existing DB may still
+have the old list (`http://localhost:3000/*` only). No client secret — PKCE only.
 
 ## Usage
 

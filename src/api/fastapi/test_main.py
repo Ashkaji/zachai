@@ -2657,6 +2657,24 @@ def test_model_ready_callback_idempotent_duplicate(mock_db):
 EDITOR_TICKET_BODY = {"document_id": 1, "permissions": ["read", "write"]}
 
 
+def test_get_roles_merges_realm_and_resource_access():
+    payload = {
+        "realm_access": {"roles": ["Admin"]},
+        "resource_access": {"zachai-frontend": {"roles": ["Transcripteur"]}},
+    }
+    assert set(main.get_roles(payload)) == {"Admin", "Transcripteur"}
+
+
+def test_get_roles_dedupes_across_sources():
+    payload = {
+        "realm_access": {"roles": ["Transcripteur"]},
+        "resource_access": {"account": {"roles": ["Transcripteur", "manage-account"]}},
+    }
+    r = main.get_roles(payload)
+    assert r.count("Transcripteur") == 1
+    assert "manage-account" in r
+
+
 @pytest.fixture
 def fake_redis():
     r = fakeredis.aioredis.FakeRedis(decode_responses=True)
@@ -2802,6 +2820,30 @@ def test_editor_ticket_no_token_401():
     response = client.post("/v1/editor/ticket", json=EDITOR_TICKET_BODY)
     assert response.status_code == 401
     assert "error" in response.json()
+
+
+def test_editor_ticket_sub_fallback_to_preferred_username_happy(mock_db, fake_redis):
+    """If Keycloak token omits `sub` but provides `preferred_username`, we should still mint the ticket."""
+    mock_audio = _make_mock_audio_with_assignment(transcripteur_id="user-999", status_val="assigned")
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_audio
+    mock_db.execute = AsyncMock(return_value=af_r)
+
+    payload_without_sub = {
+        # `sub` missing on purpose
+        "preferred_username": "user-999",
+        "realm_access": {"roles": ["Transcripteur"]},
+        "exp": 9999999999,
+    }
+
+    with patch.object(main, "decode_token", return_value=payload_without_sub):
+        response = client.post(
+            "/v1/editor/ticket",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json=EDITOR_TICKET_BODY,
+        )
+
+    assert response.status_code == 200
 
 
 def test_editor_ticket_invalid_token_401():

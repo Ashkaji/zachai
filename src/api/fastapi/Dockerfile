@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY api/fastapi/main.py .
 COPY api/fastapi/golden_set.py .
+COPY api/fastapi/editor_ticket.py .
 COPY bpmn/project-lifecycle.bpmn ./bpmn/
 
 EXPOSE 8000

@@ -31,7 +31,7 @@ from minio.error import S3Error
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, selectinload
-from sqlalchemy import String, Boolean, Integer, Float, ForeignKey, DateTime, Text, LargeBinary, func, select, delete, Index, case
+from sqlalchemy import String, Boolean, Integer, Float, ForeignKey, DateTime, Text, LargeBinary, func, select, delete, Index, case, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import UniqueConstraint
 from sqlalchemy import Enum as SAEnum
@@ -447,6 +447,37 @@ async def lifespan(app: FastAPI):
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+
+            # Brownfield schema compatibility (Story 2.3):
+            # `create_all()` doesn't modify existing tables, but the app expects validation_* columns.
+            # Use IF NOT EXISTS so repeated startups are safe.
+            try:
+                await conn.execute(
+                    text(
+                        "ALTER TABLE audio_files ADD COLUMN IF NOT EXISTS validation_error VARCHAR(1024)"
+                    )
+                )
+                await conn.execute(
+                    text(
+                        "ALTER TABLE audio_files ADD COLUMN IF NOT EXISTS validation_attempted_at TIMESTAMPTZ"
+                    )
+                )
+
+                await conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_audio_files_project_status ON audio_files (project_id, status)"
+                    )
+                )
+                await conn.execute(
+                    text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS uq_audio_files_project_minio_path ON audio_files (project_id, minio_path)"
+                    )
+                )
+            except Exception as ddl_exc:
+                logger.warning(
+                    "Brownfield audio_files DDL skipped/failed (will likely break endpoints): %s",
+                    ddl_exc,
+                )
         async with AsyncSessionLocal() as session:
             async with session.begin():
                 r = await session.execute(select(GoldenSetCounter).where(GoldenSetCounter.id == 1))
@@ -584,7 +615,13 @@ def decode_token(token: str) -> dict:
             token,
             _jwks_cache,
             algorithms=["RS256"],
-            options={"verify_aud": False},  # realm-level roles — no audience claim to verify
+            options={
+                "verify_aud": False,  # realm-level roles — no audience claim to verify
+                # OIDC id_tokens include at_hash; python-jose would require the access_token
+                # argument to verify it, but our clients send only one Bearer. Access tokens
+                # do not carry at_hash, so skipping is safe for API auth.
+                "verify_at_hash": False,
+            },
         )
         return payload
     except ExpiredSignatureError:
@@ -594,8 +631,34 @@ def decode_token(token: str) -> dict:
 
 
 def get_roles(payload: dict) -> list[str]:
-    """Extract Keycloak realm roles from JWT payload."""
-    return payload.get("realm_access", {}).get("roles", [])
+    """
+    Extract Keycloak roles from JWT: realm roles (`realm_access.roles`) plus any client roles
+    under `resource_access.<client>.roles`. Both appear depending on client-scope mappers;
+    merging avoids 403 when the UI shows realm roles but only client claims are in the token.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def add_list(role_list: object) -> None:
+        if not isinstance(role_list, list):
+            return
+        for r in role_list:
+            name = r if isinstance(r, str) else str(r)
+            if name not in seen:
+                seen.add(name)
+                out.append(name)
+
+    ra = payload.get("realm_access")
+    if isinstance(ra, dict):
+        add_list(ra.get("roles"))
+
+    rac = payload.get("resource_access")
+    if isinstance(rac, dict):
+        for _client_id, caccess in rac.items():
+            if isinstance(caccess, dict):
+                add_list(caccess.get("roles"))
+
+    return out
 
 
 def get_current_user(
@@ -604,7 +667,20 @@ def get_current_user(
     """FastAPI dependency: extract and verify Bearer JWT, return decoded payload."""
     if credentials is None:
         raise HTTPException(status_code=401, detail={"error": "Unauthorized"})
-    return decode_token(credentials.credentials)
+    payload = decode_token(credentials.credentials)
+
+    # Some Keycloak/OIDC configurations (or token types) can omit `sub` while still carrying
+    # realm roles. The rest of this API assumes `sub` is present and uses it as user identity
+    # (e.g. ticket payload / assignment matching). Fallback to other standard identity fields
+    # to avoid hard-failing authorization.
+    if not payload.get("sub"):
+        for alt in ("preferred_username", "username", "email", "upn"):
+            v = payload.get(alt)
+            if isinstance(v, str) and v.strip():
+                payload["sub"] = v
+                break
+
+    return payload
 
 
 # ─── DB Dependency ────────────────────────────────────────────────────────────
@@ -2262,6 +2338,17 @@ async def post_editor_ticket(
     """
     roles = get_roles(payload)
     sub = payload.get("sub")
+    logger.info(
+        "editor_ticket auth debug sub=%s roles=%s realm_roles=%s resource_access_clients=%s",
+        sub,
+        roles,
+        ((payload.get("realm_access") or {}).get("roles") if isinstance(payload.get("realm_access"), dict) else None),
+        (
+            list(payload.get("resource_access", {}).keys())
+            if isinstance(payload.get("resource_access"), dict)
+            else []
+        ),
+    )
     if not sub:
         raise HTTPException(status_code=401, detail={"error": "Subject missing in token"})
     if not {"Transcripteur", "Expert", "Admin"}.intersection(roles):

@@ -44,10 +44,16 @@
         "pkce.code.challenge.method": "S256"
       },
       "redirectUris": [
-        "http://localhost:3000/*"
+        "http://localhost:3000/*",
+        "http://localhost:5173/*",
+        "http://127.0.0.1:5173/*",
+        "http://127.0.0.1:3000/*"
       ],
       "webOrigins": [
-        "http://localhost:3000"
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173"
       ],
       "protocol": "openid-connect",
       "fullScopeAllowed": true,
@@ -55,6 +61,22 @@
         "profile",
         "email",
         "roles"
+      ],
+      "protocolMappers": [
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "true",
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String"
+          }
+        }
       ]
     }
   ],

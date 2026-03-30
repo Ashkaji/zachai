@@ -405,6 +405,9 @@ services:
   #                 #                   Depends on: postgres, minio, fastapi (all service_healthy).
 
   # ── Layer 5: Collaboration & Intelligence ─────────────────────────────────────
+  # Hocuspocus listens on 1234 inside the container. Host port defaults to 11234 because
+  # Windows often reserves TCP 1234 (Hyper-V / excluded port ranges), causing bind errors.
+  # Override with HOCUSPOCUS_HOST_PORT in .env if needed (e.g. 1234 on Linux).
   hocuspocus:
     build:
       context: ./collab/hocuspocus
@@ -412,7 +415,7 @@ services:
     image: zachai-hocuspocus:local
     container_name: zachai-hocuspocus
     ports:
-      - "1234:1234"
+      - "${HOCUSPOCUS_HOST_PORT:-11234}:1234"
     environment:
       PORT: "1234"
       HOST: "0.0.0.0"

@@ -91,7 +91,7 @@ L'ordre de démarrage est géré automatiquement via les health checks (voir [`d
 
 **Interfaces disponibles après démarrage :**
 - API FastAPI : `http://localhost:8000`
-- Hocuspocus (WSS éditeur, CRDT) : `ws://localhost:1234` — à utiliser avec le frontend (`npm run dev` dans `src/frontend`, variables `VITE_*`)
+- Hocuspocus (WSS éditeur, CRDT) : `ws://localhost:11234` par défaut sur l’hôte (voir `HOCUSPOCUS_HOST_PORT` dans `src/.env.example` ; le conteneur écoute en **1234**) — avec le frontend (`npm run dev` dans `src/frontend`, variables `VITE_*`)
 - Camunda Cockpit : `http://localhost:8081/camunda/app/cockpit` (voir compose pour le port hôte)
 - MinIO Console : `http://localhost:9001`
 - Keycloak Admin : `http://localhost:8180`

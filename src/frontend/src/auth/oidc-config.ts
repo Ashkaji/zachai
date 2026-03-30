@@ -11,7 +11,8 @@ export const oidcConfig: AuthProviderProps = {
   client_id: CLIENT_ID,
   redirect_uri: window.location.href,
   post_logout_redirect_uri: window.location.origin,
-  scope: "openid profile",
+  // Include `roles` so the access token carries `realm_access.roles` (Keycloak default client scope).
+  scope: "openid profile email roles",
   automaticSilentRenew: true,
   onSigninCallback: () => {
     const url = new URL(window.location.href);

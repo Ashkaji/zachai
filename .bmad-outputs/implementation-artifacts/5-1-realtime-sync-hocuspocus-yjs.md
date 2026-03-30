@@ -153,7 +153,7 @@ _(none)_
 
 - Added SQLAlchemy `YjsLog` + `create_all` for `yjs_logs` (document FK → `audio_files.id`, BYTEA + `created_at`).
 - New service `src/collab/hocuspocus`: Hocuspocus 2.13 + `@hocuspocus/extension-redis` (`hp:crdt:`), `onAuthenticate` with **GETDEL** on `wss:ticket:{id}`, room = string `document_id`, `connection.readOnly` when no `write` permission, `onLoadDocument`/`onStoreDocument` snapshot persistence (replace rows per save).
-- Compose `hocuspocus` on port **1234** with healthcheck; env aligns with FastAPI Postgres + `REDIS_URL`.
+- Compose `hocuspocus`: container port **1234**, host mapping default **11234** (`HOCUSPOCUS_HOST_PORT`) for Windows-friendly binds; healthcheck; env aligns with FastAPI Postgres + `REDIS_URL`.
 - Frontend: `Y.Doc`, `HocuspocusProvider`, Collaboration + CollaborationCursor; ticket mint then WS; seed transcription only after `synced` when doc empty; caret styles `collaboration.css`.
 - Docs: `docs/api-mapping.md` §6, `README.md`, `src/.env.example`, `src/frontend/README.md`.
 - Regression: `pytest src/api/fastapi/test_main.py` (128 passed); `npm run build` frontend; `docker compose build hocuspocus` OK.

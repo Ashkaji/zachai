@@ -9,7 +9,7 @@ import CollaborationCursor from "@tiptap/extension-collaboration-cursor";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
 import { WhisperSegment, type WhisperSegmentAttrs } from "./WhisperSegmentMark";
-import { apiFetch } from "../auth/api-client";
+import { apiFetch, bearerForApi } from "../auth/api-client";
 import "./collaboration.css";
 
 interface Segment {
@@ -19,6 +19,9 @@ interface Segment {
 }
 
 const DEBOUNCE_MS = 800;
+
+/** Host-side port in compose (`HOCUSPOCUS_HOST_PORT`, default 11234). Container still uses 1234. */
+const DEFAULT_HOCUSPOCUS_HOST_PORT = 11234;
 
 const DEV_FIXTURE_SEGMENTS: Segment[] = [
   { start: 0.0, end: 2.5, text: "Bonjour à tous," },
@@ -32,11 +35,11 @@ function collabWsBase(): string {
     return fromEnv.replace(/\/$/, "");
   }
   if (typeof window === "undefined") {
-    return "ws://localhost:1234";
+    return `ws://localhost:${DEFAULT_HOCUSPOCUS_HOST_PORT}`;
   }
   const { protocol, hostname } = window.location;
   const scheme = protocol === "https:" ? "wss" : "ws";
-  return `${scheme}://${hostname}:1234`;
+  return `${scheme}://${hostname}:${DEFAULT_HOCUSPOCUS_HOST_PORT}`;
 }
 
 const ZACHAI_SEED_META = "zachai_meta";
@@ -113,7 +116,7 @@ function collectMarkedSegments(
 
 export function TranscriptionEditor() {
   const auth = useAuth();
-  const token = auth.user?.access_token ?? "";
+  const token = useMemo(() => bearerForApi(auth.user), [auth.user]);
   const audioIdParam = new URLSearchParams(window.location.search).get("audio_id");
   const audioId =
     audioIdParam && /^\d+$/.test(audioIdParam) ? parseInt(audioIdParam, 10) : null;
@@ -161,7 +164,15 @@ export function TranscriptionEditor() {
           body: JSON.stringify({ document_id: audioId, permissions: ["read", "write"] }),
         });
         if (!tr.ok) {
-          setCollabLine(`Ticket HTTP ${tr.status}`);
+          let hint = "";
+          try {
+            const errBody = (await tr.clone().json()) as { detail?: unknown; error?: string };
+            const d = errBody?.detail ?? errBody?.error;
+            hint = d != null ? ` — ${typeof d === "string" ? d : JSON.stringify(d)}` : "";
+          } catch {
+            /* ignore */
+          }
+          setCollabLine(`Ticket HTTP ${tr.status}${hint}`);
           return;
         }
         const { ticket_id } = (await tr.json()) as { ticket_id: string };
