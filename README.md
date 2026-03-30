@@ -59,14 +59,12 @@ zachai/
 │   ├── compose.yml              ← Orchestration Docker (point d'entrée du stack)
 │   ├── .env.example             ← Variables d'environnement (copier en .env)
 │   ├── bpmn/                    ← Workflows BPMN Camunda 7
-│   └── services/                ← Code source des services custom
-│       ├── api/                 ← FastAPI Gateway
-│       ├── ffmpeg-worker/       ← Normalisation audio
-│       ├── openvino/            ← Inférence Whisper
-│       ├── camunda-workers/     ← External Task Workers Python
-│       ├── hocuspocus/          ← Serveur collaboration temps-réel
-│       ├── export-worker/       ← Export DOCX/JSON
-│       └── frontend/            ← Interface React + Tiptap
+│   ├── api/                     ← FastAPI Gateway
+│   ├── collab/hocuspocus/       ← Serveur Hocuspocus + Yjs (Story 5.1)
+│   ├── docker/                  ← Images Postgres, Keycloak, …
+│   ├── frontend/                ← Interface React + Tiptap
+│   ├── workers/                 ← FFmpeg, OpenVINO, Camunda workers, …
+│   └── …                        ← Autres services (compose relatif à src/)
 └── .gitignore
 ```
 
@@ -92,11 +90,11 @@ docker compose up -d
 L'ordre de démarrage est géré automatiquement via les health checks (voir [`docs/architecture.md`](docs/architecture.md) section 6).
 
 **Interfaces disponibles après démarrage :**
-- Frontend : `http://localhost:3000`
-- Camunda Cockpit : `http://localhost:8080/camunda/app/cockpit` (demo/demo)
+- API FastAPI : `http://localhost:8000`
+- Hocuspocus (WSS éditeur, CRDT) : `ws://localhost:1234` — à utiliser avec le frontend (`npm run dev` dans `src/frontend`, variables `VITE_*`)
+- Camunda Cockpit : `http://localhost:8081/camunda/app/cockpit` (voir compose pour le port hôte)
 - MinIO Console : `http://localhost:9001`
 - Keycloak Admin : `http://localhost:8180`
-- Label Studio : `http://localhost:8090`
 
 ---
 

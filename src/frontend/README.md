@@ -21,6 +21,13 @@ to the FastAPI gateway (default `http://localhost:8000`).
 | `VITE_KEYCLOAK_URL` | `http://localhost:8180` | Keycloak server URL |
 | `VITE_KEYCLOAK_REALM` | `zachai` | Keycloak realm name |
 | `VITE_KEYCLOAK_CLIENT_ID` | `zachai-frontend` | OIDC public client ID (PKCE) |
+| `VITE_HOCUSPOCUS_URL` | `ws://localhost:1234` | Hocuspocus / Yjs WebSocket (voir Story 5.1). Si absent, le client utilise `ws://<hostname>:1234`. |
+
+## Real-time collaboration (Story 5.1)
+
+1. Le stack Docker doit exposer **Redis**, **Postgres** et le service **`hocuspocus`** (`docker compose up` depuis `zachai/src`).
+2. Lancer aussi **FastAPI** pour `POST /v1/editor/ticket` (billet à usage unique).
+3. `npm run dev` puis ouvrir `http://localhost:5173/?audio_id=N` : le front obtient un ticket avec le JWT, puis ouvre le WebSocket vers Hocuspocus (room = `N`, même id que `document_id`).
 
 ## Authentication
 

@@ -1,5 +1,5 @@
 # generated: 2026-03-19
-# last_updated: 2026-03-30 — Epics 1–4 retrospectives recorded; epics 1–3 marked done
+# last_updated: 2026-03-30 — Story 5.1 code review + patch batch (done)
 # project: zachai
 # Next backlog after 5.2: Epic 5 story 5-1 (or per sprint plan)
 # project_key: NOKEY
@@ -101,11 +101,11 @@ development_status:
   epic-4-retrospective: done
 
   # ─── EPIC 5 — Éditeur Collaboratif Souverain (Sprint 3-5) ────────────────
-  epic-5: backlog
+  epic-5: in-progress
   # Sprint 3
   5-2-secure-wss-handshake-ticket-redis: done
   # Sprint 5
-  5-1-realtime-sync-hocuspocus-yjs: backlog
+  5-1-realtime-sync-hocuspocus-yjs: done
   5-3-bidirectional-audio-text-sync: backlog
   5-4-automatic-snapshot-persistence: backlog
   5-5-realtime-grammar-check-languagetool: backlog

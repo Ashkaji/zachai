@@ -66,3 +66,7 @@
 ## Deferred from: code review of 5-2-secure-wss-handshake-ticket-redis.md (2026-03-30)
 
 - **`consume_wss_ticket` JSON parse failures**: If Redis returns non-JSON bytes, `json.loads` raises; Story 5.1 WSS consumer should catch and treat as invalid ticket (fail closed).
+
+## Deferred from: code review of 5-1-realtime-sync-hocuspocus-yjs.md (2026-03-30)
+
+- **Optional Hocuspocus/ticket automated tests not added**: Story 5.1 marks a Node integration test for ticket consume as optional; no new automated coverage was required for acceptance.

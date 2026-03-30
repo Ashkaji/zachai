@@ -147,7 +147,9 @@ Les **External Task Workers** (Python) polent Camunda 7 (`/engine-rest/external-
   - Body: `{ document_id: number, permissions: string[] }` — `document_id` est l’identifiant entier **`audio_files.id`** (identique à `audio_id` en §4). `permissions` : uniquement **`read`** et/ou **`write`** (MVP).
   - Retourne: `{ ticket_id, ttl: 60 }` — `ticket_id` opaque (UUID) ; **aucun JWT** dans le JSON. Redis : clé `wss:ticket:{ticket_id}`, valeur JSON `{ sub, document_id, permissions }`, **TTL 60 s**, **usage unique** (le serveur WSS doit consommer avec **GETDEL** ou équivalent atomique — Story 5.1).
   - Erreurs: **401** JWT absent/invalide ; **403** rôle, assignation Transcripteur, ou projet non actif (Expert) ; **409** si Transcripteur et `AudioFile.status` ∉ `{assigned, in_progress}` (parité `frontend-correction` §4) ; **404** audio inconnu ; **503** Redis indisponible.
-  - **Flux WSS (Story 5.1) :** en **HTTPS**, `POST /v1/editor/ticket` avec le JWT ; à l’ouverture du **WebSocket**, transmettre **seulement** le `ticket_id` (ex. query `?ticket=…` ou sous-protocole défini en 5.1) — **jamais** le JWT dans l’URL WSS.
+  - **Flux WSS (Story 5.1 — implémenté) :** en **HTTPS**, `POST /v1/editor/ticket` avec le JWT ; le client **Hocuspocus** (`@hocuspocus/provider`) ouvre ensuite une connexion **WebSocket** vers le serveur Hocuspocus en passant le `ticket_id` comme option **`token`** (le serveur lit ce jeton dans le hook `onAuthenticate` — **pas** de JWT dans l’URL WSS).
+  - **URL WSS (dev Compose) :** `ws://localhost:1234` (port exposé du service `hocuspocus` dans `src/compose.yml`). Le **nom de document** (room) est la chaîne **`audio_files.id`** (`document_id` / `audio_id` dans l’URL de l’éditeur), ex. room `"42"` pour `?audio_id=42`.
+  - **Variables utiles :** `REDIS_URL` (même DSN que FastAPI pour `wss:ticket:*`), préfixe fan-out recommandé `HOCUSPOCUS_REDIS_PREFIX` (défaut `hp:crdt:` — distinct de `wss:ticket:` et futur `lt:cache:*`).
 
 - **`POST /v1/editor/callback/snapshot`**
   - Source: Hocuspocus (webhook après inactivité)

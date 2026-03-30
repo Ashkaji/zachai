@@ -31,7 +31,7 @@ from minio.error import S3Error
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, selectinload
-from sqlalchemy import String, Boolean, Integer, Float, ForeignKey, DateTime, Text, func, select, delete, Index, case
+from sqlalchemy import String, Boolean, Integer, Float, ForeignKey, DateTime, Text, LargeBinary, func, select, delete, Index, case
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import UniqueConstraint
 from sqlalchemy import Enum as SAEnum
@@ -334,6 +334,22 @@ class GoldenSetCounter(Base):
     last_training_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class YjsLog(Base):
+    """Binary Yjs document state chunks per audio document (Story 5.1 — architecture §3)."""
+
+    __tablename__ = "yjs_logs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    document_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("audio_files.id", ondelete="CASCADE"), nullable=False
+    )
+    update_binary: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (Index("ix_yjs_logs_document_id_id", "document_id", "id"),)
+
+
 class ModelReadyIdempotency(Base):
     """One row per successful model-ready callback (Story 4.4) — dedupes worker retries."""
 
@@ -488,7 +504,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ZachAI Gateway",
     description="Lean API gateway: presigned URLs, JWT, Nature CRUD, Project CRUD, audio upload, Golden Set, Camunda 7",
-    version="2.9.0",
+    version="2.10.0",
     lifespan=lifespan,
 )
 
