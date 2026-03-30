@@ -1,6 +1,6 @@
 # Story 5.3: bidirectional-audio-text-sync
 
-Status: review
+Status: done
 
 ## Story
 **As a** Transcripteur,
@@ -174,7 +174,7 @@ _(none)_
 - `docs/api-mapping.md`
 
 ## Traduction française (référence)
-**Statut :** `review`
+**Statut :** `done`
 
 **Histoire :** En tant que Transcripteur, je veux cliquer sur un mot/segment dans l’éditeur collaboratif pour faire jouer l’audio au timestamp correspondant (< 50ms) et voir le mot/segment actif surligné (karaoké) pendant la lecture, afin que la correction audio soit fluide.
 

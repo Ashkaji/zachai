@@ -106,7 +106,7 @@ development_status:
   5-2-secure-wss-handshake-ticket-redis: done
   # Sprint 5
   5-1-realtime-sync-hocuspocus-yjs: done
-  5-3-bidirectional-audio-text-sync: review
+  5-3-bidirectional-audio-text-sync: done
   5-4-automatic-snapshot-persistence: backlog
   5-5-realtime-grammar-check-languagetool: backlog
   epic-5-retrospective: optional
