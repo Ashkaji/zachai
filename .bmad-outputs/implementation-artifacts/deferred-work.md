@@ -62,3 +62,7 @@
 ## Deferred from: code review of story 4-4-lora-pipeline-dataset-training-validation-deploy.md (2026-03-29)
 
 - **`model-ready` idempotency vs counter commit boundary**: If the API crashes after inserting `ModelReadyIdempotency` but before committing `GoldenSetCounter` updates, a retry can return `idempotent: true` while the counter remains non-zero — rare; reconcile manually or tighten transactional ordering in a follow-up.
+
+## Deferred from: code review of 5-2-secure-wss-handshake-ticket-redis.md (2026-03-30)
+
+- **`consume_wss_ticket` JSON parse failures**: If Redis returns non-JSON bytes, `json.loads` raises; Story 5.1 WSS consumer should catch and treat as invalid ticket (fail closed).

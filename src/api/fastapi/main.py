@@ -1,7 +1,7 @@
 """
 ZachAI FastAPI Gateway — Story 4.1–4.4: Golden Set + LoRA pipeline
 Extends Story 2.4: Assignment dashboard + FFmpeg semantics fix.
-Golden Set: POST /v1/golden-set/entry, frontend-correction, expert webhook; threshold crossing starts `lora-fine-tuning` BPMN (Story 4.3–4.4).
+Golden Set: POST /v1/golden-set/entry, frontend-correction, expert webhook; Story 5.2: POST /v1/editor/ticket (Redis WSS handshake); threshold crossing starts `lora-fine-tuning` BPMN (Story 4.3–4.4).
 POST /v1/callback/model-ready resets counter after successful registry publish (Story 4.4).
 FastAPI never touches audio binary data — upload goes directly browser→MinIO.
 """
@@ -39,6 +39,9 @@ from sqlalchemy.exc import IntegrityError
 from lxml import etree
 
 import golden_set
+import editor_ticket
+
+import redis.asyncio as redis_asyncio
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -55,6 +58,7 @@ REQUIRED_ENV_VARS = [
     "POSTGRES_PASSWORD",
     "CAMUNDA_REST_URL",
     "FFMPEG_WORKER_URL",
+    "REDIS_URL",
 ]
 
 ALLOWED_GET_PREFIXES = ("projects/", "golden-set/", "snapshots/")
@@ -148,6 +152,9 @@ _GOLDEN_SET_ACTIONS = frozenset({"ANNOTATION_CREATED", "ANNOTATION_UPDATED", "AN
 
 # FFmpeg worker HTTP client — created in lifespan (real AsyncClient; tests avoid import-time mock issues)
 _ffmpeg_client: httpx.AsyncClient | None = None
+
+# Redis — WSS editor tickets (Story 5.2); optional at runtime if ping fails (mint → 503)
+_redis_client: redis_asyncio.Redis | None = None
 
 
 # ─── ORM Models ───────────────────────────────────────────────────────────────
@@ -405,7 +412,7 @@ async def deploy_bpmn_workflows() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _jwks_cache, _ffmpeg_client
+    global _jwks_cache, _ffmpeg_client, _redis_client
     # JWKS (existing) — tolerant: Keycloak may still be starting
     try:
         _jwks_cache = await fetch_jwks(KEYCLOAK_ISSUER)
@@ -449,11 +456,31 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("FFmpeg worker unreachable at startup — audio normalization may fail: %s", exc)
 
+    # Redis — Story 5.2 (WSS tickets). Tolerant startup: ticket endpoint returns 503 if down.
+    _redis_url = (os.environ.get("REDIS_URL") or "").strip()
+    if _redis_url:
+        try:
+            _redis_client = redis_asyncio.from_url(_redis_url, decode_responses=True)
+            await _redis_client.ping()
+            logger.info("Redis connected (WSS editor tickets)")
+        except Exception as exc:
+            logger.error(
+                "Redis unavailable at startup — POST /v1/editor/ticket will return 503 until Redis is reachable: %s",
+                exc,
+            )
+            _redis_client = None
+    else:
+        logger.error("REDIS_URL empty — POST /v1/editor/ticket will return 503")
+        _redis_client = None
+
     yield
 
     if _ffmpeg_client is not None:
         await _ffmpeg_client.aclose()
         _ffmpeg_client = None
+    if _redis_client is not None:
+        await _redis_client.aclose()
+        _redis_client = None
     await engine.dispose()
     await camunda_client.aclose()
 
@@ -461,7 +488,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ZachAI Gateway",
     description="Lean API gateway: presigned URLs, JWT, Nature CRUD, Project CRUD, audio upload, Golden Set, Camunda 7",
-    version="2.8.0",
+    version="2.9.0",
     lifespan=lifespan,
 )
 
@@ -495,6 +522,21 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(status_code=exc.status_code, content=body)
 
 
+def _validation_errors_json_safe(errors: list) -> list:
+    """Make Pydantic RequestValidationError payloads JSON-serializable (ctx may hold Exception objects)."""
+
+    def _clean(obj: object) -> object:
+        if isinstance(obj, dict):
+            return {str(k): _clean(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_clean(item) for item in obj]
+        if isinstance(obj, BaseException):
+            return str(obj)
+        return obj
+
+    return [_clean(e) for e in errors]
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Handle Pydantic validation errors. Return 400 for production_goal mismatches per spec AC 6."""
@@ -509,7 +551,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     # For other validation errors, return 422 (Pydantic default)
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors()},
+        content={"detail": _validation_errors_json_safe(errors)},
     )
 
 
@@ -731,6 +773,29 @@ class FrontendCorrectionRequest(BaseModel):
         if self.segment_start > self.segment_end:
             raise ValueError("segment_start must be <= segment_end")
         return self
+
+
+_EDITOR_TICKET_PERMISSIONS = frozenset({"read", "write"})
+
+
+class EditorTicketRequest(BaseModel):
+    """POST /v1/editor/ticket — Story 5.2. document_id is AudioFile.id (same as audio_id elsewhere)."""
+
+    document_id: int = Field(..., gt=0)
+    permissions: list[str] = Field(..., min_length=1, max_length=16)
+
+    @field_validator("permissions")
+    @classmethod
+    def _permissions_allowed(cls, v: list[str]) -> list[str]:
+        for p in v:
+            if p not in _EDITOR_TICKET_PERMISSIONS:
+                raise ValueError("each permission must be read or write")
+        return v
+
+
+class EditorTicketResponse(BaseModel):
+    ticket_id: str
+    ttl: int = Field(default=60, description="Seconds until Redis key expires (Story 5.2).")
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -2167,6 +2232,75 @@ async def get_audio_transcription(
             raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
 
     return {"segments": []}
+
+
+@app.post("/v1/editor/ticket")
+async def post_editor_ticket(
+    body: EditorTicketRequest,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> EditorTicketResponse:
+    """
+    Mint a single-use WSS handshake ticket (Redis TTL 60s). JWT must not be passed on the WebSocket URL;
+    Story 5.1 should send only ticket_id (e.g. query `ticket=`) when connecting.
+    """
+    roles = get_roles(payload)
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(status_code=401, detail={"error": "Subject missing in token"})
+    if not {"Transcripteur", "Expert", "Admin"}.intersection(roles):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "Transcripteur, Expert, or Admin role required"},
+        )
+
+    result = await db.execute(
+        select(AudioFile)
+        .where(AudioFile.id == body.document_id)
+        .options(selectinload(AudioFile.assignment))
+    )
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
+
+    if "Admin" not in roles:
+        if "Expert" in roles:
+            proj_r = await db.execute(select(Project).where(Project.id == af.project_id))
+            proj = proj_r.scalar_one_or_none()
+            if proj is None or proj.status != ProjectStatus.ACTIVE:
+                raise HTTPException(status_code=403, detail={"error": "Project is not active"})
+        elif "Transcripteur" in roles:
+            asg = af.assignment
+            if not asg or asg.transcripteur_id != sub:
+                raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
+            if af.status not in (AudioFileStatus.ASSIGNED, AudioFileStatus.IN_PROGRESS):
+                raise HTTPException(
+                    status_code=409,
+                    detail={"error": "Audio file status does not allow editor access"},
+                )
+        else:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "Transcripteur, Expert, or Admin role required"},
+            )
+
+    if _redis_client is None:
+        raise HTTPException(status_code=503, detail={"error": "Redis unavailable"})
+
+    ticket_id = editor_ticket.new_ticket_id()
+    try:
+        await editor_ticket.store_ticket(
+            _redis_client,
+            ticket_id,
+            sub=sub,
+            document_id=body.document_id,
+            permissions=list(body.permissions),
+        )
+    except Exception as exc:
+        logger.exception("Redis error while storing WSS ticket: %s", exc)
+        raise HTTPException(status_code=503, detail={"error": "Redis unavailable"})
+
+    return EditorTicketResponse(ticket_id=ticket_id, ttl=editor_ticket.WSS_TICKET_TTL_SEC)
 
 
 @app.post("/v1/callback/expert-validation")

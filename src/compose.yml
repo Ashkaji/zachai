@@ -2,7 +2,7 @@
 # ======================================================
 # Full startup chain (architecture.md § 6):
 #   Layer 0 — Storage:    minio → (minio-init)
-#   Layer 1 — Identity:   postgres → keycloak, redis          [TODO: Story 1.2, 5.2]
+#   Layer 1 — Identity:   postgres → keycloak, redis          [Story 1.2 + 5.2]
 #   Layer 2 — Compute:    ffmpeg-worker, openvino, camunda7    [TODO: Story 3.1, 3.2, 2.2]
 #   Layer 3 — Gateway:    fastapi, camunda-workers             [TODO: Story 1.3, 2.2]
 #   Layer 4 — Annotation: label-studio                        [TODO: Story 2.1]
@@ -27,7 +27,7 @@ networks:
 volumes:
   minio_data:
   postgres_data:        # Story 1.2 — shared PostgreSQL instance (keycloak + zachai + camunda DBs)
-  # redis_data:         # TODO: Story 5.2 (Hocuspocus + WSS tickets)
+  redis_data:           # Story 5.2 — WSS tickets + future LanguageTool cache / Hocuspocus
 
 services:
 
@@ -161,8 +161,20 @@ services:
       start_period: 90s
     restart: unless-stopped
 
-  # redis:          # TODO: Story 5.2 — WSS short-lived tickets (TTL 60s) + LanguageTool cache.
-  #                 #                   Image: redis:7-alpine. Port: 6379. Depends on: (none).
+  redis:
+    image: redis:7.4-alpine
+    container_name: zachai-redis
+    volumes:
+      - redis_data:/data
+    networks:
+      - zachai-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
 
   # ── Layer 3: Gateway & Orchestration ─────────────────────────────────────────
   #
@@ -204,6 +216,8 @@ services:
       GOLDEN_SET_THRESHOLD: ${GOLDEN_SET_THRESHOLD:-1000}
       # CORS — Story 4.2 (frontend dev port)
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
+      # Redis — Story 5.2 (WSS tickets; namespaces: wss:ticket:, lt:cache:, …)
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     networks:
       - zachai-network
     depends_on:
@@ -212,6 +226,8 @@ services:
       minio:
         condition: service_healthy
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       camunda7:
         condition: service_healthy

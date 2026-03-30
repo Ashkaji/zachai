@@ -1,5 +1,5 @@
 # generated: 2026-03-19
-# last_updated: 2026-03-29 — Story 5.2 story file created (ready-for-dev)
+# last_updated: 2026-03-30 — Epics 1–4 retrospectives recorded; epics 1–3 marked done
 # project: zachai
 # Next backlog after 5.2: Epic 5 story 5-1 (or per sprint plan)
 # project_key: NOKEY
@@ -44,9 +44,9 @@
 #   Epic 2 Story 2.4 + Epic 4 Stories 4.3, 4.4 + Epic 6 + Epic 7
 
 generated: 2026-03-19
-last_updated: 2026-03-29
+last_updated: 2026-03-30
 project: zachai
-# Story 5.2 ready-for-dev — WSS ticket Redis TTL 60s
+# Story 5.2 done — WSS ticket Redis TTL 60s
 # Epic 4 complete — Stories 4.3 & 4.4 done 2026-03-29 (LoRA Camunda trigger + pipeline MVP)
 # Story 4.2 code review complete — moved to done 2026-03-29
 # Story 2.3 created 2026-03-29
@@ -60,16 +60,16 @@ story_location: .bmad-outputs/implementation-artifacts
 development_status:
 
   # ─── EPIC 1 — Socle Infrastructure & Identité (Sprint 1-2) ───────────────
-  epic-1: in-progress
+  epic-1: done
   # Sprint 1
   1-1-minio-bootstrap-bucket-structure: done
   1-2-keycloak-multi-roles: done
   # Sprint 2
   1-3-presigned-url-engine-fastapi: done
-  epic-1-retrospective: optional
+  epic-1-retrospective: done
 
   # ─── EPIC 2 — Gestion Dynamique des Projets (Sprint 3-6) ─────────────────
-  epic-2: in-progress
+  epic-2: done
   # Sprint 3
   2-1-crud-natures-label-schemas: done
   # Sprint 4 (CONVERGENCE)
@@ -77,17 +77,17 @@ development_status:
   2-3-audio-upload-ffmpeg-normalization: done
   # Sprint 6
   2-4-assignment-dashboard: done
-  epic-2-retrospective: optional
+  epic-2-retrospective: done
 
   # ─── EPIC 3 — Pipeline d'Inférence Haute Performance (Sprint 1-3) ────────
-  epic-3: in-progress
+  epic-3: done
   # Sprint 1
   3-1-ffmpeg-worker-normalization-batch: done
   # Sprint 2
   3-2-openvino-whisper-inference-preannotation: done
   # Sprint 3
   3-3-model-registry-hot-reload: done
-  epic-3-retrospective: optional
+  epic-3-retrospective: done
 
   # ─── EPIC 4 — Flywheel d'Apprentissage Continu (Sprint 4-6) ──────────────
   epic-4: done
@@ -98,12 +98,12 @@ development_status:
   # Sprint 6
   4-3-lora-finetuning-auto-trigger-camunda: done
   4-4-lora-pipeline-dataset-training-validation-deploy: done
-  epic-4-retrospective: optional
+  epic-4-retrospective: done
 
   # ─── EPIC 5 — Éditeur Collaboratif Souverain (Sprint 3-5) ────────────────
   epic-5: backlog
   # Sprint 3
-  5-2-secure-wss-handshake-ticket-redis: ready-for-dev
+  5-2-secure-wss-handshake-ticket-redis: done
   # Sprint 5
   5-1-realtime-sync-hocuspocus-yjs: backlog
   5-3-bidirectional-audio-text-sync: backlog
