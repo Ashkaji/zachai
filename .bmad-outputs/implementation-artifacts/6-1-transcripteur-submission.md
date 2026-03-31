@@ -1,6 +1,6 @@
 # Story 6.1: transcripteur-submission
 
-Status: review
+Status: done
 
 <!-- Ultimate context engine analysis completed - comprehensive developer guide created. -->
 
@@ -149,6 +149,7 @@ Cursor agent (implementation) - 2026-03-31
 
 ### Change Log
 - 2026-03-31: Implemented Story 6.1 submission endpoint, added full backend test coverage, updated API contract docs, and prepared story for review.
+- 2026-03-31: Story 6.1 closed after review; status moved to `done`.
 
 ---
 

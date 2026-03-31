@@ -1,5 +1,5 @@
 # generated: 2026-03-19
-# last_updated: 2026-03-31 — Story 6.1 ready for review
+# last_updated: 2026-03-31 — Stories 6.1 and 6.2 moved to done
 # project: zachai
 # Next backlog after 5.2: Epic 5 story 5-1 (or per sprint plan)
 # project_key: NOKEY
@@ -46,7 +46,10 @@
 generated: 2026-03-19
 last_updated: 2026-03-31
 project: zachai
+# Story 6.2 implementation complete — ready for review (2026-03-31)
+# Story 6.2 code review patches complete — moved to done (2026-03-31)
 # Story 6.1 implementation complete — ready for review (2026-03-31)
+# Story 6.1 code review complete — moved to done (2026-03-31)
 # Story 5.2 done — WSS ticket Redis TTL 60s
 # Epic 4 complete — Stories 4.3 & 4.4 done 2026-03-29 (LoRA Camunda trigger + pipeline MVP)
 # Story 4.2 code review complete — moved to done 2026-03-29
@@ -115,8 +118,8 @@ development_status:
   # ─── EPIC 6 — Chaîne de Validation & Gouvernance (Sprint 6) ──────────────
   epic-6: in-progress
   # Sprint 6
-  6-1-transcripteur-submission: review
-  6-2-manager-approval-rejection: backlog
+  6-1-transcripteur-submission: done
+  6-2-manager-approval-rejection: done
   6-3-project-closure-golden-set-archival: backlog
   epic-6-retrospective: optional
 

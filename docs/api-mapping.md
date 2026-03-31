@@ -81,9 +81,21 @@ FastAPI ne manipule jamais les binaires — il orchestre les accès via Presigne
   - Idempotence: si déjà `transcribed` avec `submitted_at` présent, la route retourne 200 avec `idempotent: true` sans mutation DB.
 
 - **`POST /v1/transcriptions/{audio_id}/validate`**
-  - Auth: Manager du projet
-  - Body: `{approved: bool, comment?: string}`
-  - Action: Statut → `validated` ou `rejected`, notifie le Transcripteur
+  - Auth: **Manager propriétaire du projet** ou **Admin** (support)
+  - Body: `{ "approved": bool, "comment"?: string }`
+  - Précondition de cycle de vie: `AudioFile.status == transcribed` uniquement.
+  - Action:
+    - `approved=true` → statut `validated` + `Assignment.manager_validated_at` horodaté.
+    - `approved=false` → `comment` obligatoire (non vide) + statut `assigned` (boucle de reprise transcripteur).
+  - Retour: `{ "audio_id": int, "status": "validated|assigned", "approved": bool, "comment": string|null, "manager_validated_at": iso8601|null }`
+  - Erreurs:
+    - **401** si `sub` absent du JWT
+    - **403** rôle non autorisé ou Manager non propriétaire
+    - **400** si `approved=false` sans `comment` non vide
+    - **404** audio/assignment/projet introuvable
+    - **409** statut audio non éligible (`uploaded`, `assigned`, `in_progress`, `validated`)
+  - Concurrence: transition protégée par une mise à jour conditionnelle (`status` doit être `transcribed` au moment du write), sinon **409**.
+  - Observabilité: émission d’un log structuré de handoff notification (manager → transcripteur), transport-agnostic et sans nouvelle dépendance d’infrastructure, sans journaliser le contenu brut du commentaire.
 
 - **`POST /v1/projects/{project_id}/close`**
   - Auth: Manager

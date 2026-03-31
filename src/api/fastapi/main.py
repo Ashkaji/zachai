@@ -37,7 +37,7 @@ from minio.error import S3Error
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, selectinload
-from sqlalchemy import String, Boolean, Integer, Float, ForeignKey, DateTime, Text, LargeBinary, func, select, delete, Index, case, text
+from sqlalchemy import String, Boolean, Integer, Float, ForeignKey, DateTime, Text, LargeBinary, func, select, delete, Index, case, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import UniqueConstraint
 from sqlalchemy import Enum as SAEnum
@@ -1012,6 +1012,15 @@ class EditorSnapshotCallbackRequest(BaseModel):
         except Exception as exc:
             raise ValueError("yjs_state_binary must be valid base64") from exc
         return v
+
+
+class TranscriptionValidationRequest(BaseModel):
+    """POST /v1/transcriptions/{audio_id}/validate — Story 6.2."""
+
+    approved: bool
+    comment: str | None = Field(
+        None, max_length=5000, description="Required when approved=false; optional for approval."
+    )
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -2646,8 +2655,8 @@ async def submit_transcription(
 
     now = datetime.now(timezone.utc)
     af.status = AudioFileStatus.TRANSCRIBED
-    if asg.submitted_at is None:
-        asg.submitted_at = now
+    # Keep submitted_at aligned with the latest successful submit cycle.
+    asg.submitted_at = now
     await db.commit()
 
     logger.info(
@@ -2662,6 +2671,91 @@ async def submit_transcription(
         "status": af.status.value,
         "submitted_at": asg.submitted_at.isoformat() if asg.submitted_at else now.isoformat(),
         "idempotent": False,
+    }
+
+
+@app.post("/v1/transcriptions/{audio_id}/validate")
+async def validate_transcription(
+    audio_id: int,
+    body: TranscriptionValidationRequest,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Approve/reject submitted transcription by project owner Manager or Admin (Story 6.2)."""
+    roles = get_roles(payload)
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(status_code=401, detail={"error": "Subject missing in token"})
+
+    _require_manager_or_admin(roles)
+
+    result = await db.execute(
+        select(AudioFile)
+        .where(AudioFile.id == audio_id)
+        .options(selectinload(AudioFile.assignment))
+    )
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
+
+    asg = af.assignment
+    if not asg:
+        raise HTTPException(status_code=404, detail={"error": "Assignment not found for audio file"})
+
+    pr = await db.execute(select(Project).where(Project.id == af.project_id))
+    project = pr.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail={"error": "Project not found for audio file"})
+
+    _require_project_owner_or_admin(project, payload, roles)
+
+    now = datetime.now(timezone.utc)
+    comment_clean = body.comment.strip() if body.comment else None
+    if body.approved:
+        state_update = await db.execute(
+            update(AudioFile)
+            .where(AudioFile.id == af.id, AudioFile.status == AudioFileStatus.TRANSCRIBED)
+            .values(status=AudioFileStatus.VALIDATED)
+        )
+        if state_update.rowcount != 1:
+            raise HTTPException(status_code=409, detail={"error": "Audio file status does not allow validation"})
+        af.status = AudioFileStatus.VALIDATED
+        asg.manager_validated_at = now
+    else:
+        if not comment_clean:
+            raise HTTPException(status_code=400, detail={"error": "Comment is required when approved is false"})
+        state_update = await db.execute(
+            update(AudioFile)
+            .where(AudioFile.id == af.id, AudioFile.status == AudioFileStatus.TRANSCRIBED)
+            .values(status=AudioFileStatus.ASSIGNED)
+        )
+        if state_update.rowcount != 1:
+            raise HTTPException(status_code=409, detail={"error": "Audio file status does not allow validation"})
+        af.status = AudioFileStatus.ASSIGNED
+        asg.submitted_at = None
+        asg.manager_validated_at = None
+
+    await db.commit()
+
+    logger.info(
+        "transcription_validation_handoff audio_id=%s project_id=%s manager_id=%s transcripteur_id=%s approved=%s status=%s comment_present=%s comment_length=%s validated_at=%s",
+        af.id,
+        af.project_id,
+        sub,
+        asg.transcripteur_id,
+        "1" if body.approved else "0",
+        af.status.value,
+        "1" if comment_clean else "0",
+        len(comment_clean) if comment_clean else 0,
+        asg.manager_validated_at.isoformat() if asg.manager_validated_at else "",
+    )
+
+    return {
+        "audio_id": af.id,
+        "status": af.status.value,
+        "approved": body.approved,
+        "comment": comment_clean,
+        "manager_validated_at": asg.manager_validated_at.isoformat() if asg.manager_validated_at else None,
     }
 
 
