@@ -667,6 +667,10 @@ def test_generate_xml_contains_expected_tags():
     assert "Pause" in xml
     assert "<TextArea" in xml
     assert 'placeholder="Transcription..."' in xml
+    assert 'perRegion="true"' in xml
+    assert 'displayMode="region-list"' in xml
+    assert "SPEAKER_00" in xml
+    assert "SPEAKER_09" in xml
 
 
 def test_generate_xml_speech_labels_first():

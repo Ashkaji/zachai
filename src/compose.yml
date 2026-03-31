@@ -5,7 +5,7 @@
 #   Layer 1 — Identity:   postgres → keycloak, redis          [Story 1.2 + 5.2]
 #   Layer 2 — Compute:    ffmpeg-worker, openvino, camunda7    [TODO: Story 3.1, 3.2, 2.2]
 #   Layer 3 — Gateway:    fastapi, camunda-workers             [TODO: Story 1.3, 2.2]
-#   Layer 4 — Annotation: label-studio                        [TODO: Story 2.1]
+#   Layer 4 — Annotation: label-studio (Story 2.1)
 #   Layer 5 — Collab:     hocuspocus (Story 5.1), export-worker (Story 5.4), languagetool [TODO: 5.5]
 #   Layer 6 — Frontend:   frontend                            [TODO: Story (React)]
 #
@@ -15,10 +15,18 @@
 #   docker compose exec minio mc ls local/
 #   Expected: [date] projects/  golden-set/  models/  snapshots/
 #
+# OpenVINO Model Registry — first-time bootstrap (cross-platform):
+#   pip install huggingface_hub minio
+#   python scripts/bootstrap_models.py
+# Or download-only: python scripts/download_openvino_whisper_hf.py
+#
 # Interfaces after startup:
 #   MinIO S3 API:      http://localhost:9000
 #   MinIO Console:     http://localhost:9001
-#   (future services listed as they are added in subsequent stories)
+#   Label Studio UI:   http://localhost:8090  (container port 8080 — use label-studio:8080 on zachai-network)
+#
+# Si postgres_data existe déjà sans DB labelstudio : créer à la main —
+#   docker compose exec postgres psql -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE labelstudio;"
 
 networks:
   zachai-network:
@@ -28,6 +36,7 @@ volumes:
   minio_data:
   postgres_data:        # Story 1.2 — shared PostgreSQL instance (keycloak + zachai + camunda DBs)
   redis_data:           # Story 5.2 — WSS tickets + future LanguageTool cache / Hocuspocus
+  label_studio_data:    # Label Studio uploads / local media (Story 2.1)
 
 services:
 
@@ -320,7 +329,9 @@ services:
       MODEL_POLL_INTERVAL_SECONDS: ${MODEL_POLL_INTERVAL_SECONDS:-60}
       WHISPER_MODEL_CACHE_DIR: ${WHISPER_MODEL_CACHE_DIR:-/var/cache/openvino-models}
       MAX_MODEL_TREE_TOTAL_BYTES: ${MAX_MODEL_TREE_TOTAL_BYTES:-10737418240}
-      WHISPER_MODEL_PATH: ${WHISPER_MODEL_PATH}
+      # Optional local fallback (requires in-container path). No default bind mount — use
+      # compose.openvino-local-model.yml to mount from the host when MinIO registry is not seeded.
+      WHISPER_MODEL_PATH: ${WHISPER_MODEL_PATH:-}
       OV_DEVICE: ${OV_DEVICE:-CPU}
       INFER_TIMEOUT_SECONDS: ${INFER_TIMEOUT_SECONDS:-900}
       ENVIRONMENT: ${ENVIRONMENT:-development}
@@ -350,10 +361,80 @@ services:
     #   volumes:
     #     - openvino_model_cache:/var/cache/openvino-models
     #
-    # Fallback when models/latest is missing: mount host-exported OpenVINO Whisper IR, e.g.:
-    #   volumes:
-    #     - ${WHISPER_MODEL_HOST_PATH:?set path to exported model dir}:/models/whisper-base-ov:ro
-    # and set WHISPER_MODEL_PATH=/models/whisper-base-ov in .env
+    # Host bind mount is opt-in: `docker compose -f compose.yml -f compose.openvino-local-model.yml ...`
+    # (avoids Docker Desktop failures on some non-C: Windows paths). See .env.example.
+
+  diarization-worker:
+    build:
+      context: ./workers/diarization-worker
+    container_name: zachai-diarization-worker
+    environment:
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      HF_TOKEN: ${HF_TOKEN:-}
+      DIARIZATION_ENGINE: ${DIARIZATION_ENGINE:-pyannote}
+      DIARIZATION_DEVICE: ${DIARIZATION_DEVICE:-cpu}
+      DIARIZATION_TIMEOUT_SECONDS: ${DIARIZATION_TIMEOUT_SECONDS:-900}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+    networks:
+      - zachai-network
+    depends_on:
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8780/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4G
+        reservations:
+          memory: 1G
+    restart: unless-stopped
+    # Port 8780 is internal only — NOT mapped to host
+
+  label-studio-ml-bridge:
+    build:
+      context: ./workers/label-studio-ml-bridge
+    container_name: zachai-label-studio-ml-bridge
+    environment:
+      LABEL_STUDIO_URL: ${LABEL_STUDIO_URL:-http://label-studio:8080}
+      LABEL_STUDIO_API_KEY: ${LABEL_STUDIO_API_KEY:-}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      OPENVINO_WORKER_URL: ${OPENVINO_WORKER_URL:-http://openvino-worker:8770}
+      DIARIZATION_WORKER_URL: ${DIARIZATION_WORKER_URL:-http://diarization-worker:8780}
+      DIARIZATION_ENGINE: ${DIARIZATION_ENGINE:-pyannote}
+      DIARIZATION_ENABLED: ${DIARIZATION_ENABLED:-true}
+      ZACHAI_LS_MINIO_BUCKET: ${ZACHAI_LS_MINIO_BUCKET:-projects}
+      ZACHAI_LS_MINIO_KEY_PREFIX: ${ZACHAI_LS_MINIO_KEY_PREFIX:-label-studio-ml/}
+      LOG_LEVEL: ${LABEL_STUDIO_ML_LOG_LEVEL:-INFO}
+    networks:
+      - zachai-network
+    depends_on:
+      label-studio:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      openvino-worker:
+        condition: service_healthy
+      diarization-worker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9090/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
 
   # ── Layer 3: Orchestration Workers (Story 2.2) ──────────────────────────────
 
@@ -363,13 +444,15 @@ services:
     container_name: zachai-camunda-worker
     environment:
       CAMUNDA_REST_URL: http://camunda7:8080/engine-rest
-      LABEL_STUDIO_URL: http://label-studio:8090
+      LABEL_STUDIO_URL: http://label-studio:8080
       LABEL_STUDIO_API_KEY: ${LABEL_STUDIO_API_KEY:-}
       # DB for project synchronization (Story 2.2)
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: zachai
       DB_HOST: postgres
+      # ML Backend auto-registration (Story provisioning → LS ML API)
+      ML_BACKEND_URL: ${ML_BACKEND_URL:-http://label-studio-ml-bridge:9090}
       # LoRA pipeline (Story 4.4) — same worker process as provision-label-studio
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
@@ -398,6 +481,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      label-studio:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "ps aux | grep '[r]un_workers' || exit 1"]
       interval: 30s
@@ -406,10 +491,35 @@ services:
       start_period: 15s
     restart: unless-stopped
 
-  # ── Layer 4: Annotation ───────────────────────────────────────────────────────
-  # label-studio:   # TODO: Story 2.1 — Expert Loop annotation. Auto-provisioned per project by Camunda 7.
-  #                 #                   Image: heartexlabs/label-studio:latest. Port: 8090.
-  #                 #                   Depends on: postgres, minio, fastapi (all service_healthy).
+  # ── Layer 4: Annotation (Story 2.1) ─────────────────────────────────────────
+  # Container listens on 8080 — host mapping 8090:8080. Docker DNS: http://label-studio:8080
+  label-studio:
+    image: heartexlabs/label-studio:latest
+    container_name: zachai-label-studio
+    ports:
+      - "8090:8080"
+    environment:
+      DJANGO_DB: default
+      POSTGRE_NAME: labelstudio
+      POSTGRE_USER: ${POSTGRES_USER}
+      POSTGRE_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRE_HOST: postgres
+      POSTGRE_PORT: "5432"
+      LABEL_STUDIO_HOST: 0.0.0.0
+    volumes:
+      - label_studio_data:/label-studio/data
+    networks:
+      - zachai-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/api/version >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
+    restart: unless-stopped
 
   # ── Layer 5: Collaboration & Intelligence ─────────────────────────────────────
   # Hocuspocus listens on 1234 inside the container. Host port defaults to 11234 because

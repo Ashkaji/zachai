@@ -63,7 +63,8 @@ zachai/
 │   ├── collab/hocuspocus/       ← Serveur Hocuspocus + Yjs (Story 5.1)
 │   ├── docker/                  ← Images Postgres, Keycloak, …
 │   ├── frontend/                ← Interface React + Tiptap
-│   ├── workers/                 ← FFmpeg, OpenVINO, Camunda workers, …
+│   ├── scripts/                 ← Amorçage Model Registry (HF, mc)
+│   ├── workers/                 ← FFmpeg, OpenVINO, Camunda, Label Studio ML bridge, …
 │   └── …                        ← Autres services (compose relatif à src/)
 └── .gitignore
 ```
@@ -89,7 +90,49 @@ docker compose up -d
 
 L'ordre de démarrage est géré automatiquement via les health checks (voir [`docs/architecture.md`](docs/architecture.md) section 6).
 
+### OpenVINO — amorcer le Model Registry (Windows, Ubuntu, WSL)
+
+Pour développer **sans montage Docker** du dossier modèle (évite les soucis de lecteur sous Docker Desktop), récupérez l’IR puis poussez-le vers MinIO (client **`mc`** ou script **`seed-...`**) :
+
+1. **Option A (la plus simple)** — téléchargement Hugging Face (IR OpenVINO déjà converti) :
+   ```bash
+   cd src
+   pip install huggingface_hub
+   python scripts/download_openvino_whisper_hf.py
+   ```
+   Référence par défaut : [`OpenVINO/whisper-base-fp16-ov`](https://huggingface.co/OpenVINO/whisper-base-fp16-ov). Pour éviter les `ReadTimeout` sur les gros LFS : définir `HF_TOKEN` et/ou `HF_HUB_DOWNLOAD_TIMEOUT` (le script `download_openvino_whisper_hf.py` monte déjà le timeout et retente). Variantes : `--repo` / `--dest` / `--max-workers` / `--retries`.
+2. **Option B** — Installer [`mc`](https://min.io/download) et exporter localement si vous préférez :  
+   `optimum-cli export openvino --model openai/whisper-base ./models/whisper-base-ov` (sous `src/`).
+3. Démarrer au moins MinIO : `docker compose up -d minio` (ou le stack complet).
+4. Depuis `zachai/src` :
+
+```bash
+# Linux / macOS / Git Bash
+./scripts/seed-openvino-model-registry.sh
+```
+
+```powershell
+# Windows (PowerShell)
+pwsh -File scripts/seed-openvino-model-registry.ps1
+```
+
+Les identifiants sont lus depuis `src/.env` (`MINIO_ROOT_*`). L’URL API côté hôte est dérivée de `MINIO_PRESIGNED_ENDPOINT` (sinon `localhost:9000`). Variante avancée : bind-mount opt-in — `compose.openvino-local-model.yml`.
+
+**One-shot Windows (PowerShell)** pour dev local (HF + seed + services OpenVINO/Label Studio/ML bridge) :
+
+```powershell
+cd src
+powershell -ExecutionPolicy Bypass -File scripts/dev-up-openvino-labelstudio.ps1
+```
+
+### Label Studio — ML Backend (pré-annotation ASR)
+
+Un service **compatible [HumanSignal Label Studio ML](https://github.com/HumanSignal/label-studio-ml-backend)** (`LabelStudioMLBase`) appelle le worker OpenVINO ZachAI après normalisation FFmpeg. Voir [`src/workers/label-studio-ml-bridge/README.md`](src/workers/label-studio-ml-bridge/README.md) et le compose optionnel :
+
+`docker compose -f compose.yml -f compose.label-studio-ml.yml up -d label-studio-ml-bridge`
+
 **Interfaces disponibles après démarrage :**
+- Label Studio : `http://localhost:8090` (conteneur `label-studio:8080` sur le réseau Docker)
 - API FastAPI : `http://localhost:8000`
 - Hocuspocus (WSS éditeur, CRDT) : `ws://localhost:11234` par défaut sur l’hôte (voir `HOCUSPOCUS_HOST_PORT` dans `src/.env.example` ; le conteneur écoute en **1234**) — avec le frontend (`npm run dev` dans `src/frontend`, variables `VITE_*`)
 - Export Worker (snapshots) : `http://localhost:8780/health` (interne au pipeline snapshot, utile pour triage Story 5.4)

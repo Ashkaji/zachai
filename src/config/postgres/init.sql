@@ -23,3 +23,9 @@ SELECT 'CREATE DATABASE camunda'
 WHERE NOT EXISTS (
     SELECT FROM pg_database WHERE datname = 'camunda'
 )\gexec
+
+-- Label Studio (heartexlabs/label-studio — Story 2.1+)
+SELECT 'CREATE DATABASE labelstudio'
+WHERE NOT EXISTS (
+    SELECT FROM pg_database WHERE datname = 'labelstudio'
+)\gexec

@@ -1,0 +1,12 @@
+# --- Pourquoi pas openai-whisper ici ?
+# L’ASR est déléguée au microservice openvino-worker (HTTP /transcribe). Ajouter Whisper+PyTorch
+# dans ce conteneur dupliquerait le stack, alourdirait l’image et divergerait du modèle servi via
+# le Model Registry MinIO (hot-reload OpenVINO). Pré-annotation = bridge + OpenVINO uniquement.
+#
+# --- PyPI vs git pour label-studio-ml
+# PyPI = builds reproductibles. Une install git+https depuis HumanSignal/label-studio-ml-backend
+# n’est utile que pour une révision non publiée sur PyPI ; suivre leur README pour la cible pip exacte.
+label-studio-ml @ git+https://github.com/HumanSignal/label-studio-ml-backend.git
+rq>=1.15.0
+minio>=7.2.0
+httpx>=0.27.0

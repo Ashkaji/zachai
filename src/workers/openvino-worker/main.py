@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import os
+from collections import Counter
 import shutil
 import subprocess
 import threading
@@ -28,7 +29,7 @@ TMP_BASE = Path("/tmp/openvino-worker")
 MAX_FILE_SIZE = 1024 * 1024 * 1024
 MAX_POINTER_OBJECT_BYTES = 64 * 1024
 MAX_INFER_TIMEOUT_SECONDS = 86400 * 7
-CONFIDENCE_FALLBACK_FIXED = os.environ.get("CONFIDENCE_FALLBACK_FIXED", "false").lower() == "true"
+CONFIDENCE_FALLBACK_FIXED = os.environ.get("CONFIDENCE_FALLBACK_FIXED", "true").lower() == "true"
 
 MODEL_REGISTRY_BUCKET = os.environ.get("MODEL_REGISTRY_BUCKET", "models")
 MODEL_POINTER_KEY = os.environ.get("MODEL_POINTER_KEY", "latest")
@@ -184,28 +185,72 @@ class WhisperEngine:
             raise RuntimeError("Model not loaded")
 
         if _test_mode_enabled():
-            return [{"start": 0.0, "end": 1.0, "text": "test segment", "confidence": 0.75}]
+            return [
+                {
+                    "start": 0.0,
+                    "end": 1.0,
+                    "text": "test segment",
+                    "confidence": 0.75,
+                    "hallucination_risk": 0.0,
+                }
+            ]
 
         assert self.pipeline is not None
-        result = self.pipeline.generate(str(input_path))
+        import numpy as np
+        import wave
 
-        segments_raw = getattr(result, "segments", None)
-        if segments_raw is None:
-            return []
+        with wave.open(str(input_path), "rb") as wf:
+            frames = wf.readframes(wf.getnframes())
+            samples = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
 
-        segments: list[dict[str, Any]] = []
-        for segment in segments_raw:
-            text = str(getattr(segment, "text", "")).strip()
-            confidence = _extract_confidence(segment)
-            segments.append(
-                {
-                    "start": float(getattr(segment, "start", 0.0)),
-                    "end": float(getattr(segment, "end", 0.0)),
-                    "text": text,
-                    "confidence": confidence,
-                }
+        result = self.pipeline.generate(samples, return_timestamps=True)
+
+        chunks = getattr(result, "chunks", None)
+        if chunks:
+            segments: list[dict[str, Any]] = []
+            for chunk in chunks:
+                text = str(getattr(chunk, "text", "")).strip()
+                start_ts = float(getattr(chunk, "start_ts", 0.0))
+                end_ts = float(getattr(chunk, "end_ts", 0.0))
+                duration = max(0.0, end_ts - start_ts)
+                base_conf = _extract_confidence(chunk)
+                risk = _segment_hallucination_risk(text, duration_sec=duration)
+                conf = round(
+                    base_conf * max(0.05, 1.0 - min(1.0, risk * 1.15)),
+                    4,
+                )
+                segments.append(
+                    {
+                        "start": start_ts,
+                        "end": end_ts,
+                        "text": text,
+                        "confidence": conf,
+                        "hallucination_risk": round(risk, 4),
+                    }
+                )
+            return segments
+
+        texts = getattr(result, "texts", None)
+        if texts and texts[0].strip():
+            full_text = texts[0].strip()
+            duration = float(len(samples)) / 16000.0
+            risk = _segment_hallucination_risk(full_text, duration_sec=duration)
+            base_conf = 0.75 if CONFIDENCE_FALLBACK_FIXED else 0.0
+            conf = round(
+                base_conf * max(0.05, 1.0 - min(1.0, risk * 1.15)),
+                4,
             )
-        return segments
+            return [
+                {
+                    "start": 0.0,
+                    "end": duration,
+                    "text": full_text,
+                    "confidence": conf,
+                    "hallucination_risk": round(risk, 4),
+                }
+            ]
+
+        return []
 
 
 def _extract_confidence(segment: Any) -> float:
@@ -228,6 +273,54 @@ def _extract_confidence(segment: Any) -> float:
     if CONFIDENCE_FALLBACK_FIXED:
         return 0.75
     return 0.0
+
+
+def _detect_repetition_ratio(text: str) -> float:
+    """Return 0.0 (no repetition) to 1.0 (entirely repetitive).
+
+    Uses overlapping n-gram analysis to catch Whisper hallucination loops
+    like "helaa, yw helaa, yw helaa, yw ...".
+    """
+    words = text.lower().split()
+    if len(words) < 6:
+        return 0.0
+    ngram_size = 3
+    ngrams = [tuple(words[i : i + ngram_size]) for i in range(len(words) - ngram_size + 1)]
+    if not ngrams:
+        return 0.0
+    counts = Counter(ngrams)
+    repeated = sum(c - 1 for c in counts.values() if c > 1)
+    return min(1.0, repeated / len(ngrams))
+
+
+def _word_domination_ratio(text: str) -> float:
+    """High when one token repeats (e.g. stutter / garbage loops) without long n-grams."""
+    words = text.lower().split()
+    if len(words) < 6:
+        return 0.0
+    top_count = Counter(words).most_common(1)[0][1]
+    ratio = top_count / len(words)
+    if ratio <= 0.35:
+        return 0.0
+    return min(1.0, (ratio - 0.35) / 0.65)
+
+
+def _segment_hallucination_risk(text: str, duration_sec: float = 0.0) -> float:
+    """Heuristic 0–1 risk for this segment only (OpenVINO GenAI exposes no token logprobs).
+
+    Combines local n-gram repetition, single-word dominance, and implausibly empty
+    stretches for the interval duration.
+    """
+    ngram_r = _detect_repetition_ratio(text)
+    dom_r = _word_domination_ratio(text)
+    risk = max(ngram_r, dom_r)
+    stripped = text.strip()
+    if duration_sec > 2.5 and len(stripped) < 8:
+        risk = max(risk, 0.45)
+    cps = len(stripped) / duration_sec if duration_sec > 0.1 else 0.0
+    if duration_sec > 4.0 and cps > 0 and cps < 2.0:
+        risk = max(risk, 0.35)
+    return min(1.0, risk)
 
 
 model_lock = threading.Lock()
@@ -668,9 +761,18 @@ async def transcribe(req: TranscribeRequest) -> Any:
         except Exception as exc:
             return _error(500, f"Inference failed: {exc}", "ERR_ASR_01")
 
+        base: dict[str, Any] = {"segments": segments}
         if not segments:
-            return {"segments": []}
+            return base
 
-        return {"segments": segments}
+        risks = [
+            float(s["hallucination_risk"])
+            for s in segments
+            if isinstance(s.get("hallucination_risk"), (int, float))
+        ]
+        if risks:
+            base["hallucination_max_risk"] = round(max(risks), 4)
+            base["hallucination_mean_risk"] = round(sum(risks) / len(risks), 4)
+        return base
     finally:
         shutil.rmtree(job_dir, ignore_errors=True)

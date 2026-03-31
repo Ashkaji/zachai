@@ -954,9 +954,35 @@ class EditorSnapshotCallbackRequest(BaseModel):
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 
+def _parse_max_speaker_labels(raw: str | None) -> int:
+    if raw is None or not str(raw).strip():
+        return 10
+    try:
+        value = int(str(raw).strip(), 10)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Invalid MAX_SPEAKER_LABELS={raw!r}; expected integer >= 1"
+        ) from exc
+    if value < 1:
+        raise RuntimeError("MAX_SPEAKER_LABELS must be >= 1")
+    return value
+
+
+MAX_SPEAKER_LABELS = _parse_max_speaker_labels(os.environ.get("MAX_SPEAKER_LABELS", "10"))
+SPEAKER_COLORS = [
+    "#4285e4", "#e54242", "#42e567", "#e5a742", "#a742e5",
+    "#42e5d1", "#e542a7", "#7be542", "#4242e5", "#e5e542",
+]
+
+
 def generate_label_studio_xml(labels: list) -> str:
     """Generate Label Studio labeling interface XML from a nature's label set.
-    Speech labels appear first; non-speech (Pause, Bruit, Musique) follow.
+
+    Speech labels appear first; non-speech (Pause, Bruit, Musique) follow;
+    generic SPEAKER_XX labels are appended for ML pre-annotation (the expert
+    reassigns them to the real nature labels).
+
+    ``<TextArea perRegion="true">`` so each audio region gets its own transcript.
     This XML is consumed by Camunda 7 in Story 2.2 to provision Label Studio projects.
     """
     speech = [lb for lb in labels if lb.is_speech]
@@ -967,13 +993,21 @@ def generate_label_studio_xml(labels: list) -> str:
         for lb in speech + non_speech
     )
 
+    speaker_tags = "\n".join(
+        f'    <Label value="SPEAKER_{i:02d}" background="{SPEAKER_COLORS[i % len(SPEAKER_COLORS)]}"/>'
+        for i in range(MAX_SPEAKER_LABELS)
+    )
+
     return (
         "<View>\n"
         '  <AudioPlus name="audio" value="$audio"/>\n'
         '  <Labels name="label" toName="audio">\n'
         f"{label_tags}\n"
+        f"{speaker_tags}\n"
         "  </Labels>\n"
-        '  <TextArea name="transcription" toName="audio" rows="4" editable="true" placeholder="Transcription..."/>\n'
+        '  <TextArea name="transcription" toName="audio" perRegion="true" '
+        'editable="true" rows="3" displayMode="region-list" '
+        'placeholder="Transcription..."/>\n'
         "</View>"
     )
 

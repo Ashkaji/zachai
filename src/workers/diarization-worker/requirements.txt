@@ -1,0 +1,11 @@
+fastapi>=0.115.0
+uvicorn>=0.34.0
+minio>=7.2.0
+anyio>=4.5.0
+pydantic>=2.8.0
+# --- Diarization engines (both included for evaluation; pick one for prod) ---
+pyannote.audio>=3.3.0
+sherpa-onnx>=1.11.0
+# PyTorch CPU — installed separately in Dockerfile via --extra-index-url
+soundfile>=0.13.0
+numpy>=1.26.0

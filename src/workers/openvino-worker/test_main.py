@@ -103,7 +103,9 @@ def test_transcribe_success(mock_validate, mock_minio, client):
     body = response.json()
     assert "segments" in body
     assert isinstance(body["segments"], list)
-    assert set(body["segments"][0].keys()) == {"start", "end", "text", "confidence"}
+    seg0 = body["segments"][0]
+    assert {"start", "end", "text", "confidence"}.issubset(seg0.keys())
+    assert "hallucination_risk" in seg0
 
 
 @patch.object(openvino_main, "minio_client")
