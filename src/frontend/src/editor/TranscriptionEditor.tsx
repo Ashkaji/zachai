@@ -17,6 +17,12 @@ import {
   shouldRetryTicketHttpStatus,
 } from "./reconnect-policy";
 import { apiFetch, bearerForApi } from "../auth/api-client";
+import {
+  buildDocTextIndex,
+  docRangeForTextSlice,
+  recomputeGrammarApplyRange,
+  type GrammarMatch,
+} from "./grammarUtils";
 import "./collaboration.css";
 
 interface Segment {
@@ -26,6 +32,8 @@ interface Segment {
 }
 
 const DEBOUNCE_MS = 800;
+/** Story 5.5 — grammar proxy debounce (PRD ~500ms). */
+const GRAMMAR_DEBOUNCE_MS = 500;
 
 /** Host-side port in compose (`HOCUSPOCUS_HOST_PORT`, default 11234). Container still uses 1234. */
 const DEFAULT_HOCUSPOCUS_HOST_PORT = 11234;
@@ -151,8 +159,11 @@ export function TranscriptionEditor() {
 
   const [audioLoadStatus, setAudioLoadStatus] = useState<AudioLoadStatus>("idle");
   const [audioError, setAudioError] = useState<string>("");
+  const recoverAudioFromCacheRef = useRef<(() => void) | null>(null);
 
-  const audioUrlCacheRef = useRef<Map<number, { url: string; expiresIn: number }>>(new Map());
+  const audioUrlCacheRef = useRef<
+    Map<number, { url: string; expiresIn: number; fetchedAtMs: number }>
+  >(new Map());
 
   type WhisperIntervalIndex = {
     audioStart: number;
@@ -164,6 +175,37 @@ export function TranscriptionEditor() {
   const intervalByKeyRef = useRef<Map<string, WhisperIntervalIndex>>(new Map());
   const activeIntervalKeyRef = useRef<string | null>(null);
   const rafIdRef = useRef<number | null>(null);
+
+  const grammarMatchesRef = useRef<GrammarMatch[]>([]);
+  const grammarGenRef = useRef(0);
+  const grammarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const grammarAbortRef = useRef<AbortController | null>(null);
+  const grammarEnabledRef = useRef(true);
+  const [grammarNote, setGrammarNote] = useState("");
+  const [grammarEnabled, setGrammarEnabled] = useState(true);
+  const [grammarPopup, setGrammarPopup] = useState<{
+    x: number;
+    y: number;
+    match: GrammarMatch;
+    /** Substring from grammar index at popup open; apply recomputes range and must match this. */
+    expectedSlice: string;
+  } | null>(null);
+
+  const grammarMessageFromResponse = useCallback(
+    (
+      resp: Response,
+      data: { error?: string } | { detail?: { error?: string; matches?: unknown } | string },
+    ) => {
+      const raw = data as { detail?: { error?: string; matches?: unknown } | string; error?: string };
+      const det = raw.detail;
+      let msg = `HTTP ${resp.status}`;
+      if (typeof det === "string") msg = det;
+      else if (det && typeof det === "object" && "error" in det && det.error) msg = String(det.error);
+      else if (raw.error) msg = String(raw.error);
+      return msg;
+    },
+    [],
+  );
 
   const displayName = useMemo(() => {
     const p = auth.user?.profile as
@@ -322,6 +364,133 @@ export function TranscriptionEditor() {
     editorRef.current = editor;
   }, [editor]);
 
+  const paintAllDecorations = useCallback(() => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    ed.view.setProps({
+      decorations: (state) => {
+        const decos: Decoration[] = [];
+        if (grammarEnabledRef.current) {
+          const { spans } = buildDocTextIndex(state.doc);
+          for (const m of grammarMatchesRef.current) {
+            const r = docRangeForTextSlice(spans, m.offset, m.length);
+            if (!r) continue;
+            const cls =
+              m.issueType === "spelling"
+                ? "zachai-grammar-spelling"
+                : "zachai-grammar-style";
+            decos.push(Decoration.inline(r.from, r.to, { class: cls }));
+          }
+        }
+        const activeKey = activeIntervalKeyRef.current;
+        if (activeKey) {
+          const parts = activeKey.split("-");
+          if (parts.length >= 2) {
+            const audioStart = Number(parts[0]);
+            const audioEnd = Number(parts[1]);
+            if (Number.isFinite(audioStart) && Number.isFinite(audioEnd)) {
+              state.doc.descendants((node, pos) => {
+                if (!node.isText || !node.marks?.length) return;
+                for (const mark of node.marks) {
+                  if (mark.type.name !== "whisperSegment") continue;
+                  const attrs = mark.attrs as WhisperSegmentAttrs;
+                  if (
+                    roundAudioTime(attrs.audioStart) === audioStart &&
+                    roundAudioTime(attrs.audioEnd) === audioEnd
+                  ) {
+                    const from = pos;
+                    const to = pos + node.nodeSize;
+                    if (from >= 0 && to > from && to <= state.doc.content.size) {
+                      decos.push(
+                        Decoration.inline(from, to, { class: "zachai-karaoke-active" }),
+                      );
+                    }
+                  }
+                }
+              });
+            }
+          }
+        }
+        return DecorationSet.create(state.doc, decos);
+      },
+    });
+  }, []);
+
+  useEffect(() => {
+    grammarEnabledRef.current = grammarEnabled;
+    if (!grammarEnabled) {
+      if (grammarTimerRef.current) clearTimeout(grammarTimerRef.current);
+      if (grammarAbortRef.current) {
+        grammarAbortRef.current.abort();
+        grammarAbortRef.current = null;
+      }
+      grammarGenRef.current += 1;
+      grammarMatchesRef.current = [];
+      setGrammarNote("");
+      setGrammarPopup(null);
+      paintAllDecorations();
+    } else if (token && editor) {
+      grammarGenRef.current += 1;
+      grammarMatchesRef.current = [];
+      paintAllDecorations();
+      if (grammarTimerRef.current) clearTimeout(grammarTimerRef.current);
+      grammarTimerRef.current = setTimeout(() => {
+        const ed = editor;
+        const tok = token;
+        if (!ed || !tok || !grammarEnabledRef.current) return;
+        const { text } = buildDocTextIndex(ed.state.doc);
+        if (!text.trim()) {
+          setGrammarNote("");
+          return;
+        }
+        const gen = grammarGenRef.current;
+        const lang =
+          (import.meta.env.VITE_GRAMMAR_LANGUAGE as string | undefined)?.trim() || "fr";
+        if (grammarAbortRef.current) grammarAbortRef.current.abort();
+        const controller = new AbortController();
+        grammarAbortRef.current = controller;
+        void (async () => {
+          try {
+            const resp = await apiFetch("/v1/proxy/grammar", tok, {
+              method: "POST",
+              body: JSON.stringify({ text, language: lang }),
+              signal: controller.signal,
+            });
+            let data: { matches?: GrammarMatch[]; error?: string };
+            try {
+              data = (await resp.json()) as { matches?: GrammarMatch[]; error?: string };
+            } catch {
+              if (gen !== grammarGenRef.current) return;
+              grammarMatchesRef.current = [];
+              paintAllDecorations();
+              setGrammarNote("Grammar check failed");
+              return;
+            }
+            if (gen !== grammarGenRef.current) return;
+            if (resp.ok || resp.status === 429) {
+              grammarMatchesRef.current = data.matches ?? [];
+              paintAllDecorations();
+              setGrammarNote(resp.status === 429 ? grammarMessageFromResponse(resp, data) : data.error ? String(data.error) : "");
+            } else {
+              grammarMatchesRef.current = [];
+              paintAllDecorations();
+              setGrammarNote(grammarMessageFromResponse(resp, data));
+            }
+          } catch {
+            if (controller.signal.aborted) return;
+            if (gen === grammarGenRef.current) {
+              grammarMatchesRef.current = [];
+              paintAllDecorations();
+              setGrammarNote("Grammar check unavailable");
+            }
+          } finally {
+            if (grammarAbortRef.current === controller) grammarAbortRef.current = null;
+          }
+        })();
+      }, GRAMMAR_DEBOUNCE_MS);
+    }
+  }, [grammarEnabled, paintAllDecorations, token, editor, grammarMessageFromResponse]);
+
   const rebuildWhisperSegmentIndex = useCallback(() => {
     const ed = editorRef.current;
     if (!ed) return;
@@ -366,54 +535,10 @@ export function TranscriptionEditor() {
 
   const applyKaraokeDecoration = useCallback(
     (interval: WhisperIntervalIndex | null) => {
-      const ed = editorRef.current;
-      if (!ed) return;
-
-      if (!interval) {
-        activeIntervalKeyRef.current = null;
-        ed.view.setProps({
-          decorations: (state) => DecorationSet.create(state.doc, []),
-        });
-        return;
-      }
-
-      if (activeIntervalKeyRef.current === interval.key) return;
-      activeIntervalKeyRef.current = interval.key;
-      const activeKey = interval.key;
-      ed.view.setProps({
-        decorations: (state) => {
-          const [startRaw, endRaw] = activeKey.split("-");
-          const audioStart = Number(startRaw);
-          const audioEnd = Number(endRaw);
-          if (!Number.isFinite(audioStart) || !Number.isFinite(audioEnd)) {
-            return DecorationSet.create(state.doc, []);
-          }
-
-          const decorations: Decoration[] = [];
-          state.doc.descendants((node, pos) => {
-            if (!node.isText || !node.marks?.length) return;
-            for (const mark of node.marks) {
-              if (mark.type.name !== "whisperSegment") continue;
-              const attrs = mark.attrs as WhisperSegmentAttrs;
-              if (
-                roundAudioTime(attrs.audioStart) === audioStart &&
-                roundAudioTime(attrs.audioEnd) === audioEnd
-              ) {
-                const from = pos;
-                const to = pos + node.nodeSize;
-                if (from >= 0 && to > from && to <= state.doc.content.size) {
-                  decorations.push(
-                    Decoration.inline(from, to, { class: "zachai-karaoke-active" }),
-                  );
-                }
-              }
-            }
-          });
-          return DecorationSet.create(state.doc, decorations);
-        },
-      });
+      activeIntervalKeyRef.current = interval?.key ?? null;
+      paintAllDecorations();
     },
-    [],
+    [paintAllDecorations],
   );
 
   const updateKaraokeHighlightForTime = useCallback(
@@ -486,6 +611,12 @@ export function TranscriptionEditor() {
     };
 
     audio.onerror = () => {
+      if (recoverAudioFromCacheRef.current) {
+        const retry = recoverAudioFromCacheRef.current;
+        recoverAudioFromCacheRef.current = null;
+        retry();
+        return;
+      }
       setAudioLoadStatus("error");
       setAudioError("Audio failed to load. Text editing will still work.");
       stopKaraokeLoop();
@@ -533,14 +664,30 @@ export function TranscriptionEditor() {
     let cancelled = false;
     const controller = new AbortController();
 
-    const run = async () => {
+    const isCacheUsable = (c: { url: string; expiresIn: number; fetchedAtMs: number }) => {
+      const safetyMs = 30_000;
+      return Date.now() < c.fetchedAtMs + c.expiresIn * 1000 - safetyMs;
+    };
+
+    let retriedFromAudioError = false;
+
+    const run = async (allowRetryOnCachedFailure: boolean, triedCached: boolean) => {
       const cached = audioUrlCacheRef.current.get(audioId);
-      if (cached) {
+      if (cached && isCacheUsable(cached)) {
         setAudioLoadStatus("loading");
         setAudioError("");
+        recoverAudioFromCacheRef.current = () => {
+          if (retriedFromAudioError || cancelled) return;
+          retriedFromAudioError = true;
+          audioUrlCacheRef.current.delete(audioId);
+          void run(false, false);
+        };
         audio.src = cached.url;
         audio.load();
         return;
+      }
+      if (cached && !isCacheUsable(cached)) {
+        audioUrlCacheRef.current.delete(audioId);
       }
 
       setAudioLoadStatus("loading");
@@ -568,11 +715,20 @@ export function TranscriptionEditor() {
         if (cancelled) return;
 
         const expiresIn = typeof data.expires_in === "number" ? data.expires_in : 3600;
-        audioUrlCacheRef.current.set(audioId, { url: data.presigned_url, expiresIn });
+        audioUrlCacheRef.current.set(audioId, {
+          url: data.presigned_url,
+          expiresIn,
+          fetchedAtMs: Date.now(),
+        });
         audio.src = data.presigned_url;
         audio.load();
       } catch (e) {
         if (cancelled) return;
+        if (triedCached && allowRetryOnCachedFailure) {
+          audioUrlCacheRef.current.delete(audioId);
+          await run(false, false);
+          return;
+        }
         setAudioLoadStatus("error");
         setAudioError(String(e));
         setStatus(`Audio error: ${String(e)}`);
@@ -581,10 +737,11 @@ export function TranscriptionEditor() {
       }
     };
 
-    void run();
+    void run(true, Boolean(audioUrlCacheRef.current.get(audioId)));
 
     return () => {
       cancelled = true;
+      recoverAudioFromCacheRef.current = null;
       controller.abort();
     };
   }, [
@@ -597,13 +754,45 @@ export function TranscriptionEditor() {
     updateKaraokeHighlightForTime,
   ]);
 
-  // Click → seek (text → audio) via DOM event delegation.
+  // Click: grammar suggestions (Story 5.5) take precedence over whisper seek (Story 5.3).
   useEffect(() => {
     const container = editorContainerRef.current;
     if (!container) return;
 
     const onClick = (ev: MouseEvent) => {
       const target = ev.target as HTMLElement | null;
+      if (target?.closest?.("#zachai-grammar-popup")) return;
+
+      if (grammarEnabledRef.current) {
+        const gEl = target?.closest?.(".zachai-grammar-spelling, .zachai-grammar-style");
+        if (gEl) {
+          const ed = editorRef.current;
+          if (!ed) return;
+          const coords = { left: ev.clientX, top: ev.clientY };
+          const posInfo = ed.view.posAtCoords(coords);
+          if (posInfo == null) return;
+          const pos = posInfo.pos;
+          const { text, spans } = buildDocTextIndex(ed.state.doc);
+          for (const m of grammarMatchesRef.current) {
+            const r = docRangeForTextSlice(spans, m.offset, m.length);
+            if (r && pos >= r.from && pos < r.to) {
+              ev.preventDefault();
+              ev.stopPropagation();
+              const expectedSlice = text.slice(m.offset, m.offset + m.length);
+              setGrammarPopup({
+                x: ev.clientX,
+                y: ev.clientY,
+                match: m,
+                expectedSlice,
+              });
+              return;
+            }
+          }
+        }
+      }
+
+      setGrammarPopup(null);
+
       const span = target?.closest?.("span[data-whisper-segment]") as HTMLElement | null;
       if (!span) return;
 
@@ -618,7 +807,6 @@ export function TranscriptionEditor() {
       const audio = audioRef.current;
       if (!audio) return;
 
-      // Seek immediately, and update the karaoke highlight right away (even before the next rAF tick).
       audio.currentTime = start;
 
       const roundedStart = roundAudioTime(start);
@@ -628,12 +816,9 @@ export function TranscriptionEditor() {
       if (interval) applyKaraokeDecoration(interval);
       else updateKaraokeHighlightForTime(start);
 
-      // Playback: ignore failures (autoplay policy / not yet loaded); highlight still updates.
-      audio
-        .play()
-        .catch(() => {
-          /* no-op */
-        });
+      audio.play().catch(() => {
+        /* no-op */
+      });
     };
 
     container.addEventListener("click", onClick);
@@ -749,10 +934,83 @@ export function TranscriptionEditor() {
   }, [submitCorrections]);
 
   useEffect(() => {
+    if (!grammarPopup) return;
+    const onDown = (e: MouseEvent) => {
+      const el = document.getElementById("zachai-grammar-popup");
+      if (el?.contains(e.target as Node)) return;
+      setGrammarPopup(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [grammarPopup]);
+
+  useEffect(() => {
     if (!editor) return;
     const handler = () => {
       debouncedSubmit();
       rebuildWhisperSegmentIndex();
+
+      if (grammarEnabledRef.current && token) {
+        setGrammarPopup(null);
+        grammarGenRef.current += 1;
+        grammarMatchesRef.current = [];
+        paintAllDecorations();
+        if (grammarTimerRef.current) clearTimeout(grammarTimerRef.current);
+        grammarTimerRef.current = setTimeout(() => {
+          const ed = editorRef.current;
+          const tok = token;
+          if (!ed || !tok || !grammarEnabledRef.current) return;
+          const { text } = buildDocTextIndex(ed.state.doc);
+          if (!text.trim()) {
+            setGrammarNote("");
+            return;
+          }
+          const gen = grammarGenRef.current;
+          const lang =
+            (import.meta.env.VITE_GRAMMAR_LANGUAGE as string | undefined)?.trim() || "fr";
+          if (grammarAbortRef.current) grammarAbortRef.current.abort();
+          const controller = new AbortController();
+          grammarAbortRef.current = controller;
+          void (async () => {
+            try {
+              const resp = await apiFetch("/v1/proxy/grammar", tok, {
+                method: "POST",
+                body: JSON.stringify({ text, language: lang }),
+                signal: controller.signal,
+              });
+              let data: { matches?: GrammarMatch[]; error?: string };
+              try {
+                data = (await resp.json()) as { matches?: GrammarMatch[]; error?: string };
+              } catch {
+                if (gen !== grammarGenRef.current) return;
+                grammarMatchesRef.current = [];
+                paintAllDecorations();
+                setGrammarNote("Grammar check failed");
+                return;
+              }
+              if (gen !== grammarGenRef.current) return;
+              if (resp.ok || resp.status === 429) {
+                grammarMatchesRef.current = data.matches ?? [];
+                paintAllDecorations();
+                setGrammarNote(resp.status === 429 ? grammarMessageFromResponse(resp, data) : data.error ? String(data.error) : "");
+              } else {
+                grammarMatchesRef.current = [];
+                paintAllDecorations();
+                setGrammarNote(grammarMessageFromResponse(resp, data));
+              }
+            } catch {
+              if (controller.signal.aborted) return;
+              if (gen === grammarGenRef.current) {
+                grammarMatchesRef.current = [];
+                paintAllDecorations();
+                setGrammarNote("Grammar check unavailable");
+              }
+            } finally {
+              if (grammarAbortRef.current === controller) grammarAbortRef.current = null;
+            }
+          })();
+        }, GRAMMAR_DEBOUNCE_MS);
+      }
 
       const audio = audioRef.current;
       if (audio && audioLoadStatus === "ready") {
@@ -763,14 +1021,47 @@ export function TranscriptionEditor() {
     return () => {
       editor.off("update", handler);
       if (pendingRef.current) clearTimeout(pendingRef.current);
+      if (grammarTimerRef.current) clearTimeout(grammarTimerRef.current);
+      if (grammarAbortRef.current) {
+        grammarAbortRef.current.abort();
+        grammarAbortRef.current = null;
+      }
     };
   }, [
     editor,
+    token,
     debouncedSubmit,
     audioLoadStatus,
     rebuildWhisperSegmentIndex,
     updateKaraokeHighlightForTime,
+    paintAllDecorations,
+    grammarMessageFromResponse,
   ]);
+
+  const applyGrammarReplacement = useCallback(
+    (replacement: string) => {
+      const ed = editorRef.current;
+      if (!ed || !grammarPopup) return;
+      const range = recomputeGrammarApplyRange(
+        ed.state.doc,
+        grammarPopup.match,
+        grammarPopup.expectedSlice,
+      );
+      if (!range) {
+        setGrammarPopup(null);
+        return;
+      }
+      ed.chain()
+        .focus()
+        .insertContentAt({ from: range.from, to: range.to }, replacement)
+        .run();
+      setGrammarPopup(null);
+      grammarMatchesRef.current = [];
+      grammarGenRef.current += 1;
+      paintAllDecorations();
+    },
+    [grammarPopup, paintAllDecorations],
+  );
 
   const audioStatusLine =
     audioLoadStatus === "loading"
@@ -805,10 +1096,28 @@ export function TranscriptionEditor() {
         }}
       >
         <span>Audio #{audioId}</span>
-        <span>
-          {status}
-          {audioStatusLine ? ` · ${audioStatusLine}` : ""}
-          {collabLine ? ` · ${collabLine}` : ""}
+        <span style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            title="Toggle grammar highlights (LanguageTool)"
+            onClick={() => setGrammarEnabled((v) => !v)}
+            style={{
+              fontSize: "0.75rem",
+              padding: "0.15rem 0.4rem",
+              cursor: "pointer",
+              borderRadius: "4px",
+              border: "1px solid #ccc",
+              background: grammarEnabled ? "#e7f1ff" : "#f0f0f0",
+            }}
+          >
+            L
+          </button>
+          <span>
+            {status}
+            {audioStatusLine ? ` · ${audioStatusLine}` : ""}
+            {collabLine ? ` · ${collabLine}` : ""}
+            {grammarNote ? ` · ${grammarNote}` : ""}
+          </span>
         </span>
       </div>
       <div
@@ -819,10 +1128,60 @@ export function TranscriptionEditor() {
           minHeight: "200px",
           lineHeight: "1.8",
           fontSize: "1rem",
+          position: "relative",
         }}
         ref={editorContainerRef}
       >
         <EditorContent editor={editor} />
+        {grammarPopup ? (
+          <div
+            id="zachai-grammar-popup"
+            role="dialog"
+            style={{
+              position: "fixed",
+              left: Math.min(grammarPopup.x, typeof window !== "undefined" ? window.innerWidth - 260 : grammarPopup.x),
+              top: grammarPopup.y + 8,
+              zIndex: 50,
+              maxWidth: 260,
+              padding: "0.5rem 0.65rem",
+              background: "#fff",
+              border: "1px solid #ccc",
+              borderRadius: "6px",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+              fontSize: "0.8125rem",
+            }}
+          >
+            <div style={{ marginBottom: "0.35rem", color: "#444" }}>
+              {grammarPopup.match.shortMessage || grammarPopup.match.message || "Suggestion"}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              {(grammarPopup.match.replacements?.length
+                ? grammarPopup.match.replacements
+                : []
+              ).slice(0, 5).map((rep, idx) => (
+                <button
+                  key={`${rep}-${idx}`}
+                  type="button"
+                  onClick={() => applyGrammarReplacement(rep)}
+                  style={{
+                    textAlign: "left",
+                    padding: "0.25rem 0.4rem",
+                    cursor: "pointer",
+                    borderRadius: "4px",
+                    border: "1px solid #ddd",
+                    background: "#f8f9fa",
+                  }}
+                >
+                  {rep}
+                </button>
+              ))}
+              {(!grammarPopup.match.replacements ||
+                grammarPopup.match.replacements.length === 0) && (
+                <span style={{ color: "#888" }}>No automatic replacement</span>
+              )}
+            </div>
+          </div>
+        ) : null}
       </div>
       <p
         style={{

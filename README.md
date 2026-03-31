@@ -88,7 +88,7 @@ cp .env.example .env   # puis éditer les credentials si nécessaire
 docker compose up -d
 ```
 
-L'ordre de démarrage est géré automatiquement via les health checks (voir [`docs/architecture.md`](docs/architecture.md) section 6).
+L'ordre de démarrage est géré automatiquement via les health checks (voir [`docs/architecture.md`](docs/architecture.md) section 6). Le service **LanguageTool** (grammaire, Story 5.5) expose l'API HTTP sur le port hôte **8010** ; l'éditeur et les clients passent par FastAPI `POST /v1/proxy/grammar` (JWT), pas directement par ce port en production.
 
 ### OpenVINO — amorcer le Model Registry (Windows, Ubuntu, WSL)
 

@@ -7,6 +7,9 @@ FastAPI never touches audio binary data — upload goes directly browser→MinIO
 """
 import os
 import io
+import json
+import re
+import hashlib
 import base64
 import uuid
 import hmac
@@ -14,12 +17,14 @@ import math
 import logging
 import html
 import time
+import asyncio
+import ipaddress
 from contextlib import asynccontextmanager
 from datetime import timedelta, datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, AsyncGenerator
-from urllib.parse import quote_plus
+from typing import Annotated, Any, AsyncGenerator
+from urllib.parse import quote_plus, urlparse
 
 import httpx
 from fastapi import FastAPI, HTTPException, Depends, Query, Request
@@ -162,6 +167,39 @@ _export_worker_client: httpx.AsyncClient | None = None
 
 # Redis — WSS editor tickets (Story 5.2); optional at runtime if ping fails (mint → 503)
 _redis_client: redis_asyncio.Redis | None = None
+
+# LanguageTool grammar proxy (Story 5.5)
+_LANGUAGETOOL_BASE_URL: str = (
+    (os.environ.get("LANGUAGETOOL_URL") or "http://languagetool:8010").strip().rstrip("/")
+)
+_raw_grammar_ttl = os.environ.get("GRAMMAR_CACHE_TTL_SEC", "300")
+try:
+    GRAMMAR_CACHE_TTL_SEC: int = max(0, int(_raw_grammar_ttl))
+except (TypeError, ValueError):
+    logger.warning(
+        "GRAMMAR_CACHE_TTL_SEC=%r invalid; using 300",
+        _raw_grammar_ttl,
+    )
+    GRAMMAR_CACHE_TTL_SEC = 300
+_raw_grammar_max = os.environ.get("GRAMMAR_MAX_TEXT_LEN", "65536")
+try:
+    GRAMMAR_MAX_TEXT_LEN: int = max(256, int(_raw_grammar_max))
+except (TypeError, ValueError):
+    logger.warning("GRAMMAR_MAX_TEXT_LEN=%r invalid; using 65536", _raw_grammar_max)
+    GRAMMAR_MAX_TEXT_LEN = 65536
+_raw_grammar_timeout = os.environ.get("GRAMMAR_HTTP_TIMEOUT", "20")
+try:
+    GRAMMAR_HTTP_TIMEOUT: float = max(1.0, float(_raw_grammar_timeout))
+except (TypeError, ValueError):
+    logger.warning("GRAMMAR_HTTP_TIMEOUT=%r invalid; using 20.0", _raw_grammar_timeout)
+    GRAMMAR_HTTP_TIMEOUT = 20.0
+LT_GRAMMAR_CACHE_PREFIX = "lt:grammar:"
+_raw_grammar_rate_limit = os.environ.get("GRAMMAR_RATE_LIMIT_PER_MIN", "120")
+try:
+    GRAMMAR_RATE_LIMIT_PER_MIN: int = max(0, int(_raw_grammar_rate_limit))
+except (TypeError, ValueError):
+    logger.warning("GRAMMAR_RATE_LIMIT_PER_MIN=%r invalid; using 120", _raw_grammar_rate_limit)
+    GRAMMAR_RATE_LIMIT_PER_MIN = 120
 
 
 # ─── ORM Models ───────────────────────────────────────────────────────────────
@@ -935,6 +973,31 @@ class EditorTicketResponse(BaseModel):
     ttl: int = Field(default=60, description="Seconds until Redis key expires (Story 5.2).")
 
 
+class GrammarProxyRequest(BaseModel):
+    """POST /v1/proxy/grammar — Story 5.5 (LanguageTool via FastAPI)."""
+
+    text: str = Field(..., min_length=1, max_length=262144)
+    language: str = Field(..., min_length=2, max_length=32)
+
+    @field_validator("text")
+    @classmethod
+    def _text_non_whitespace(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("text must contain non-whitespace characters")
+        return v
+
+    @field_validator("language")
+    @classmethod
+    def _language_code(cls, v: str) -> str:
+        s = v.strip().replace("_", "-")
+        low = s.lower()
+        if low == "auto":
+            return "auto"
+        if not re.fullmatch(r"[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})?", s):
+            raise ValueError("invalid language code for LanguageTool")
+        return low
+
+
 class EditorSnapshotCallbackRequest(BaseModel):
     """POST /v1/editor/callback/snapshot — Hocuspocus idle snapshot callback (Story 5.4)."""
 
@@ -952,6 +1015,121 @@ class EditorSnapshotCallbackRequest(BaseModel):
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def _grammar_cache_key(text: str, language: str) -> str:
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return f"{LT_GRAMMAR_CACHE_PREFIX}{digest}:{language}"
+
+
+def _grammar_rate_limit_key(sub: str) -> str:
+    return f"{LT_GRAMMAR_CACHE_PREFIX}rl:{sub}"
+
+
+def _basic_regex_matches(text: str) -> list[dict[str, Any]]:
+    """Minimal local fallback when LanguageTool is overloaded (PRD §4.8)."""
+    out: list[dict[str, Any]] = []
+    for m in re.finditer(r" {2,}", text):
+        out.append(
+            {
+                "offset": m.start(),
+                "length": m.end() - m.start(),
+                "message": "Multiple consecutive spaces",
+                "shortMessage": "",
+                "ruleId": "ZACHAI_LOCAL_REGEX",
+                "category": "TYPOGRAPHY",
+                "replacements": [" "],
+                "issueType": "grammar",
+            }
+        )
+    return out
+
+
+def _grammar_category_id(match: dict[str, Any], rule: dict[str, Any]) -> str:
+    rc = rule.get("category")
+    if isinstance(rc, dict) and rc.get("id") is not None:
+        return str(rc["id"])
+    if isinstance(rc, str) and rc.strip():
+        return rc.strip()
+    cat = match.get("category")
+    if isinstance(cat, dict) and cat.get("id") is not None:
+        return str(cat["id"])
+    if isinstance(cat, str) and cat.strip():
+        return cat.strip()
+    return ""
+
+
+def _normalize_lt_matches(raw: list[Any], text: str) -> list[dict[str, Any]]:
+    text_len = len(text)
+    out: list[dict[str, Any]] = []
+    for m in raw:
+        if not isinstance(m, dict):
+            continue
+        repl: list[str] = []
+        for r in m.get("replacements") or []:
+            if isinstance(r, dict) and r.get("value") is not None:
+                repl.append(str(r["value"]))
+        rule = m.get("rule") if isinstance(m.get("rule"), dict) else {}
+        rule_id = str(rule.get("id") or "")
+        cat_id = _grammar_category_id(m, rule)
+        issue_raw = str(rule.get("issueType") or "").lower()
+        issue = "spelling" if issue_raw == "misspelling" else "grammar"
+        try:
+            off = int(m.get("offset", 0))
+            ln = int(m.get("length", 0))
+        except (TypeError, ValueError):
+            continue
+        if off < 0 or off > text_len:
+            continue
+        if off + ln > text_len:
+            ln = text_len - off
+        if ln <= 0:
+            continue
+        out.append(
+            {
+                "offset": off,
+                "length": ln,
+                "message": str(m.get("message") or ""),
+                "shortMessage": str(m.get("shortMessage") or ""),
+                "ruleId": rule_id,
+                "category": cat_id,
+                "replacements": repl,
+                "issueType": issue,
+            }
+        )
+    return out
+
+
+def _grammar_cached_payload_valid(data: Any) -> bool:
+    if not isinstance(data, dict):
+        return False
+    matches = data.get("matches")
+    degraded = data.get("degraded")
+    if not isinstance(matches, list) or not isinstance(degraded, bool):
+        return False
+    return True
+
+
+def _is_internal_languagetool_url(base_url: str) -> bool:
+    try:
+        parsed = urlparse(base_url)
+    except Exception:
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False
+    if host in {"languagetool", "localhost", "127.0.0.1", "::1"}:
+        return True
+    # Docker/service names are typically single-label hosts (no dot).
+    if "." not in host:
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_private or ip.is_loopback or ip.is_link_local
+    except ValueError:
+        return False
 
 
 def _parse_max_speaker_labels(raw: str | None) -> int:
@@ -2527,6 +2705,231 @@ async def get_audio_media(
         raise HTTPException(status_code=503, detail={"error": "MinIO unavailable"})
 
     return {"presigned_url": presigned_url, "expires_in": 3600}
+
+
+@app.post("/v1/proxy/grammar")
+async def post_proxy_grammar(
+    body: GrammarProxyRequest,
+    payload: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """
+    Proxy spelling/grammar check to LanguageTool (Story 5.5).
+    Cached in Redis (TTL GRAMMAR_CACHE_TTL_SEC) keyed by SHA-256(text)+language.
+    """
+    roles = get_roles(payload)
+    if not payload.get("sub"):
+        raise HTTPException(status_code=401, detail={"error": "Subject missing in token"})
+    if not {"Transcripteur", "Expert", "Admin"}.intersection(roles):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "Transcripteur, Expert, or Admin role required"},
+        )
+    if _redis_client is not None and GRAMMAR_RATE_LIMIT_PER_MIN > 0:
+        rl_key = _grammar_rate_limit_key(str(payload.get("sub")))
+        try:
+            count = await _redis_client.incr(rl_key)
+            if count == 1:
+                await _redis_client.expire(rl_key, 60)
+            if count > GRAMMAR_RATE_LIMIT_PER_MIN:
+                raise HTTPException(
+                    status_code=429,
+                    detail={"error": "Too many grammar requests; retry shortly", "matches": []},
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("grammar_proxy rate limit unavailable: %s", exc)
+
+    text = body.text
+    if len(text) > GRAMMAR_MAX_TEXT_LEN:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "text exceeds maximum length", "max": GRAMMAR_MAX_TEXT_LEN},
+        )
+    if not _is_internal_languagetool_url(_LANGUAGETOOL_BASE_URL):
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "Grammar service misconfigured (must use internal URL)", "matches": []},
+        )
+
+    cache_key = _grammar_cache_key(text, body.language)
+    lock_key = f"{cache_key}:fetch"
+    lock_token = uuid.uuid4().hex
+    lock_ttl_sec = max(5, min(120, int(math.ceil(GRAMMAR_HTTP_TIMEOUT + 10.0))))
+    follower_wait_sec = max(2.0, min(120.0, GRAMMAR_HTTP_TIMEOUT + 5.0))
+    t0 = time.perf_counter()
+
+    async def _grammar_cache_read() -> dict[str, Any] | None:
+        if _redis_client is None or GRAMMAR_CACHE_TTL_SEC <= 0:
+            return None
+        try:
+            raw = await _redis_client.get(cache_key)
+            if raw:
+                data = json.loads(raw)
+                if _grammar_cached_payload_valid(data):
+                    return data
+                try:
+                    await _redis_client.delete(cache_key)
+                except Exception:
+                    pass
+        except Exception as exc:
+            logger.warning("grammar_proxy cache read failed: %s", exc)
+        return None
+
+    lock_held_local: dict[str, bool] = {"v": False}
+
+    async def _grammar_release_lock() -> None:
+        if not lock_held_local["v"] or _redis_client is None:
+            return
+        try:
+            await _redis_client.eval(
+                "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+                1,
+                lock_key,
+                lock_token,
+            )
+        except Exception as exc:
+            logger.warning("grammar_proxy cache lock release failed: %s", exc)
+        finally:
+            lock_held_local["v"] = False
+
+    hit = await _grammar_cache_read()
+    if hit is not None:
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info(
+            "grammar_proxy cache_hit duration_ms=%.1f language=%s",
+            elapsed_ms,
+            body.language,
+        )
+        return hit
+
+    if _redis_client is not None and GRAMMAR_CACHE_TTL_SEC > 0:
+        try:
+            got = await _redis_client.set(lock_key, lock_token, nx=True, ex=lock_ttl_sec)
+            lock_held_local["v"] = got is True
+        except Exception as exc:
+            logger.warning("grammar_proxy cache lock acquire failed: %s", exc)
+            lock_held_local["v"] = False
+        if not lock_held_local["v"]:
+            wait_deadline = time.monotonic() + follower_wait_sec
+            while time.monotonic() < wait_deadline:
+                await asyncio.sleep(0.1)
+                cw = await _grammar_cache_read()
+                if cw is not None:
+                    elapsed_ms = (time.perf_counter() - t0) * 1000
+                    logger.info(
+                        "grammar_proxy cache_hit_coalesced duration_ms=%.1f language=%s",
+                        elapsed_ms,
+                        body.language,
+                    )
+                    return cw
+                try:
+                    if not await _redis_client.exists(lock_key):
+                        break
+                except Exception:
+                    break
+            try:
+                lock_still_held = await _redis_client.exists(lock_key)
+            except Exception:
+                lock_still_held = 0
+            if lock_still_held:
+                raise HTTPException(
+                    status_code=503,
+                    detail={"error": "Grammar check in progress for same content; retry shortly", "matches": []},
+                )
+            try:
+                got = await _redis_client.set(lock_key, lock_token, nx=True, ex=lock_ttl_sec)
+                lock_held_local["v"] = got is True
+            except Exception:
+                lock_held_local["v"] = False
+            if not lock_held_local["v"]:
+                raise HTTPException(
+                    status_code=503,
+                    detail={"error": "Grammar check in progress for same content; retry shortly", "matches": []},
+                )
+        else:
+            cw = await _grammar_cache_read()
+            if cw is not None:
+                await _grammar_release_lock()
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                logger.info(
+                    "grammar_proxy cache_hit duration_ms=%.1f language=%s",
+                    elapsed_ms,
+                    body.language,
+                )
+                return cw
+
+    url = f"{_LANGUAGETOOL_BASE_URL}/v2/check"
+    try:
+        try:
+            async with httpx.AsyncClient(timeout=GRAMMAR_HTTP_TIMEOUT) as client:
+                r = await client.post(
+                    url,
+                    data={"text": text, "language": body.language},
+                )
+        except httpx.TimeoutException:
+            logger.warning("grammar_proxy upstream timeout url=%s", url)
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "Grammar service timeout", "matches": []},
+            )
+        except httpx.RequestError as exc:
+            logger.warning("grammar_proxy upstream request_error url=%s err=%s", url, exc)
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "Grammar service unavailable", "matches": []},
+            )
+
+        if r.status_code == 429:
+            fallback = _basic_regex_matches(text)
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "Grammar service rate-limited; partial local checks only",
+                    "matches": fallback,
+                    "degraded": True,
+                },
+            )
+
+        if r.status_code >= 400:
+            logger.warning("grammar_proxy upstream status=%s body_prefix=%s", r.status_code, r.text[:200])
+            raise HTTPException(
+                status_code=502,
+                detail={"error": "Grammar upstream error", "matches": []},
+            )
+
+        try:
+            data = r.json()
+        except Exception:
+            raise HTTPException(
+                status_code=502,
+                detail={"error": "Invalid grammar upstream response", "matches": []},
+            )
+        if not isinstance(data, dict):
+            raise HTTPException(
+                status_code=502,
+                detail={"error": "Invalid grammar upstream response", "matches": []},
+            )
+
+        matches = _normalize_lt_matches(data.get("matches") or [], text)
+        out: dict[str, Any] = {"matches": matches, "degraded": False}
+        if _redis_client is not None and GRAMMAR_CACHE_TTL_SEC > 0:
+            try:
+                await _redis_client.setex(cache_key, GRAMMAR_CACHE_TTL_SEC, json.dumps(out))
+            except Exception as exc:
+                logger.warning("grammar_proxy cache write failed: %s", exc)
+
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info(
+            "grammar_proxy cache_miss duration_ms=%.1f upstream_status=%s language=%s match_count=%s",
+            elapsed_ms,
+            r.status_code,
+            body.language,
+            len(matches),
+        )
+        return out
+    finally:
+        await _grammar_release_lock()
 
 
 @app.post("/v1/editor/ticket")

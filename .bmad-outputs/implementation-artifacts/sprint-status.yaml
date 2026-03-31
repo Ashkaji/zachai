@@ -1,5 +1,5 @@
 # generated: 2026-03-19
-# last_updated: 2026-03-30 — Story 5.4 review fixes complete (done)
+# last_updated: 2026-03-31 — Story 5.5 ready for code review
 # project: zachai
 # Next backlog after 5.2: Epic 5 story 5-1 (or per sprint plan)
 # project_key: NOKEY
@@ -44,7 +44,7 @@
 #   Epic 2 Story 2.4 + Epic 4 Stories 4.3, 4.4 + Epic 6 + Epic 7
 
 generated: 2026-03-19
-last_updated: 2026-03-30
+last_updated: 2026-03-31
 project: zachai
 # Story 5.2 done — WSS ticket Redis TTL 60s
 # Epic 4 complete — Stories 4.3 & 4.4 done 2026-03-29 (LoRA Camunda trigger + pipeline MVP)
@@ -101,15 +101,15 @@ development_status:
   epic-4-retrospective: done
 
   # ─── EPIC 5 — Éditeur Collaboratif Souverain (Sprint 3-5) ────────────────
-  epic-5: in-progress
+  epic-5: done
   # Sprint 3
   5-2-secure-wss-handshake-ticket-redis: done
   # Sprint 5
   5-1-realtime-sync-hocuspocus-yjs: done
   5-3-bidirectional-audio-text-sync: done
   5-4-automatic-snapshot-persistence: done
-  5-5-realtime-grammar-check-languagetool: backlog
-  epic-5-retrospective: optional
+  5-5-realtime-grammar-check-languagetool: done
+  epic-5-retrospective: done
 
   # ─── EPIC 6 — Chaîne de Validation & Gouvernance (Sprint 6) ──────────────
   epic-6: backlog

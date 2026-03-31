@@ -1,6 +1,6 @@
 # ZachAI: System Interfaces (API Mapping)
 
-**Dernière mise à jour :** 2026-03-29
+**Dernière mise à jour :** 2026-03-31
 **Serveur :** FastAPI Gateway
 **Auth :** Tous les endpoints requièrent `Authorization: Bearer <JWT Keycloak>` sauf mention contraire.
 
@@ -185,10 +185,16 @@ Les **External Task Workers** (Python) polent Camunda 7 (`/engine-rest/external-
 
 ## 7. Proxy Grammaire
 
-- **`POST /v1/proxy/grammar`**
-  - Auth: Transcripteur / Expert
-  - Body: `{text, language}`
-  - Action: Proxy vers LanguageTool avec cache Redis (TTL 5min) — retourne corrections ou 429 si OOM
+- **`POST /v1/proxy/grammar`** (Story 5.5)
+  - Auth: **Keycloak JWT** — rôles **Transcripteur**, **Expert**, ou **Admin** (aligné sur l’éditeur).
+  - Body: `{ "text": string, "language": string }` — `language` : code LanguageTool (`fr`, `en-US`, `auto`, …).
+  - **422** si texte vide / blanc, code langue invalide, ou `text` &gt; `GRAMMAR_MAX_TEXT_LEN`.
+  - **200** : `{ "matches": [...], "degraded": false }` où chaque match normalisé contient :
+    - `offset`, `length`, `message`, `shortMessage`, `ruleId`, `category`, `replacements` (liste de chaînes), `issueType` (`"spelling"` ou `"grammar"`).
+  - **429** : surcharge amont — corps `{ "error", "matches": [...], "degraded": true }` (matches limitées, regex locale espaces multiples).
+  - **502** : réponse HTTP erreur ou JSON invalide côté LanguageTool.
+  - **503** : timeout ou indisponibilité réseau du service LanguageTool.
+  - Cache Redis : clé `lt:grammar:<sha256(text)>:<language>`, TTL `GRAMMAR_CACHE_TTL_SEC` (défaut 300 s). Pas de cache sur la réponse 429.
 
 ---
 

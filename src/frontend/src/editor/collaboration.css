@@ -45,3 +45,14 @@
     box-shadow: 0 0 16px rgba(59, 130, 246, 0.85);
   }
 }
+
+/* Story 5.5 — LanguageTool grammar (docs/ux-design.md §5.D) */
+.zachai-grammar-spelling {
+  text-decoration: underline wavy #dc3545;
+  text-underline-offset: 2px;
+}
+
+.zachai-grammar-style {
+  text-decoration: underline wavy #fd7e14;
+  text-underline-offset: 2px;
+}
