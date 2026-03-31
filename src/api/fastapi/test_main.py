@@ -1065,6 +1065,24 @@ def test_update_status_invalid_transition(mock_db):
     assert "Cannot transition" in response.json()["error"]
 
 
+def test_update_status_completed_must_use_close_endpoint(mock_db):
+    """PUT /status cannot set completed directly; must use close endpoint."""
+    mock_project = make_mock_project(status_val="active")
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = mock_project
+    mock_db.execute.return_value = mock_result
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.put(
+            "/v1/projects/1/status",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            json={"status": "completed"},
+        )
+
+    assert response.status_code == 400
+    assert "POST /v1/projects/{project_id}/close" in response.json()["error"]
+
+
 def test_update_status_not_found(mock_db):
     """PUT /v1/projects/{id}/status returns 404 when not found."""
     mock_result = MagicMock()
@@ -1435,6 +1453,271 @@ def test_normalize_on_demand_success(mock_db):
 
 
 # ─── Story 2.4 — Assignment dashboard ─────────────────────────────────────────
+
+
+def test_project_close_manager_owner_success(mock_db):
+    """POST /v1/projects/{id}/close closes eligible project and triggers Camunda archival."""
+    af1 = MagicMock()
+    af1.status = main.AudioFileStatus.VALIDATED
+    af2 = MagicMock()
+    af2.status = main.AudioFileStatus.VALIDATED
+    mock_project = make_mock_project(project_id=1, manager_id="user-123", status_val="active", audio_files=[af1, af2])
+    pr = MagicMock()
+    pr.scalar_one_or_none.return_value = mock_project
+    cnt_not_validated = MagicMock()
+    cnt_not_validated.scalar_one.return_value = 0
+    upd = MagicMock()
+    upd.rowcount = 1
+    refreshed = MagicMock()
+    refreshed_project = make_mock_project(
+        project_id=1, manager_id="user-123", status_val="completed", audio_files=[af1, af2]
+    )
+    refreshed.scalar_one_or_none.return_value = refreshed_project
+    cnt_audio = MagicMock()
+    cnt_audio.scalar_one.return_value = 2
+    mock_db.execute = AsyncMock(side_effect=[pr, cnt_not_validated, upd, refreshed, cnt_audio])
+    mock_db.commit = AsyncMock()
+
+    camunda_resp = MagicMock()
+    camunda_resp.status_code = 200
+    camunda_resp.json.return_value = {"id": "proc-arch-1"}
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD), patch.object(
+        main.camunda_client, "post", AsyncMock(return_value=camunda_resp)
+    ) as camunda_post:
+        response = client.post(
+            "/v1/projects/1/close",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["project_id"] == 1
+    assert body["status"] == "completed"
+    assert body["idempotent"] is False
+    assert body["camunda_triggered"] is True
+    assert body["process_instance_id"] == "proc-arch-1"
+    camunda_post.assert_awaited_once()
+    assert mock_db.commit.await_count == 2
+
+
+def test_project_close_admin_support_success(mock_db):
+    """Admin can close project even when not owner."""
+    af = MagicMock()
+    af.status = main.AudioFileStatus.VALIDATED
+    mock_project = make_mock_project(project_id=1, manager_id="other-manager", status_val="active", audio_files=[af])
+    pr = MagicMock()
+    pr.scalar_one_or_none.return_value = mock_project
+    cnt_not_validated = MagicMock()
+    cnt_not_validated.scalar_one.return_value = 0
+    upd = MagicMock()
+    upd.rowcount = 1
+    refreshed = MagicMock()
+    refreshed_project = make_mock_project(
+        project_id=1, manager_id="other-manager", status_val="completed", audio_files=[af]
+    )
+    refreshed.scalar_one_or_none.return_value = refreshed_project
+    cnt_audio = MagicMock()
+    cnt_audio.scalar_one.return_value = 1
+    mock_db.execute = AsyncMock(side_effect=[pr, cnt_not_validated, upd, refreshed, cnt_audio])
+    mock_db.commit = AsyncMock()
+
+    camunda_resp = MagicMock()
+    camunda_resp.status_code = 200
+    camunda_resp.json.return_value = {"id": "proc-arch-admin"}
+
+    with patch.object(main, "decode_token", return_value=ADMIN_PAYLOAD), patch.object(
+        main.camunda_client, "post", AsyncMock(return_value=camunda_resp)
+    ):
+        response = client.post(
+            "/v1/projects/1/close",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+
+
+def test_project_close_non_owner_manager_forbidden(mock_db):
+    """Manager who does not own the project receives 403."""
+    mock_project = make_mock_project(project_id=1, manager_id="owner-1", status_val="active", audio_files=[])
+    pr = MagicMock()
+    pr.scalar_one_or_none.return_value = mock_project
+    mock_db.execute = AsyncMock(return_value=pr)
+    mock_db.commit = AsyncMock()
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/projects/1/close",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 403
+    mock_db.commit.assert_not_awaited()
+
+
+def test_project_close_invalid_role_forbidden(mock_db):
+    """Transcripteur role is not allowed to close project."""
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.post(
+            "/v1/projects/1/close",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+    assert response.status_code == 403
+
+
+def test_project_close_missing_project_404(mock_db):
+    """Unknown project returns 404."""
+    pr = MagicMock()
+    pr.scalar_one_or_none.return_value = None
+    mock_db.execute = AsyncMock(return_value=pr)
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/projects/999/close",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+    assert response.status_code == 404
+
+
+def test_project_close_conflict_non_validated_audio(mock_db):
+    """Project close conflicts when at least one audio is not validated."""
+    af1 = MagicMock()
+    af1.status = main.AudioFileStatus.VALIDATED
+    af2 = MagicMock()
+    af2.status = main.AudioFileStatus.TRANSCRIBED
+    mock_project = make_mock_project(project_id=1, manager_id="user-123", status_val="active", audio_files=[af1, af2])
+    pr = MagicMock()
+    pr.scalar_one_or_none.return_value = mock_project
+    cnt_not_validated = MagicMock()
+    cnt_not_validated.scalar_one.return_value = 1
+    mock_db.execute = AsyncMock(side_effect=[pr, cnt_not_validated])
+    mock_db.commit = AsyncMock()
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD):
+        response = client.post(
+            "/v1/projects/1/close",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 409
+    assert "all audio files are validated" in response.json()["error"]
+    mock_db.commit.assert_not_awaited()
+
+
+def test_project_close_idempotent_when_already_completed(mock_db):
+    """Already completed project returns idempotent success and no Camunda trigger."""
+    af = MagicMock()
+    af.status = main.AudioFileStatus.VALIDATED
+    mock_project = make_mock_project(project_id=1, manager_id="user-123", status_val="completed", audio_files=[af])
+    pr = MagicMock()
+    pr.scalar_one_or_none.return_value = mock_project
+    mock_db.execute = AsyncMock(return_value=pr)
+    mock_db.commit = AsyncMock()
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD), patch.object(
+        main.camunda_client, "post", AsyncMock()
+    ) as camunda_post:
+        response = client.post(
+            "/v1/projects/1/close",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["closed_at"] is None
+    assert body["idempotent"] is True
+    assert body["camunda_triggered"] is False
+    assert "process_instance_id" in body
+    camunda_post.assert_not_awaited()
+    mock_db.commit.assert_not_awaited()
+
+
+def test_project_close_camunda_failure_tolerant(mock_db):
+    """Camunda outage does not fail closure response."""
+    af = MagicMock()
+    af.status = main.AudioFileStatus.VALIDATED
+    mock_project = make_mock_project(project_id=1, manager_id="user-123", status_val="active", audio_files=[af])
+    pr = MagicMock()
+    pr.scalar_one_or_none.return_value = mock_project
+    cnt_not_validated = MagicMock()
+    cnt_not_validated.scalar_one.return_value = 0
+    upd = MagicMock()
+    upd.rowcount = 1
+    refreshed = MagicMock()
+    refreshed_project = make_mock_project(
+        project_id=1, manager_id="user-123", status_val="completed", audio_files=[af]
+    )
+    refreshed.scalar_one_or_none.return_value = refreshed_project
+    cnt_audio = MagicMock()
+    cnt_audio.scalar_one.return_value = 1
+    mock_db.execute = AsyncMock(side_effect=[pr, cnt_not_validated, upd, refreshed, cnt_audio])
+    mock_db.commit = AsyncMock()
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD), patch.object(
+        main.camunda_client, "post", AsyncMock(side_effect=httpx.ConnectError("down"))
+    ):
+        response = client.post(
+            "/v1/projects/1/close",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["camunda_triggered"] is False
+    assert mock_db.commit.await_count == 1
+
+
+def test_project_close_camunda_http_error_tolerant(mock_db):
+    """Camunda non-2xx response does not fail closure response."""
+    af = MagicMock()
+    af.status = main.AudioFileStatus.VALIDATED
+    mock_project = make_mock_project(project_id=1, manager_id="user-123", status_val="active", audio_files=[af])
+    pr = MagicMock()
+    pr.scalar_one_or_none.return_value = mock_project
+    cnt_not_validated = MagicMock()
+    cnt_not_validated.scalar_one.return_value = 0
+    upd = MagicMock()
+    upd.rowcount = 1
+    refreshed = MagicMock()
+    refreshed_project = make_mock_project(
+        project_id=1, manager_id="user-123", status_val="completed", audio_files=[af]
+    )
+    refreshed.scalar_one_or_none.return_value = refreshed_project
+    cnt_audio = MagicMock()
+    cnt_audio.scalar_one.return_value = 1
+    mock_db.execute = AsyncMock(side_effect=[pr, cnt_not_validated, upd, refreshed, cnt_audio])
+    mock_db.commit = AsyncMock()
+
+    camunda_resp = MagicMock()
+    camunda_resp.status_code = 500
+    camunda_resp.json.return_value = {"type": "error"}
+
+    with patch.object(main, "decode_token", return_value=MANAGER_PAYLOAD), patch.object(
+        main.camunda_client, "post", AsyncMock(return_value=camunda_resp)
+    ):
+        response = client.post(
+            "/v1/projects/1/close",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["camunda_triggered"] is False
+
+
+def test_project_close_missing_sub_401(mock_db):
+    """Missing sub in token returns 401 on close route."""
+    payload_no_sub = {"realm_access": {"roles": ["Manager"]}, "exp": 9999999999}
+    with patch.object(main, "decode_token", return_value=payload_no_sub):
+        response = client.post(
+            "/v1/projects/1/close",
+            headers={"Authorization": "Bearer dummy.token.here"},
+        )
+    assert response.status_code == 401
 
 
 def test_project_status_not_found(mock_db):

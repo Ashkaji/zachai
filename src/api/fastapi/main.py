@@ -2185,6 +2185,11 @@ async def update_project_status(
             status_code=400,
             detail={"error": f"Invalid status: {new_status}"},
         )
+    if new_status == ProjectStatus.COMPLETED.value:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "Use POST /v1/projects/{project_id}/close to complete projects"},
+        )
 
     current = project.status.value
     if new_status not in ALLOWED_STATUS_TRANSITIONS.get(current, []):
@@ -2197,6 +2202,139 @@ async def update_project_status(
     await db.commit()
     await db.refresh(project)
     return _project_to_dict(project)
+
+
+@app.post("/v1/projects/{project_id}/close")
+async def close_project(
+    project_id: int,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Close a project when all audios are validated and trigger archival workflow (Story 6.3)."""
+    roles = get_roles(payload)
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(status_code=401, detail={"error": "Subject missing in token"})
+    _require_manager_or_admin(roles)
+
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail={"error": "Project not found"})
+    _require_project_owner_or_admin(project, payload, roles)
+
+    if project.status == ProjectStatus.COMPLETED:
+        return {
+            "project_id": project.id,
+            "status": project.status.value,
+            "closed_at": None,
+            "idempotent": True,
+            "camunda_triggered": False,
+            "process_instance_id": project.process_instance_id,
+        }
+
+    not_validated = await db.execute(
+        select(func.count(AudioFile.id)).where(
+            AudioFile.project_id == project_id,
+            AudioFile.status != AudioFileStatus.VALIDATED,
+        )
+    )
+    not_validated_count = int(not_validated.scalar_one() or 0)
+    if not_validated_count > 0:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "Project cannot be closed until all audio files are validated"},
+        )
+
+    now = datetime.now(timezone.utc)
+    state_update = await db.execute(
+        update(Project)
+        .where(Project.id == project_id, Project.status != ProjectStatus.COMPLETED)
+        .values(status=ProjectStatus.COMPLETED)
+    )
+    if state_update.rowcount != 1:
+        # Concurrent close won race; treat as idempotent completion.
+        refreshed = await db.execute(select(Project).where(Project.id == project_id))
+        current = refreshed.scalar_one_or_none()
+        if not current:
+            raise HTTPException(status_code=404, detail={"error": "Project not found"})
+        return {
+            "project_id": current.id,
+            "status": current.status.value,
+            "closed_at": None,
+            "idempotent": True,
+            "camunda_triggered": False,
+            "process_instance_id": current.process_instance_id,
+        }
+
+    await db.commit()
+
+    refreshed = await db.execute(select(Project).where(Project.id == project_id))
+    current = refreshed.scalar_one_or_none()
+    if not current:
+        raise HTTPException(status_code=404, detail={"error": "Project not found"})
+
+    camunda_triggered = False
+    process_instance_id: str | None = None
+    try:
+        audio_count_result = await db.execute(
+            select(func.count(AudioFile.id)).where(AudioFile.project_id == project_id)
+        )
+        audio_count = int(audio_count_result.scalar_one() or 0)
+        variables = {
+            "projectId": {"value": current.id, "type": "Integer"},
+            "managerId": {"value": current.manager_id, "type": "String"},
+            "audioCount": {"value": audio_count, "type": "Integer"},
+            "closedAt": {"value": now.isoformat(), "type": "String"},
+        }
+        resp = await camunda_client.post(
+            "/process-definition/key/golden-set-archival/start",
+            json={"variables": variables, "withVariablesInReturn": True},
+        )
+        if 200 <= resp.status_code < 300:
+            data = resp.json()
+            process_instance_id = data.get("id")
+            if process_instance_id:
+                current.process_instance_id = process_instance_id
+                await db.commit()
+            camunda_triggered = True
+        else:
+            logger.error(
+                "project_close_camunda_http_error project_id=%s manager_id=%s camunda_status=%s",
+                current.id,
+                current.manager_id,
+                resp.status_code,
+            )
+    except httpx.RequestError as exc:
+        logger.error(
+            "project_close_camunda_request_error project_id=%s manager_id=%s error_type=%s",
+            current.id,
+            current.manager_id,
+            type(exc).__name__,
+        )
+    except ValueError:
+        logger.error(
+            "project_close_camunda_json_error project_id=%s manager_id=%s",
+            current.id,
+            current.manager_id,
+        )
+    logger.info(
+        "project_close_handoff project_id=%s manager_id=%s closed_by=%s audio_count=%s camunda_triggered=%s process_instance_id=%s",
+        current.id,
+        current.manager_id,
+        sub,
+        audio_count if 'audio_count' in locals() else 0,
+        "1" if camunda_triggered else "0",
+        process_instance_id or "",
+    )
+    return {
+        "project_id": current.id,
+        "status": current.status.value,
+        "closed_at": now.isoformat(),
+        "idempotent": False,
+        "camunda_triggered": camunda_triggered,
+        "process_instance_id": process_instance_id,
+    }
 
 
 # ─── Routes — Assignment dashboard (Story 2.4) ───────────────────────────────

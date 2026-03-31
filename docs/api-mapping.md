@@ -98,9 +98,17 @@ FastAPI ne manipule jamais les binaires — il orchestre les accès via Presigne
   - Observabilité: émission d’un log structuré de handoff notification (manager → transcripteur), transport-agnostic et sans nouvelle dépendance d’infrastructure, sans journaliser le contenu brut du commentaire.
 
 - **`POST /v1/projects/{project_id}/close`**
-  - Auth: Manager
-  - Precondition: Tous les audios `validated`
-  - Action: Statut projet → `completed` + déclenche Camunda 7 `golden-set-archival`
+  - Auth: **Manager propriétaire du projet** ou **Admin** (support)
+  - Précondition: tous les audios du projet sont en `validated`
+  - Action: statut projet → `completed` + déclenchement Camunda 7 `golden-set-archival`
+  - Retour: `{ "project_id": int, "status": "completed", "closed_at"?: iso8601, "idempotent": bool, "camunda_triggered": bool, "process_instance_id": string|null }`
+  - Erreurs:
+    - **401** si `sub` absent du JWT
+    - **403** rôle non autorisé ou Manager non propriétaire
+    - **404** projet introuvable
+    - **409** si au moins un audio du projet n'est pas `validated`
+  - Idempotence: si le projet est déjà `completed`, retour `200` avec `idempotent: true` sans nouveau trigger Camunda.
+  - Observabilité: handoff structuré vers Camunda; échec réseau/HTTP Camunda journalisé sans faire échouer la clôture API.
 
 ---
 
