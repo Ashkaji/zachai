@@ -70,8 +70,15 @@ FastAPI ne manipule jamais les binaires — il orchestre les accès via Presigne
 ## 3. Gouvernance & Validation
 
 - **`POST /v1/transcriptions/{audio_id}/submit`**
-  - Auth: Transcripteur assigné
-  - Action: Statut audio → `transcribed`, notifie le Manager
+  - Auth: **Transcripteur assigné** ou **Admin** (support)
+  - Action: Statut audio → `transcribed`, horodate `Assignment.submitted_at`, et émet un handoff de notification Manager (log structuré, transport-agnostic).
+  - Retour: `{ "audio_id": int, "status": "transcribed", "submitted_at": iso8601, "idempotent": bool }`
+  - Erreurs:
+    - **401** si `sub` absent du JWT
+    - **403** rôle non autorisé ou transcripteur non assigné
+    - **404** audio inconnu ou assignment absent
+    - **409** statut audio non éligible (`uploaded`, `validated`, etc.)
+  - Idempotence: si déjà `transcribed` avec `submitted_at` présent, la route retourne 200 avec `idempotent: true` sans mutation DB.
 
 - **`POST /v1/transcriptions/{audio_id}/validate`**
   - Auth: Manager du projet

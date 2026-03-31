@@ -2603,6 +2603,68 @@ async def post_golden_set_frontend_correction(
 # ─── Routes — Transcription read (Story 4.2) ─────────────────────────────────
 
 
+@app.post("/v1/transcriptions/{audio_id}/submit")
+async def submit_transcription(
+    audio_id: int,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Mark assigned transcription as submitted by Transcripteur (Story 6.1)."""
+    roles = get_roles(payload)
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(status_code=401, detail={"error": "Subject missing in token"})
+    if not {"Transcripteur", "Admin"}.intersection(roles):
+        raise HTTPException(status_code=403, detail={"error": "Transcripteur or Admin role required"})
+
+    result = await db.execute(
+        select(AudioFile)
+        .where(AudioFile.id == audio_id)
+        .options(selectinload(AudioFile.assignment))
+    )
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
+
+    asg = af.assignment
+    if not asg:
+        raise HTTPException(status_code=404, detail={"error": "Assignment not found for audio file"})
+
+    if "Admin" not in roles and asg.transcripteur_id != sub:
+        raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
+
+    if af.status == AudioFileStatus.TRANSCRIBED and asg.submitted_at is not None:
+        return {
+            "audio_id": af.id,
+            "status": af.status.value,
+            "submitted_at": asg.submitted_at.isoformat(),
+            "idempotent": True,
+        }
+
+    if af.status not in (AudioFileStatus.ASSIGNED, AudioFileStatus.IN_PROGRESS):
+        raise HTTPException(status_code=409, detail={"error": "Audio file status does not allow submission"})
+
+    now = datetime.now(timezone.utc)
+    af.status = AudioFileStatus.TRANSCRIBED
+    if asg.submitted_at is None:
+        asg.submitted_at = now
+    await db.commit()
+
+    logger.info(
+        "transcription_submitted audio_id=%s project_id=%s transcripteur_id=%s submitted_at=%s manager_notification_handoff=queued",
+        af.id,
+        af.project_id,
+        asg.transcripteur_id,
+        asg.submitted_at.isoformat() if asg.submitted_at else now.isoformat(),
+    )
+    return {
+        "audio_id": af.id,
+        "status": af.status.value,
+        "submitted_at": asg.submitted_at.isoformat() if asg.submitted_at else now.isoformat(),
+        "idempotent": False,
+    }
+
+
 @app.get("/v1/audio-files/{audio_file_id}/transcription")
 async def get_audio_transcription(
     audio_file_id: int,
