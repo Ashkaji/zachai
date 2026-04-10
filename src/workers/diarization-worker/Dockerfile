@@ -6,16 +6,25 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Install PyTorch CPU-only first (avoids pulling ~2GB CUDA)
+# Dossier de cache pour les modèles (Sherpa & Pyannote)
+RUN mkdir -p /var/cache/sherpa-models && chmod 777 /var/cache/sherpa-models
+
+# Install PyTorch CPU-only first
 RUN pip install --no-cache-dir \
     torch torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copie du code et des scripts
 COPY engines/ engines/
 COPY main.py .
+COPY bootstrap_sherpa.py .
+COPY entrypoint.sh .
+
+# Rendre le script d'entrée exécutable
+RUN chmod +x entrypoint.sh
 
 EXPOSE 8780
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8780"]
+ENTRYPOINT ["./entrypoint.sh"]
