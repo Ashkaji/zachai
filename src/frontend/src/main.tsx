@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { AuthProvider } from "react-oidc-context";
 import { App } from "./App";
 import { oidcConfig } from "./auth/oidc-config";
+import "./theme/theme.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -4,6 +4,8 @@
 *.pem
 *.p12
 *.pfx
+.ignore/
+!.ignore/vision.pdf
 
 # ─── Docker ───────────────────────────────────────────────────────────────────
 .docker/
@@ -44,3 +46,16 @@ logs/
 # ─── Local test artifacts ─────────────────────────────────────────────────────
 *.tmp
 tmp/
+/src/models/
+
+# ─── Heavy Assets & Data ──────────────────────────────────────────────────────
+samples/
+*.mp3
+*.mp4
+*.wav
+*.m4a
+*.zip
+*.tar*
+*.gz
+*.7z
+*.bin

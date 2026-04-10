@@ -8,25 +8,6 @@
 #   Layer 4 — Annotation: label-studio (Story 2.1)
 #   Layer 5 — Collab:     hocuspocus (Story 5.1), export-worker (Story 5.4), languagetool (Story 5.5)
 #   Layer 6 — Frontend:   frontend                            [TODO: Story (React)]
-#
-# SMOKE TEST — run after 'docker compose up -d':
-#   docker compose logs -f minio-init          # wait for "Buckets initialized"
-#   docker compose exec minio mc alias set local http://localhost:9000 minioadmin minioadmin
-#   docker compose exec minio mc ls local/
-#   Expected: [date] projects/  golden-set/  models/  snapshots/
-#
-# OpenVINO Model Registry — first-time bootstrap (cross-platform):
-#   pip install huggingface_hub minio
-#   python scripts/bootstrap_models.py
-# Or download-only: python scripts/download_openvino_whisper_hf.py
-#
-# Interfaces after startup:
-#   MinIO S3 API:      http://localhost:9000
-#   MinIO Console:     http://localhost:9001
-#   Label Studio UI:   http://localhost:8090  (container port 8080 — use label-studio:8080 on zachai-network)
-#
-# Si postgres_data existe déjà sans DB labelstudio : créer à la main —
-#   docker compose exec postgres psql -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE labelstudio;"
 
 networks:
   zachai-network:
@@ -40,21 +21,15 @@ volumes:
 
 services:
 
-  # ── Layer 0: Storage Foundation (Story 1.1) ──────────────────────────────────
-  #
-  # MinIO is the root of the entire stack — every other service depends on it.
-  # It has zero dependencies and starts first. The minio-init service creates
-  # the 4 required root buckets once MinIO is healthy.
+  # ── Layer 0: Storage Foundation ──────────────────────────────────────────────
 
   minio:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
-    # NOTE: Verify this tag at https://hub.docker.com/r/minio/minio/tags
-    # before first deployment and update to the latest stable RELEASE.
     container_name: zachai-minio
     command: server /data --console-address ":9001"
     ports:
-      - "9000:9000"    # S3 API — used by FastAPI presigned URLs, FFmpeg, OpenVINO
-      - "9001:9001"    # Web Console — http://localhost:9001 (dev/ops access)
+      - "9000:9000"
+      - "9001:9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
@@ -68,6 +43,12 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
     restart: unless-stopped
 
   minio-init:
@@ -92,15 +73,13 @@ services:
         mc mb --ignore-existing local/models
         mc mb --ignore-existing local/snapshots
         echo "✅ Buckets initialized: projects, golden-set, models, snapshots"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
     restart: "no"
 
   # ── Layer 1: Identity & Persistence ──────────────────────────────────────────
-  #
-  # PostgreSQL is the shared database instance. Three dedicated databases:
-  #   - keycloak  : IAM data (created by POSTGRES_DB env var — automatic)
-  #   - zachai    : Business model data (created by init.sql — Story 1.2)
-  #   - camunda   : Workflow engine data (TODO: Story 2.2 — activate in init.sql)
-  # Keycloak depends on postgres (service_healthy).
 
   postgres:
     build:
@@ -111,7 +90,7 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: keycloak    # primary DB — keycloak IAM data
+      POSTGRES_DB: keycloak
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -121,6 +100,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
     restart: unless-stopped
 
   keycloak:
@@ -128,31 +113,21 @@ services:
       context: .
       dockerfile: docker/keycloak/Dockerfile
     image: zachai-keycloak:26.1.4-local
-    # NOTE: Verify base tag in docker/keycloak/Dockerfile at
-    # https://quay.io/repository/keycloak/keycloak?tab=tags before first deployment.
     container_name: zachai-keycloak
     command: start-dev --import-realm
-    # start-dev: disables HTTPS enforcement — suitable for on-premise Docker Compose.
-    # --import-realm: imports JSON files from /opt/keycloak/data/import/ at startup.
-    #                 Skips silently if realm already exists (idempotent).
     ports:
-      - "8180:8080"    # Keycloak admin UI + OIDC — http://localhost:8180
-      - "9002:9000"    # Keycloak management — http://localhost:9002/health (AC #2 compliance)
-      #                  NOTE: Port 9000 is reserved for MinIO S3 API.
+      - "8180:8080"
+      - "9002:9000"
     environment:
-      # Admin bootstrap credentials (one-time — ignored if admin already exists)
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
-      # Database — connects to the 'keycloak' database in the shared postgres instance
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
-      KC_DB_USERNAME: ${POSTGRES_USER}
-      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
-      # HTTP / hostname (dev mode — no HTTPS enforcement)
+      KC_DB_USERNAME: ${DB_KC_USER:-keycloak_user}
+      KC_DB_PASSWORD: ${DB_KC_PASSWORD:-keycloak_pass}
       KC_HTTP_ENABLED: "true"
       KC_HOSTNAME_STRICT: "false"
       KC_HOSTNAME_STRICT_HTTPS: "false"
-      # Enable /health/ready endpoint on management port 9000
       KC_HEALTH_ENABLED: "true"
     networks:
       - zachai-network
@@ -160,14 +135,17 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      # Keycloak 26.x health endpoint is on management port 9000 (not 8080).
-      # The UBI8 micro base image has NO curl or wget — use bash /dev/tcp instead.
-      # start_period: 90s — Keycloak needs time for PostgreSQL schema migration on first run.
       test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && printf 'GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && timeout 3 cat <&3 | grep -q UP || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 20
       start_period: 90s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
     restart: unless-stopped
 
   redis:
@@ -183,15 +161,15 @@ services:
       timeout: 3s
       retries: 5
       start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
     restart: unless-stopped
 
   # ── Layer 3: Gateway & Orchestration ─────────────────────────────────────────
-  #
-  # FastAPI is the lean control plane. In this story (1.3) it provides:
-  #   - JWT verification via Keycloak JWKS
-  #   - Presigned PUT URL generation (Manager role → browser uploads directly to MinIO)
-  #   - Presigned GET URL generation (any authenticated role)
-  # Future stories will add: WSS tickets (Story 5.2), Golden Set counter (Story 4.x).
 
   fastapi:
     build:
@@ -199,40 +177,30 @@ services:
       dockerfile: api/fastapi/Dockerfile
     container_name: zachai-fastapi
     ports:
-      - "8000:8000"    # API gateway — http://localhost:8000
+      - "8000:8000"
     environment:
-      # Keycloak — internal Docker DNS (NOT localhost:8180 — that's the host mapping)
       KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
-      # MinIO — internal client uses minio:9000 (Docker network)
       MINIO_ENDPOINT: ${MINIO_ENDPOINT}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
       MINIO_SECURE: ${MINIO_SECURE:-false}
-      # Presigned URLs use the externally reachable MinIO endpoint (browsers cannot resolve minio:9000)
       MINIO_PRESIGNED_ENDPOINT: ${MINIO_PRESIGNED_ENDPOINT}
-      # PostgreSQL — FastAPI reuses the shared postgres credentials (Story 2.1)
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      # Camunda 7 REST API — internal Docker DNS (Story 2.2)
+      # Story 8.1: Scoped DB user
+      POSTGRES_USER: ${DB_ZACHAI_USER:-zachai_user}
+      POSTGRES_PASSWORD: ${DB_ZACHAI_PASSWORD:-zachai_pass}
+      POSTGRES_DB: zachai
       CAMUNDA_REST_URL: http://camunda7:8080/engine-rest
-      # FFmpeg Worker — audio normalization (Story 2.3)
       FFMPEG_WORKER_URL: http://ffmpeg-worker:8765
-      # Golden Set — Story 4.1 (Label Studio webhook + internal ingest)
       LABEL_STUDIO_WEBHOOK_SECRET: ${LABEL_STUDIO_WEBHOOK_SECRET:-changeme-label-studio-webhook}
       GOLDEN_SET_INTERNAL_SECRET: ${GOLDEN_SET_INTERNAL_SECRET:-changeme-golden-set-internal}
       MODEL_READY_CALLBACK_SECRET: ${MODEL_READY_CALLBACK_SECRET:-changeme-model-ready-callback}
       GOLDEN_SET_BUCKET: ${GOLDEN_SET_BUCKET:-golden-set}
       GOLDEN_SET_THRESHOLD: ${GOLDEN_SET_THRESHOLD:-1000}
-      # CORS — Story 4.2 (frontend dev port)
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
-      # Redis — Story 5.2 (WSS tickets; namespaces: wss:ticket:, lt:cache:, …)
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      # WSS ticket TTL (seconds) — configurable for long editing sessions.
       WSS_TICKET_TTL_SEC: ${WSS_TICKET_TTL_SEC:-3600}
-      # Snapshot callback/export pipeline (Story 5.4)
       SNAPSHOT_CALLBACK_SECRET: ${SNAPSHOT_CALLBACK_SECRET:-changeme-snapshot-callback}
       EXPORT_WORKER_URL: ${EXPORT_WORKER_URL:-http://export-worker:8780}
-      # LanguageTool grammar proxy (Story 5.5)
       LANGUAGETOOL_URL: ${LANGUAGETOOL_URL:-http://languagetool:8010}
       GRAMMAR_CACHE_TTL_SEC: ${GRAMMAR_CACHE_TTL_SEC:-300}
       GRAMMAR_MAX_TEXT_LEN: ${GRAMMAR_MAX_TEXT_LEN:-65536}
@@ -262,19 +230,25 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
     restart: unless-stopped
 
   camunda7:
     image: camunda/camunda-bpm-platform:run-7.24.0
     container_name: zachai-camunda7
     ports:
-      - "8081:8080"    # REST API + Cockpit — http://localhost:8081/camunda/app/cockpit
-      - "9404:9404"    # Prometheus metrics
+      - "8081:8080"
+      - "9404:9404"
     environment:
       DB_DRIVER: org.postgresql.Driver
       DB_URL: jdbc:postgresql://postgres:5432/camunda
-      DB_USERNAME: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_USERNAME: ${DB_CAMUNDA_USER:-camunda_user}
+      DB_PASSWORD: ${DB_CAMUNDA_PASSWORD:-camunda_pass}
       WAIT_FOR: postgres:5432
       WAIT_FOR_TIMEOUT: 60
     networks:
@@ -288,6 +262,12 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
     restart: unless-stopped
 
   # ── Layer 2: Compute & Inference ─────────────────────────────────────────────
@@ -320,7 +300,6 @@ services:
         reservations:
           memory: 512M
     restart: unless-stopped
-    # Port 8765 is internal only — NOT mapped to host (architecture.md § 5 — Internal Shield)
 
   openvino-worker:
     build:
@@ -336,9 +315,6 @@ services:
       MODEL_POLL_INTERVAL_SECONDS: ${MODEL_POLL_INTERVAL_SECONDS:-60}
       WHISPER_MODEL_CACHE_DIR: ${WHISPER_MODEL_CACHE_DIR:-/var/cache/openvino-models}
       MAX_MODEL_TREE_TOTAL_BYTES: ${MAX_MODEL_TREE_TOTAL_BYTES:-10737418240}
-      # Optional local fallback (requires in-container path). No default bind mount — use
-      # compose.openvino-local-model.yml to mount from the host when MinIO registry is not seeded.
-      WHISPER_MODEL_PATH: ${WHISPER_MODEL_PATH:-}
       OV_DEVICE: ${OV_DEVICE:-CPU}
       INFER_TIMEOUT_SECONDS: ${INFER_TIMEOUT_SECONDS:-900}
       ENVIRONMENT: ${ENVIRONMENT:-development}
@@ -361,15 +337,6 @@ services:
         reservations:
           memory: 512M
     restart: unless-stopped
-    # Port 8770 is internal only — NOT mapped to host (architecture.md § 5 — Internal Shield)
-    #
-    # Story 3.3: registry hot-reload — ensure WHISPER_MODEL_CACHE_DIR is writable (default path is
-    # inside the container filesystem). For large IR trees, add a named volume, e.g.:
-    #   volumes:
-    #     - openvino_model_cache:/var/cache/openvino-models
-    #
-    # Host bind mount is opt-in: `docker compose -f compose.yml -f compose.openvino-local-model.yml ...`
-    # (avoids Docker Desktop failures on some non-C: Windows paths). See .env.example.
 
   diarization-worker:
     build:
@@ -404,7 +371,6 @@ services:
         reservations:
           memory: 1G
     restart: unless-stopped
-    # Port 8780 is internal only — NOT mapped to host
 
   label-studio-ml-bridge:
     build:
@@ -441,9 +407,15 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
     restart: unless-stopped
 
-  # ── Layer 3: Orchestration Workers (Story 2.2) ──────────────────────────────
+  # ── Layer 3: Orchestration Workers ──────────────────────────────────────────
 
   camunda-worker:
     build:
@@ -453,14 +425,11 @@ services:
       CAMUNDA_REST_URL: http://camunda7:8080/engine-rest
       LABEL_STUDIO_URL: http://label-studio:8080
       LABEL_STUDIO_API_KEY: ${LABEL_STUDIO_API_KEY:-}
-      # DB for project synchronization (Story 2.2)
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: ${DB_ZACHAI_USER:-zachai_user}
+      POSTGRES_PASSWORD: ${DB_ZACHAI_PASSWORD:-zachai_pass}
       POSTGRES_DB: zachai
       DB_HOST: postgres
-      # ML Backend auto-registration (Story provisioning → LS ML API)
       ML_BACKEND_URL: ${ML_BACKEND_URL:-http://label-studio-ml-bridge:9090}
-      # LoRA pipeline (Story 4.4) — same worker process as provision-label-studio
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
@@ -473,7 +442,6 @@ services:
       LORA_MAX_WER: ${LORA_MAX_WER:-0.02}
       LORA_EVAL_FRACTION: ${LORA_EVAL_FRACTION:-0.2}
       LORA_SPLIT_SEED: ${LORA_SPLIT_SEED:-42}
-      # Defaults align with src/.env.example (stub + whisper-base-ov/) for local compose; override in prod .env
       LORA_TRAINING_STUB: ${LORA_TRAINING_STUB:-true}
       LORA_STUB_SOURCE_PREFIX: ${LORA_STUB_SOURCE_PREFIX:-whisper-base-ov/}
       ENVIRONMENT: ${ENVIRONMENT:-development}
@@ -496,10 +464,16 @@ services:
       timeout: 10s
       retries: 3
       start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
     restart: unless-stopped
 
-  # ── Layer 4: Annotation (Story 2.1) ─────────────────────────────────────────
-  # Container listens on 8080 — host mapping 8090:8080. Docker DNS: http://label-studio:8080
+  # ── Layer 4: Annotation ─────────────────────────────────────────────────────
+
   label-studio:
     image: heartexlabs/label-studio:latest
     container_name: zachai-label-studio
@@ -508,8 +482,8 @@ services:
     environment:
       DJANGO_DB: default
       POSTGRE_NAME: labelstudio
-      POSTGRE_USER: ${POSTGRES_USER}
-      POSTGRE_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRE_USER: ${DB_LS_USER:-ls_user}
+      POSTGRE_PASSWORD: ${DB_LS_PASSWORD:-ls_pass}
       POSTGRE_HOST: postgres
       POSTGRE_PORT: "5432"
       LABEL_STUDIO_HOST: 0.0.0.0
@@ -526,12 +500,16 @@ services:
       timeout: 5s
       retries: 10
       start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
     restart: unless-stopped
 
   # ── Layer 5: Collaboration & Intelligence ─────────────────────────────────────
-  # Hocuspocus listens on 1234 inside the container. Host port defaults to 11234 because
-  # Windows often reserves TCP 1234 (Hyper-V / excluded port ranges), causing bind errors.
-  # Override with HOCUSPOCUS_HOST_PORT in .env if needed (e.g. 1234 on Linux).
+
   hocuspocus:
     build:
       context: ./collab/hocuspocus
@@ -545,8 +523,8 @@ services:
       HOST: "0.0.0.0"
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       HOCUSPOCUS_REDIS_PREFIX: ${HOCUSPOCUS_REDIS_PREFIX:-hp:crdt:}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: ${DB_ZACHAI_USER:-zachai_user}
+      POSTGRES_PASSWORD: ${DB_ZACHAI_PASSWORD:-zachai_pass}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       POSTGRES_DB: zachai
@@ -571,6 +549,12 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
     restart: unless-stopped
 
   languagetool:
@@ -621,24 +605,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
     restart: unless-stopped
-
-  # ── Layer 6: Frontend (Story 4.2) ─────────────────────────────────────────────
-  # Dev mode: run `npm run dev` in src/frontend/ with VITE_API_BASE=http://localhost:8000
-  # Docker mode (optional — uncomment to add frontend to compose stack):
-  # frontend:
-  #   build:
-  #     context: ./frontend
-  #   container_name: zachai-frontend
-  #   ports:
-  #     - "5173:5173"
-  #   environment:
-  #     VITE_API_BASE: http://fastapi:8000
-  #     VITE_KEYCLOAK_URL: http://localhost:8180
-  #     VITE_KEYCLOAK_REALM: zachai
-  #     VITE_KEYCLOAK_CLIENT_ID: zachai-frontend
-  #   networks:
-  #     - zachai-network
-  #   depends_on:
-  #     fastapi:
-  #       condition: service_healthy

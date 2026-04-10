@@ -227,20 +227,74 @@ Les **External Task Workers** (Python) polent Camunda 7 (`/engine-rest/external-
 
 ## 8. Export & Extensions Plateforme
 
-- **`GET /v1/export/subtitle/{audio_id}?format=srt|vtt`**
-  - Auth: Membre du projet
-  - Action: Génère sous-titres depuis timestamps inline + texte final
+- **`GET /v1/export/subtitle/{audio_id}?format=srt`** (Story 7.1)
+  - Auth: JWT Keycloak valide + membre du projet de l'audio.
+  - Gate de statut: export autorisé uniquement si `AudioFile.status = validated`.
+  - Paramètres:
+    - `audio_id` (path, requis) — identifiant canonique pour Story 7.1.
+    - `format` (query, requis) — valeur autorisée: `srt` uniquement pour 7.1.
+  - Action: génère un SRT depuis les timestamps inline + texte final.
+  - Contrat SRT:
+    - cues séquentiels (1..N),
+    - horodatage `HH:MM:SS,mmm` avec arrondi milliseconde déterministe,
+    - rejet des segments invalides (timestamps manquants, décroissants, durée <= 0).
+  - Réponses:
+    - **200**: téléchargement fichier `text/plain; charset=utf-8` avec `Content-Disposition` déterministe.
+    - **401**: non authentifié.
+    - **403**: authentifié mais hors périmètre projet/role.
+    - **404**: audio introuvable dans le scope appelant.
+    - **409**: état cycle de vie invalide (`status != validated`).
+    - **422**: format invalide ou timestamps non valides.
 
-- **`GET /v1/export/manuscript/{project_id}`**
-  - Auth: Manager du projet
-  - Action: Exporte texte normalisé complet du projet (tous audios validés)
+- **`GET /v1/export/transcript/{audio_id}?format=txt|docx`** (Story 7.1)
+  - Auth: JWT Keycloak valide + membre du projet de l'audio.
+  - Gate de statut: export autorisé uniquement si `AudioFile.status = validated`.
+  - Paramètres:
+    - `audio_id` (path, requis) — identifiant canonique pour Story 7.1.
+    - `format` (query, requis) — valeurs autorisées: `txt`, `docx`.
+  - Action:
+    - `txt`: export texte final normalisé UTF-8.
+    - `docx`: export via le chemin existant Export Worker (pas de pipeline parallèle).
+  - Mode de livraison (Story 7.1): **stream direct** pour les deux formats, avec nom de fichier déterministe.
+  - Réponses:
+    - **200**: téléchargement fichier (`text/plain; charset=utf-8` pour `txt`, mime DOCX pour `docx`) avec `Content-Disposition`.
+    - **401**: non authentifié.
+    - **403**: authentifié mais hors périmètre projet/role.
+    - **404**: audio introuvable dans le scope appelant.
+    - **409**: état cycle de vie invalide (`status != validated`).
+    - **422**: format invalide.
+
+- **`GET /v1/export/manuscript/{project_id}`** (hors Story 7.1)
+  - Auth: Manager du projet.
+  - Action: export texte normalisé complet du projet (tous audios validés).
 
 - **`POST /v1/whisper/transcribe`**
-  - Auth: API Key (externe)
-  - Body: `{audio_url, language?}`
-  - Retourne: `{segments: [{start, end, text, confidence}]}`
+  - Auth: API Key (externe) via `Authorization: Bearer <api_key>`
+  - Body: `{audio_url, language?}` (`audio_url` requis, `language` optionnel)
+  - Contraintes:
+    - URL source `http/https` uniquement,
+    - blocage SSRF (localhost/loopback, plages privées RFC1918, link-local, metadata endpoints),
+    - taille max audio contrôlée côté gateway.
+  - Réponses:
+    - **200**: `{segments:[{start,end,text,confidence?}], duration_s, language_detected?, model_version?}`
+    - **401**: clé API absente/invalide
+    - **403**: clé API interdite/révoquée
+    - **422**: entrée invalide (URL/schéma/type audio/durée)
+    - **502**: erreur upstream OpenVINO (réponse invalide/non-2xx)
+    - **503**: source audio ou service de transcription indisponible/timeout
 
 - **`POST /v1/nlp/detect-citations`**
   - Auth: API Key (externe)
-  - Body: `{text}`
+  - Body: `{text}` (texte non vide)
   - Retourne: `{citations: [{reference, start_char, end_char}]}`
+    - `start_char` inclusif, `end_char` exclusif (positions dans le texte original)
+    - Si aucune citation detectee: `{citations: []}`
+  - Formats cibles:
+    - references de type `Book Chapter:Verse` et plages (`Book 8:28-30`, `Book 8:28-9:2`)
+    - normalisation deterministe des abbreviations courantes (ex: `Jn` -> `John`)
+  - Reponses:
+    - **200**: payload citation stable et ordonne par apparition
+    - **401**: cle API absente
+    - **403**: cle API invalide/interdite
+    - **422**: payload invalide (`text` vide/invalide)
+    - **503**: endpoint non configure (cle API serveur absente)

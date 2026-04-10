@@ -19,7 +19,9 @@ import html
 import time
 import asyncio
 import ipaddress
+import socket
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import timedelta, datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -28,7 +30,7 @@ from urllib.parse import quote_plus, urlparse
 
 import httpx
 from fastapi import FastAPI, HTTPException, Depends, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError, ExpiredSignatureError
@@ -147,7 +149,9 @@ _LABEL_STUDIO_WEBHOOK_SECRET: str = (os.environ.get("LABEL_STUDIO_WEBHOOK_SECRET
 _GOLDEN_SET_INTERNAL_SECRET: str = (os.environ.get("GOLDEN_SET_INTERNAL_SECRET") or "").strip()
 _MODEL_READY_CALLBACK_SECRET: str = (os.environ.get("MODEL_READY_CALLBACK_SECRET") or "").strip()
 _SNAPSHOT_CALLBACK_SECRET: str = (os.environ.get("SNAPSHOT_CALLBACK_SECRET") or "").strip()
+_WHISPER_OPEN_API_KEY: str = (os.environ.get("WHISPER_OPEN_API_KEY") or "").strip()
 EXPORT_WORKER_URL: str = (os.environ.get("EXPORT_WORKER_URL") or "http://export-worker:8780").rstrip("/")
+OPENVINO_WORKER_URL: str = (os.environ.get("OPENVINO_WORKER_URL") or "http://openvino-worker:8770").rstrip("/")
 _CHANGEME_PREFIXES = ("changeme",)
 if _LABEL_STUDIO_WEBHOOK_SECRET and _LABEL_STUDIO_WEBHOOK_SECRET.startswith(_CHANGEME_PREFIXES):
     logger.warning("LABEL_STUDIO_WEBHOOK_SECRET uses a default 'changeme' value — override in production")
@@ -157,6 +161,33 @@ if _MODEL_READY_CALLBACK_SECRET and _MODEL_READY_CALLBACK_SECRET.startswith(_CHA
     logger.warning("MODEL_READY_CALLBACK_SECRET uses a default 'changeme' value — override in production")
 if _SNAPSHOT_CALLBACK_SECRET and _SNAPSHOT_CALLBACK_SECRET.startswith(_CHANGEME_PREFIXES):
     logger.warning("SNAPSHOT_CALLBACK_SECRET uses a default 'changeme' value — override in production")
+if _WHISPER_OPEN_API_KEY and _WHISPER_OPEN_API_KEY.startswith(_CHANGEME_PREFIXES):
+    logger.warning("WHISPER_OPEN_API_KEY uses a default 'changeme' value — override in production")
+
+_raw_whisper_fetch_timeout = os.environ.get("WHISPER_OPEN_API_FETCH_TIMEOUT", "20")
+try:
+    WHISPER_OPEN_API_FETCH_TIMEOUT: float = max(1.0, float(_raw_whisper_fetch_timeout))
+except (TypeError, ValueError):
+    logger.warning("WHISPER_OPEN_API_FETCH_TIMEOUT=%r invalid; using 20.0", _raw_whisper_fetch_timeout)
+    WHISPER_OPEN_API_FETCH_TIMEOUT = 20.0
+_raw_whisper_upstream_timeout = os.environ.get("WHISPER_OPEN_API_UPSTREAM_TIMEOUT", "120")
+try:
+    WHISPER_OPEN_API_UPSTREAM_TIMEOUT: float = max(1.0, float(_raw_whisper_upstream_timeout))
+except (TypeError, ValueError):
+    logger.warning("WHISPER_OPEN_API_UPSTREAM_TIMEOUT=%r invalid; using 120.0", _raw_whisper_upstream_timeout)
+    WHISPER_OPEN_API_UPSTREAM_TIMEOUT = 120.0
+_raw_whisper_max_bytes = os.environ.get("WHISPER_OPEN_API_MAX_AUDIO_BYTES", str(100 * 1024 * 1024))
+try:
+    WHISPER_OPEN_API_MAX_AUDIO_BYTES: int = max(1024, int(_raw_whisper_max_bytes))
+except (TypeError, ValueError):
+    logger.warning("WHISPER_OPEN_API_MAX_AUDIO_BYTES=%r invalid; using 104857600", _raw_whisper_max_bytes)
+    WHISPER_OPEN_API_MAX_AUDIO_BYTES = 100 * 1024 * 1024
+_raw_whisper_max_duration = os.environ.get("WHISPER_OPEN_API_MAX_DURATION_S", "14400")
+try:
+    WHISPER_OPEN_API_MAX_DURATION_S: float = max(1.0, float(_raw_whisper_max_duration))
+except (TypeError, ValueError):
+    logger.warning("WHISPER_OPEN_API_MAX_DURATION_S=%r invalid; using 14400", _raw_whisper_max_duration)
+    WHISPER_OPEN_API_MAX_DURATION_S = 14400.0
 
 _GOLDEN_SET_ACTIONS = frozenset({"ANNOTATION_CREATED", "ANNOTATION_UPDATED", "ANNOTATION_SUBMITTED"})
 
@@ -615,12 +646,38 @@ async def lifespan(app: FastAPI):
     await camunda_client.aclose()
 
 
+# Story 8.1 Traceability
+request_id_var: ContextVar[str] = ContextVar("request_id", default="no-request-id")
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record):
+        record.request_id = request_id_var.get()
+        return True
+
+# Ensure root logger has the filter and proper format
+root_logger = logging.getLogger()
+if root_logger.handlers:
+    for handler in root_logger.handlers:
+        handler.addFilter(RequestIdFilter())
+        handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] [%(request_id)s] %(name)s: %(message)s"))
+
 app = FastAPI(
     title="ZachAI Gateway",
     description="Lean API gateway: presigned URLs, JWT, Nature CRUD, Project CRUD, audio upload, Golden Set, Camunda 7",
     version="2.10.0",
     lifespan=lifespan,
 )
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    rid = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    token = request_id_var.set(rid)
+    try:
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = rid
+        return response
+    finally:
+        request_id_var.reset(token)
 
 # ─── CORS (Story 4.2 — frontend runs on different port in dev) ────────────
 from fastapi.middleware.cors import CORSMiddleware
@@ -854,6 +911,18 @@ class AssignAudioRequest(BaseModel):
     transcripteur_id: str = Field(..., min_length=1, max_length=255)
 
 
+class ExpertTaskResponse(BaseModel):
+    audio_id: int
+    project_id: int
+    project_name: str
+    filename: str
+    status: str
+    assigned_at: str | None
+    expert_id: str | None
+    source: str
+    priority: str | None = None
+
+
 class GoldenSetEntryRequest(BaseModel):
     """Internal ingest contract — see docs/api-mapping.md §4."""
 
@@ -996,6 +1065,35 @@ class GrammarProxyRequest(BaseModel):
         if not re.fullmatch(r"[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})?", s):
             raise ValueError("invalid language code for LanguageTool")
         return low
+
+
+class WhisperOpenApiRequest(BaseModel):
+    """POST /v1/whisper/transcribe — external API key contract (Story 7.2)."""
+
+    audio_url: str = Field(..., min_length=1, max_length=2048)
+    language: str | None = Field(None, min_length=1, max_length=32)
+
+    @field_validator("audio_url")
+    @classmethod
+    def _audio_url_not_blank(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("audio_url cannot be empty")
+        return s
+
+
+class CitationDetectRequest(BaseModel):
+    """POST /v1/nlp/detect-citations — external citation detection contract (Story 7.3)."""
+
+    text: str = Field(..., min_length=1, max_length=262144)
+
+    @field_validator("text")
+    @classmethod
+    def _text_non_whitespace(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("text must contain non-whitespace characters")
+        return v
 
 
 class EditorSnapshotCallbackRequest(BaseModel):
@@ -1320,6 +1418,165 @@ def _parse_duration_s(dur: object) -> float | None:
         return None
 
 
+def _sanitize_export_stem(name: str | None, fallback: str) -> str:
+    base = (name or "").strip()
+    if "." in base:
+        base = base.rsplit(".", 1)[0]
+    base = re.sub(r"[^A-Za-z0-9._-]+", "_", base).strip("._-")
+    return base or fallback
+
+
+def _format_srt_timestamp(seconds: float) -> str:
+    millis = int(round(seconds * 1000.0))
+    hours, rem = divmod(millis, 3600_000)
+    minutes, rem = divmod(rem, 60_000)
+    secs, ms = divmod(rem, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{ms:03d}"
+
+
+def _build_srt_content(segments: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    prev_start = -1.0
+    for idx, seg in enumerate(segments, start=1):
+        start = float(seg["start"])
+        end = float(seg["end"])
+        text_val = str(seg.get("text") or "").strip()
+        if start < 0:
+            raise ValueError("segment start must be >= 0")
+        if end <= start:
+            raise ValueError("segment duration must be positive")
+        if start < prev_start:
+            raise ValueError("segment timestamps must be non-descending")
+        prev_start = start
+        if not text_val:
+            text_val = "[inaudible]"
+        lines.append(str(idx))
+        lines.append(f"{_format_srt_timestamp(start)} --> {_format_srt_timestamp(end)}")
+        lines.append(text_val)
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+async def _resolve_audio_for_export(
+    db: AsyncSession,
+    audio_id: int,
+    payload: dict,
+    roles: list[str],
+) -> AudioFile:
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(status_code=401, detail={"error": "Subject missing in token"})
+
+    if not {"Transcripteur", "Manager", "Admin"}.intersection(roles):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "Transcripteur, Manager, or Admin role required"},
+        )
+
+    result = await db.execute(
+        select(AudioFile).where(AudioFile.id == audio_id).options(selectinload(AudioFile.assignment))
+    )
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
+
+    pr = await db.execute(select(Project).where(Project.id == af.project_id))
+    project = pr.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail={"error": "Project not found for audio file"})
+
+    if "Admin" in roles:
+        return af
+    if "Manager" in roles:
+        _require_project_owner_or_admin(project, payload, roles)
+        return af
+    if "Transcripteur" in roles:
+        asg = af.assignment
+        if not asg or asg.transcripteur_id != sub:
+            raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
+        return af
+    raise HTTPException(
+        status_code=403,
+        detail={"error": "Transcripteur, Manager, or Admin role required"},
+    )
+
+
+async def _load_latest_snapshot_payload(db: AsyncSession, audio_id: int) -> tuple[SnapshotArtifact, dict[str, Any]]:
+    row = await db.execute(
+        select(SnapshotArtifact)
+        .where(SnapshotArtifact.document_id == audio_id)
+        .order_by(SnapshotArtifact.created_at.desc(), SnapshotArtifact.id.desc())
+        .limit(1)
+    )
+    snap = row.scalar_one_or_none()
+    if not snap:
+        raise HTTPException(status_code=404, detail={"error": "No snapshot artifact available for export"})
+
+    bucket, obj = _parse_bucket_and_object(snap.json_object_key)
+    try:
+        resp = internal_client.get_object(bucket, obj)
+        data = resp.read()
+        resp.close()
+        resp.release_conn()
+    except S3Error:
+        raise HTTPException(status_code=503, detail={"error": "MinIO unavailable"})
+    except Exception:
+        raise HTTPException(status_code=502, detail={"error": "Snapshot JSON fetch failed"})
+
+    try:
+        parsed = json.loads(data.decode("utf-8"))
+    except Exception:
+        raise HTTPException(status_code=502, detail={"error": "Snapshot JSON is invalid"})
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=502, detail={"error": "Snapshot JSON payload shape invalid"})
+    return snap, parsed
+
+
+async def _load_latest_snapshot_artifact(db: AsyncSession, audio_id: int) -> SnapshotArtifact:
+    row = await db.execute(
+        select(SnapshotArtifact)
+        .where(SnapshotArtifact.document_id == audio_id)
+        .order_by(SnapshotArtifact.created_at.desc(), SnapshotArtifact.id.desc())
+        .limit(1)
+    )
+    snap = row.scalar_one_or_none()
+    if not snap:
+        raise HTTPException(status_code=404, detail={"error": "No snapshot artifact available for export"})
+    return snap
+
+
+def _extract_segments_from_snapshot(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = payload.get("segments")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for seg in raw:
+        if not isinstance(seg, dict):
+            continue
+        start_val = seg.get("start", seg.get("segment_start"))
+        end_val = seg.get("end", seg.get("segment_end"))
+        text_val = seg.get("text", seg.get("corrected_text", seg.get("original_text", "")))
+        if start_val is None or end_val is None:
+            continue
+        try:
+            start_num = float(start_val)
+            end_num = float(end_val)
+        except (TypeError, ValueError):
+            raise ValueError("segment timestamps must be numeric")
+        out.append({"start": start_num, "end": end_num, "text": str(text_val or "").strip()})
+    return out
+
+
+def _extract_text_from_snapshot(payload: dict[str, Any], segments: list[dict[str, Any]]) -> str:
+    for key in ("text", "transcript", "final_text", "content"):
+        val = payload.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    if segments:
+        return "\n".join(str(seg.get("text") or "").strip() for seg in segments if str(seg.get("text") or "").strip())
+    return ""
+
+
 def _worker_error_message(resp: httpx.Response) -> str:
     try:
         data = resp.json()
@@ -1427,6 +1684,330 @@ def verify_snapshot_callback_secret(request: Request) -> None:
     )
 
 
+def verify_whisper_open_api_key(request: Request) -> None:
+    _verify_shared_secret(
+        request,
+        expected_secret=_WHISPER_OPEN_API_KEY,
+        header_name="X-ZachAI-Whisper-Api-Key",
+        unconfigured_msg="Whisper open API is not configured",
+    )
+
+
+def _validate_whisper_source_url(url: str) -> str:
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        raise HTTPException(status_code=422, detail={"error": "audio_url is invalid"})
+    if parsed.scheme not in {"http", "https"}:
+        raise HTTPException(status_code=422, detail={"error": "audio_url scheme must be http or https"})
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        raise HTTPException(status_code=422, detail={"error": "audio_url host is required"})
+    blocked_hosts = {"localhost", "127.0.0.1", "::1", "metadata.google.internal", "metadata"}
+    if host in blocked_hosts:
+        raise HTTPException(status_code=422, detail={"error": "audio_url host is not allowed"})
+    try:
+        ip = ipaddress.ip_address(host)
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            raise HTTPException(status_code=422, detail={"error": "audio_url target IP is not allowed"})
+    except ValueError:
+        try:
+            addrinfo = socket.getaddrinfo(host, parsed.port or 80, type=socket.SOCK_STREAM)
+        except Exception:
+            raise HTTPException(status_code=422, detail={"error": "audio_url host resolution failed"})
+        for info in addrinfo:
+            ip_str = info[4][0]
+            try:
+                ip = ipaddress.ip_address(ip_str)
+            except ValueError:
+                continue
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_reserved
+                or ip.is_multicast
+                or ip.is_unspecified
+            ):
+                raise HTTPException(status_code=422, detail={"error": "audio_url resolved to disallowed network"})
+    return url
+
+
+async def _fetch_whisper_source_audio(audio_url: str) -> tuple[bytes, str]:
+    safe_url = _validate_whisper_source_url(audio_url)
+    try:
+        async with httpx.AsyncClient(timeout=WHISPER_OPEN_API_FETCH_TIMEOUT, follow_redirects=True) as client:
+            resp = await client.get(safe_url)
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=503, detail={"error": "Audio source fetch timeout"})
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail={"error": "Audio source unavailable"})
+
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail={"error": "Audio source upstream error"})
+
+    content_length = resp.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > WHISPER_OPEN_API_MAX_AUDIO_BYTES:
+                raise HTTPException(status_code=422, detail={"error": "audio_url content too large"})
+        except ValueError:
+            pass
+
+    payload = resp.content
+    if not payload:
+        raise HTTPException(status_code=422, detail={"error": "audio_url returned empty content"})
+    if len(payload) > WHISPER_OPEN_API_MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=422, detail={"error": "audio_url content too large"})
+
+    content_type = (resp.headers.get("content-type") or "application/octet-stream").split(";")[0].strip().lower()
+    allowed = {"audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave", "application/octet-stream"}
+    if content_type not in allowed:
+        raise HTTPException(status_code=422, detail={"error": "audio_url content type must be wav"})
+    return payload, content_type
+
+
+def _stage_whisper_audio_to_minio(audio_bytes: bytes, content_type: str) -> tuple[str, str]:
+    bucket = "projects"
+    object_name = f"external-api/{uuid.uuid4().hex}.wav"
+    try:
+        internal_client.put_object(
+            bucket_name=bucket,
+            object_name=object_name,
+            data=io.BytesIO(audio_bytes),
+            length=len(audio_bytes),
+            content_type=content_type or "audio/wav",
+        )
+    except Exception:
+        raise HTTPException(status_code=503, detail={"error": "MinIO unavailable"})
+    return bucket, object_name
+
+
+async def _call_openvino_transcribe(input_bucket: str, input_key: str) -> dict[str, Any]:
+    url = f"{OPENVINO_WORKER_URL}/transcribe"
+    try:
+        async with httpx.AsyncClient(timeout=WHISPER_OPEN_API_UPSTREAM_TIMEOUT) as client:
+            resp = await client.post(url, json={"input_bucket": input_bucket, "input_key": input_key})
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=503, detail={"error": "Transcription upstream timeout"})
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail={"error": "Transcription upstream unavailable"})
+
+    if resp.status_code == 400:
+        raise HTTPException(status_code=422, detail={"error": "Invalid audio payload for transcription"})
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail={"error": "Transcription upstream error"})
+    try:
+        data = resp.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail={"error": "Invalid transcription upstream response"})
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail={"error": "Invalid transcription upstream response"})
+    return data
+
+
+def _normalize_openvino_segments(raw_segments: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_segments, list):
+        raise HTTPException(status_code=502, detail={"error": "Invalid transcription segments payload"})
+    normalized: list[dict[str, Any]] = []
+    for seg in raw_segments:
+        if not isinstance(seg, dict):
+            continue
+        try:
+            start = float(seg.get("start"))
+            end = float(seg.get("end"))
+            conf = float(seg.get("confidence")) if seg.get("confidence") is not None else None
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=502, detail={"error": "Invalid transcription segment shape"})
+        if not math.isfinite(start) or not math.isfinite(end) or end < start:
+            raise HTTPException(status_code=502, detail={"error": "Invalid transcription segment timing"})
+        row: dict[str, Any] = {"start": start, "end": end, "text": str(seg.get("text") or "").strip()}
+        if conf is not None and math.isfinite(conf):
+            row["confidence"] = max(0.0, min(1.0, conf))
+        normalized.append(row)
+    return normalized
+
+
+_BIBLE_BOOK_ALIASES: dict[str, str] = {
+    "genesis": "Genesis",
+    "gen": "Genesis",
+    "exodus": "Exodus",
+    "exo": "Exodus",
+    "leviticus": "Leviticus",
+    "lev": "Leviticus",
+    "numbers": "Numbers",
+    "num": "Numbers",
+    "deuteronomy": "Deuteronomy",
+    "deut": "Deuteronomy",
+    "joshua": "Joshua",
+    "josh": "Joshua",
+    "judges": "Judges",
+    "judg": "Judges",
+    "ruth": "Ruth",
+    "1 samuel": "1 Samuel",
+    "1 sam": "1 Samuel",
+    "2 samuel": "2 Samuel",
+    "2 sam": "2 Samuel",
+    "1 kings": "1 Kings",
+    "1 kgs": "1 Kings",
+    "2 kings": "2 Kings",
+    "2 kgs": "2 Kings",
+    "1 chronicles": "1 Chronicles",
+    "1 chr": "1 Chronicles",
+    "2 chronicles": "2 Chronicles",
+    "2 chr": "2 Chronicles",
+    "ezra": "Ezra",
+    "nehemiah": "Nehemiah",
+    "neh": "Nehemiah",
+    "esther": "Esther",
+    "job": "Job",
+    "psalm": "Psalm",
+    "psalms": "Psalm",
+    "ps": "Psalm",
+    "proverbs": "Proverbs",
+    "prov": "Proverbs",
+    "ecclesiastes": "Ecclesiastes",
+    "eccl": "Ecclesiastes",
+    "song of solomon": "Song of Solomon",
+    "song": "Song of Solomon",
+    "isaiah": "Isaiah",
+    "isa": "Isaiah",
+    "jeremiah": "Jeremiah",
+    "jer": "Jeremiah",
+    "lamentations": "Lamentations",
+    "lam": "Lamentations",
+    "ezekiel": "Ezekiel",
+    "ezek": "Ezekiel",
+    "daniel": "Daniel",
+    "dan": "Daniel",
+    "hosea": "Hosea",
+    "hos": "Hosea",
+    "joel": "Joel",
+    "amos": "Amos",
+    "obadiah": "Obadiah",
+    "obad": "Obadiah",
+    "jonah": "Jonah",
+    "micah": "Micah",
+    "nahum": "Nahum",
+    "habakkuk": "Habakkuk",
+    "hab": "Habakkuk",
+    "zephaniah": "Zephaniah",
+    "zeph": "Zephaniah",
+    "haggai": "Haggai",
+    "hagg": "Haggai",
+    "zechariah": "Zechariah",
+    "zech": "Zechariah",
+    "malachi": "Malachi",
+    "mal": "Malachi",
+    "matthew": "Matthew",
+    "matt": "Matthew",
+    "mt": "Matthew",
+    "mark": "Mark",
+    "mk": "Mark",
+    "luke": "Luke",
+    "lk": "Luke",
+    "john": "John",
+    "jn": "John",
+    "acts": "Acts",
+    "romans": "Romans",
+    "rom": "Romans",
+    "1 corinthians": "1 Corinthians",
+    "1 cor": "1 Corinthians",
+    "2 corinthians": "2 Corinthians",
+    "2 cor": "2 Corinthians",
+    "galatians": "Galatians",
+    "gal": "Galatians",
+    "ephesians": "Ephesians",
+    "eph": "Ephesians",
+    "philippians": "Philippians",
+    "phil": "Philippians",
+    "colossians": "Colossians",
+    "col": "Colossians",
+    "1 thessalonians": "1 Thessalonians",
+    "1 thess": "1 Thessalonians",
+    "2 thessalonians": "2 Thessalonians",
+    "2 thess": "2 Thessalonians",
+    "1 timothy": "1 Timothy",
+    "1 tim": "1 Timothy",
+    "2 timothy": "2 Timothy",
+    "2 tim": "2 Timothy",
+    "titus": "Titus",
+    "philemon": "Philemon",
+    "phlm": "Philemon",
+    "hebrews": "Hebrews",
+    "heb": "Hebrews",
+    "james": "James",
+    "jas": "James",
+    "1 peter": "1 Peter",
+    "1 pet": "1 Peter",
+    "2 peter": "2 Peter",
+    "2 pet": "2 Peter",
+    "1 john": "1 John",
+    "2 john": "2 John",
+    "3 john": "3 John",
+    "jude": "Jude",
+    "revelation": "Revelation",
+    "rev": "Revelation",
+}
+
+_BIBLE_BOOK_PATTERN = "|".join(
+    sorted((re.escape(k).replace("\\ ", r"\s+") for k in _BIBLE_BOOK_ALIASES.keys()), key=len, reverse=True)
+)
+_BIBLE_CITATION_RE = re.compile(
+    rf"(?<!\w)(?P<book>{_BIBLE_BOOK_PATTERN})\.?\s+"
+    rf"(?P<chapter>\d{{1,3}})\s*:\s*(?P<verse_start>\d{{1,3}})"
+    rf"(?:\s*-\s*(?:(?P<range_chapter>\d{{1,3}})\s*:\s*)?(?P<verse_end>\d{{1,3}}))?(?!\w)",
+    flags=re.IGNORECASE,
+)
+
+
+def _normalize_bible_book(raw_book: str) -> str:
+    key = re.sub(r"\s+", " ", raw_book.strip().lower())
+    return _BIBLE_BOOK_ALIASES.get(key, raw_book.strip())
+
+
+def _detect_biblical_citations(text: str) -> list[dict[str, Any]]:
+    citations: list[dict[str, Any]] = []
+    for m in _BIBLE_CITATION_RE.finditer(text):
+        chapter = int(m.group("chapter"))
+        verse_start = int(m.group("verse_start"))
+        range_chapter_raw = m.group("range_chapter")
+        verse_end_raw = m.group("verse_end")
+        if chapter <= 0 or verse_start <= 0:
+            continue
+        reference = f"{_normalize_bible_book(m.group('book'))} {chapter}:{verse_start}"
+        if verse_end_raw:
+            verse_end = int(verse_end_raw)
+            if verse_end <= 0:
+                continue
+            if range_chapter_raw:
+                range_chapter = int(range_chapter_raw)
+                if range_chapter <= 0:
+                    continue
+                if range_chapter < chapter or (range_chapter == chapter and verse_end < verse_start):
+                    continue
+                reference += f"-{range_chapter}:{verse_end}"
+            else:
+                if verse_end < verse_start:
+                    continue
+                reference += f"-{verse_end}"
+        citations.append(
+            {
+                "reference": reference,
+                "start_char": m.start(),
+                "end_char": m.end(),
+            }
+        )
+    return citations
+
+
 async def _export_snapshot_via_worker(body: EditorSnapshotCallbackRequest) -> dict:
     global _export_worker_client
     if _export_worker_client is None:
@@ -1437,7 +2018,10 @@ async def _export_snapshot_via_worker(body: EditorSnapshotCallbackRequest) -> di
         resp = await _export_worker_client.post(
             "/snapshot-export",
             json={"document_id": body.document_id, "yjs_state_binary": body.yjs_state_binary},
-            headers={"X-ZachAI-Snapshot-Secret": _SNAPSHOT_CALLBACK_SECRET},
+            headers={
+                "X-ZachAI-Snapshot-Secret": _SNAPSHOT_CALLBACK_SECRET,
+                "X-Request-ID": request_id_var.get()
+            },
         )
     except httpx.RequestError as exc:
         logger.error("snapshot_worker_request_error document_id=%s error=%s", body.document_id, exc)
@@ -1469,6 +2053,7 @@ async def start_lora_finetuning_camunda(golden_set_count: int, threshold: int) -
         resp = await camunda_client.post(
             path,
             json={"variables": variables, "withVariablesInReturn": True},
+            headers={"X-Request-ID": request_id_var.get()}
         )
         if 200 <= resp.status_code < 300:
             body = resp.json()
@@ -1695,7 +2280,11 @@ async def call_ffmpeg_normalize(db: AsyncSession, audio: AudioFile) -> None:
     await db.refresh(audio)
 
     try:
-        resp = await _ffmpeg_client.post("/normalize", json=req_body)
+        resp = await _ffmpeg_client.post(
+            "/normalize", 
+            json=req_body,
+            headers={"X-Request-ID": request_id_var.get()}
+        )
     except httpx.RequestError as exc:
         logger.error("FFmpeg worker request error audio_id=%s: %s", audio.id, exc)
         audio.status = AudioFileStatus.UPLOADED
@@ -1887,8 +2476,16 @@ async def list_natures(
     if not {"Manager", "Admin"}.intersection(roles):
         raise HTTPException(status_code=403, detail={"error": "Manager or Admin role required"})
 
-    result = await db.execute(select(Nature))
-    natures = result.scalars().all()
+    # Optimization (Story 8.1): Single JOIN + count() instead of N+1 (or selectinload)
+    # Accessing n.labels in a loop triggers separate queries.
+    stmt = (
+        select(Nature, func.count(LabelSchema.id).label("label_count"))
+        .outerjoin(LabelSchema)
+        .group_by(Nature.id)
+    )
+    result = await db.execute(stmt)
+    natures_with_count = result.all()
+
     return [
         {
             "id": n.id,
@@ -1896,9 +2493,9 @@ async def list_natures(
             "description": n.description,
             "created_by": n.created_by,
             "created_at": n.created_at.isoformat(),
-            "label_count": len(n.labels),
+            "label_count": count,
         }
-        for n in natures
+        for n, count in natures_with_count
     ]
 
 
@@ -2481,6 +3078,65 @@ async def list_my_audio_tasks(
     ]
 
 
+@app.get("/v1/expert/tasks", response_model=list[ExpertTaskResponse])
+async def list_expert_tasks(
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[dict[str, Any]]:
+    """
+    Expert dashboard task list.
+    Roles: Expert or Admin.
+    Data source: label_studio Golden Set rows joined to audio/project metadata.
+    Scope:
+    - Admin: full list
+    - Expert: only rows mapped to own assignment sub
+    """
+    roles = get_roles(payload)
+    if not {"Expert", "Admin"}.intersection(roles):
+        raise HTTPException(status_code=403, detail={"error": "Expert or Admin role required"})
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(status_code=401, detail={"error": "Subject missing in token"})
+
+    stmt = (
+        select(GoldenSetEntry, AudioFile, Project, Assignment)
+        .join(AudioFile, GoldenSetEntry.audio_id == AudioFile.id)
+        .join(Project, AudioFile.project_id == Project.id)
+        .outerjoin(Assignment, Assignment.audio_id == AudioFile.id)
+        .where(GoldenSetEntry.source == "label_studio")
+        .order_by(GoldenSetEntry.created_at.desc())
+    )
+    # Enforce per-user scope for Expert role. Admin keeps global view.
+    if "Admin" not in roles:
+        stmt = stmt.where(Assignment.transcripteur_id == str(sub))
+
+    result = await db.execute(stmt)
+    rows = result.all()
+    output: list[dict[str, Any]] = []
+    for gse, af, proj, asg in rows:
+        # Defensive guard for mocked/fallback DB paths: never leak cross-user rows to Expert.
+        if "Admin" not in roles and (not asg or str(asg.transcripteur_id) != str(sub)):
+            continue
+        output.append(
+            {
+                "audio_id": af.id,
+                "project_id": proj.id,
+                "project_name": proj.name,
+                "filename": af.filename,
+                "status": af.status.value,
+                "assigned_at": (
+                    asg.assigned_at.isoformat()
+                    if asg and getattr(asg, "assigned_at", None)
+                    else (gse.created_at.isoformat() if gse.created_at else None)
+                ),
+                "expert_id": (str(asg.transcripteur_id) if asg else None),
+                "source": gse.source,
+                "priority": "high" if gse.weight == "high" else "standard",
+            }
+        )
+    return output
+
+
 # ─── Routes — Audio upload & FFmpeg (Story 2.3) ─────────────────────────────
 
 
@@ -2926,6 +3582,139 @@ async def get_audio_transcription(
             raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
 
     return {"segments": []}
+
+
+# ─── Routes — Export transcript/subtitle (Story 7.1) ─────────────────────────
+
+
+@app.get("/v1/export/subtitle/{audio_id}")
+async def export_subtitle(
+    audio_id: int,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    format: str = Query(..., description="Export format; Story 7.1 supports only srt"),
+) -> Response:
+    roles = get_roles(payload)
+    if format != "srt":
+        raise HTTPException(status_code=422, detail={"error": "Invalid format. Expected 'srt'"})
+
+    af = await _resolve_audio_for_export(db, audio_id, payload, roles)
+    if af.status != AudioFileStatus.VALIDATED:
+        raise HTTPException(status_code=409, detail={"error": "Audio file status must be validated for export"})
+
+    _, snapshot_payload = await _load_latest_snapshot_payload(db, audio_id)
+    try:
+        segments = _extract_segments_from_snapshot(snapshot_payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"error": str(exc)})
+    if not segments:
+        raise HTTPException(status_code=404, detail={"error": "No transcription segments available for export"})
+
+    try:
+        srt_content = _build_srt_content(segments)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"error": str(exc)})
+
+    stem = _sanitize_export_stem(af.filename, f"audio_{audio_id}")
+    filename = f"{stem}_{audio_id}.srt"
+    return Response(
+        content=srt_content.encode("utf-8"),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/v1/export/transcript/{audio_id}")
+async def export_transcript(
+    audio_id: int,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    format: str = Query(..., description="Export format: txt|docx"),
+) -> Response:
+    roles = get_roles(payload)
+    if format not in {"txt", "docx"}:
+        raise HTTPException(status_code=422, detail={"error": "Invalid format. Expected 'txt' or 'docx'"})
+
+    af = await _resolve_audio_for_export(db, audio_id, payload, roles)
+    if af.status != AudioFileStatus.VALIDATED:
+        raise HTTPException(status_code=409, detail={"error": "Audio file status must be validated for export"})
+
+    if format == "txt":
+        _, snapshot_payload = await _load_latest_snapshot_payload(db, audio_id)
+        try:
+            segments = _extract_segments_from_snapshot(snapshot_payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail={"error": str(exc)})
+        transcript_text = _extract_text_from_snapshot(snapshot_payload, segments)
+        if not transcript_text:
+            raise HTTPException(status_code=404, detail={"error": "No transcription text available for export"})
+    stem = _sanitize_export_stem(af.filename, f"audio_{audio_id}")
+    if format == "txt":
+        filename = f"{stem}_{audio_id}.txt"
+        return Response(
+            content=(transcript_text + ("\n" if transcript_text else "")).encode("utf-8"),
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    snap = await _load_latest_snapshot_artifact(db, audio_id)
+    filename = f"{stem}_{audio_id}.docx"
+    bucket, obj = _parse_bucket_and_object(snap.docx_object_key)
+    try:
+        resp = internal_client.get_object(bucket, obj)
+        docx_bytes = resp.read()
+        resp.close()
+        resp.release_conn()
+    except S3Error:
+        raise HTTPException(status_code=503, detail={"error": "MinIO unavailable"})
+    except Exception:
+        raise HTTPException(status_code=502, detail={"error": "Snapshot DOCX fetch failed"})
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/v1/whisper/transcribe")
+async def post_whisper_transcribe(
+    body: WhisperOpenApiRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """External Whisper transcription API (Story 7.2)."""
+    verify_whisper_open_api_key(request)
+
+    audio_bytes, content_type = await _fetch_whisper_source_audio(body.audio_url)
+    bucket, obj_key = _stage_whisper_audio_to_minio(audio_bytes, content_type)
+    try:
+        upstream = await _call_openvino_transcribe(bucket, obj_key)
+    finally:
+        try:
+            internal_client.remove_object(bucket, obj_key)
+        except Exception:
+            logger.warning("whisper_open_api cleanup_failed bucket=%s key=%s", bucket, obj_key)
+    segments = _normalize_openvino_segments(upstream.get("segments"))
+
+    duration_s = max((float(seg["end"]) for seg in segments), default=0.0)
+    if duration_s > WHISPER_OPEN_API_MAX_DURATION_S:
+        raise HTTPException(status_code=422, detail={"error": "transcription duration exceeds allowed maximum"})
+
+    out: dict[str, Any] = {"segments": segments, "duration_s": duration_s}
+    if body.language:
+        out["language_detected"] = body.language
+    if isinstance(upstream.get("model_version"), str):
+        out["model_version"] = upstream["model_version"]
+    return out
+
+
+@app.post("/v1/nlp/detect-citations")
+async def post_detect_citations(
+    body: CitationDetectRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """External biblical citation detection API (Story 7.3)."""
+    verify_whisper_open_api_key(request)
+    return {"citations": _detect_biblical_citations(body.text)}
 
 
 # ─── Routes — Audio media URL (Story 5.3) ─────────────────────────────────────

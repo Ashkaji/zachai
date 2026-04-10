@@ -5,19 +5,43 @@ import json
 import logging
 import os
 import uuid
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 
 from docx import Document
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from minio import Minio
 from minio.error import S3Error
 from pydantic import BaseModel, Field, field_validator
 
-logging.basicConfig(level=logging.INFO)
+# Story 8.1 Traceability
+request_id_var: ContextVar[str] = ContextVar("request_id", default="no-request-id")
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record):
+        record.request_id = request_id_var.get()
+        return True
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] [%(request_id)s] %(name)s: %(message)s"
+)
 logger = logging.getLogger("export-worker")
+logger.addFilter(RequestIdFilter())
 
 app = FastAPI(title="export-worker")
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    rid = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    token = request_id_var.set(rid)
+    try:
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = rid
+        return response
+    finally:
+        request_id_var.reset(token)
 
 required_env = ["MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY"]
 missing = [env for env in required_env if env not in os.environ]

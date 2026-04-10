@@ -3,20 +3,44 @@ import os
 import shutil
 import subprocess
 import uuid
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Any
+from typing import Any, Annotated
 
 import anyio
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 from minio import Minio
 from minio.error import S3Error
 from pydantic import BaseModel
 
-logging.basicConfig(level=logging.INFO)
+# Story 8.1 Traceability
+request_id_var: ContextVar[str] = ContextVar("request_id", default="no-request-id")
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record):
+        record.request_id = request_id_var.get()
+        return True
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] [%(request_id)s] %(name)s: %(message)s"
+)
 logger = logging.getLogger("ffmpeg-worker")
+logger.addFilter(RequestIdFilter())
 
 app = FastAPI(title="ffmpeg-worker")
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    rid = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    token = request_id_var.set(rid)
+    try:
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = rid
+        return response
+    finally:
+        request_id_var.reset(token)
 
 AUDIO_VIDEO_EXTENSIONS = {".mp4", ".mp3", ".aac", ".flac", ".wav", ".mkv", ".avi", ".m4a", ".ogg"}
 TMP_BASE = Path("/tmp/ffmpeg-worker")

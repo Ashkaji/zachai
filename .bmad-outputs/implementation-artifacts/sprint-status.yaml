@@ -1,7 +1,6 @@
 # generated: 2026-03-19
-# last_updated: 2026-03-31 — Story 6.3 moved to done
+# last_updated: 2026-04-10
 # project: zachai
-# Next backlog after 5.2: Epic 5 story 5-1 (or per sprint plan)
 # project_key: NOKEY
 # tracking_system: file-system
 # story_location: .bmad-outputs/implementation-artifacts
@@ -14,8 +13,8 @@
 #   - done: All stories in epic completed
 #
 # Epic Status Transitions:
-#   - backlog -> in-progress: Automatically when first story is created (via create-story)
-#   - in-progress -> done: Manually when all stories reach 'done' status
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
 #
 # Story Status:
 #   - backlog: Story only exists in epic file
@@ -27,110 +26,106 @@
 # Retrospective Status:
 #   - optional: Can be completed but not required
 #   - done: Retrospective has been completed
-#
-# SPRINT MAPPING (from brainstorming session 2026-03-27):
-# =======================================================
-# Sprint 1 (Layer 0 — zéro dépendance):
-#   Epic 1 Stories 1.1, 1.2 + Epic 3 Story 3.1
-# Sprint 2 (Layer 1 — débloqué par Sprint 1):
-#   Epic 1 Story 1.3 + Epic 3 Story 3.2
-# Sprint 3 (Layer 2 — déblocage métier):
-#   Epic 2 Story 2.1 + Epic 3 Story 3.3 + Epic 5 Story 5.2
-# Sprint 4 (Layer 3 — convergence BPMN):
-#   Epic 2 Stories 2.2, 2.3 + Epic 4 Story 4.1
-# Sprint 5 (Layer 4 — collaboration & Golden Set):
-#   Epic 4 Story 4.2 + Epic 5 Stories 5.1, 5.3, 5.4, 5.5
-# Sprint 6 (Layer 5-6 — Flywheel & interface complète):
-#   Epic 2 Story 2.4 + Epic 4 Stories 4.3, 4.4 + Epic 6 + Epic 7
 
 generated: 2026-03-19
-last_updated: 2026-03-31
+last_updated: 2026-04-10
 project: zachai
-# Story 6.2 implementation complete — ready for review (2026-03-31)
-# Story 6.2 code review patches complete — moved to done (2026-03-31)
-# Story 6.1 implementation complete — ready for review (2026-03-31)
-# Story 6.1 code review complete — moved to done (2026-03-31)
-# Story 6.3 context created — ready for dev (2026-03-31)
-# Story 6.3 implementation complete — ready for review (2026-03-31)
-# Story 6.3 code review patches complete — moved to done (2026-03-31)
-# Story 5.2 done — WSS ticket Redis TTL 60s
-# Epic 4 complete — Stories 4.3 & 4.4 done 2026-03-29 (LoRA Camunda trigger + pipeline MVP)
-# Story 4.2 code review complete — moved to done 2026-03-29
-# Story 2.3 created 2026-03-29
-# Story 1.3 completed 2026-03-28
-# Story 3.1 completed 2026-03-28
-# Story 2.1 completed 2026-03-28
 project_key: NOKEY
 tracking_system: file-system
 story_location: .bmad-outputs/implementation-artifacts
 
 development_status:
 
-  # ─── EPIC 1 — Socle Infrastructure & Identité (Sprint 1-2) ───────────────
+  # ─── EPIC 1 — Socle Infrastructure & Identité ────────────────────────────
   epic-1: done
-  # Sprint 1
   1-1-minio-bootstrap-bucket-structure: done
   1-2-keycloak-multi-roles: done
-  # Sprint 2
   1-3-presigned-url-engine-fastapi: done
   epic-1-retrospective: done
 
-  # ─── EPIC 2 — Gestion Dynamique des Projets (Sprint 3-6) ─────────────────
+  # ─── EPIC 2 — Gestion Dynamique des Projets ──────────────────────────────
   epic-2: done
-  # Sprint 3
   2-1-crud-natures-label-schemas: done
-  # Sprint 4 (CONVERGENCE)
   2-2-project-creation-label-studio-provisioning: done
   2-3-audio-upload-ffmpeg-normalization: done
-  # Sprint 6
   2-4-assignment-dashboard: done
+  2-5-detail-projet-manager: done
   epic-2-retrospective: done
 
-  # ─── EPIC 3 — Pipeline d'Inférence Haute Performance (Sprint 1-3) ────────
+  # ─── EPIC 3 — Pipeline d'Inférence Haute Performance ─────────────────────
   epic-3: done
-  # Sprint 1
   3-1-ffmpeg-worker-normalization-batch: done
-  # Sprint 2
   3-2-openvino-whisper-inference-preannotation: done
-  # Sprint 3
   3-3-model-registry-hot-reload: done
   epic-3-retrospective: done
 
-  # ─── EPIC 4 — Flywheel d'Apprentissage Continu (Sprint 4-6) ──────────────
+  # ─── EPIC 4 — Flywheel d'Apprentissage Continu ───────────────────────────
   epic-4: done
-  # Sprint 4
   4-1-golden-set-expert-loop-label-studio-webhook: done
-  # Sprint 5
   4-2-golden-set-user-loop-frontend-corrections: done
-  # Sprint 6
   4-3-lora-finetuning-auto-trigger-camunda: done
   4-4-lora-pipeline-dataset-training-validation-deploy: done
   epic-4-retrospective: done
 
-  # ─── EPIC 5 — Éditeur Collaboratif Souverain (Sprint 3-5) ────────────────
+  # ─── EPIC 5 — Éditeur Collaboratif Souverain ─────────────────────────────
   epic-5: done
-  # Sprint 3
-  5-2-secure-wss-handshake-ticket-redis: done
-  # Sprint 5
   5-1-realtime-sync-hocuspocus-yjs: done
+  5-2-secure-wss-handshake-ticket-redis: done
   5-3-bidirectional-audio-text-sync: done
   5-4-automatic-snapshot-persistence: done
   5-5-realtime-grammar-check-languagetool: done
   epic-5-retrospective: done
 
-  # ─── EPIC 6 — Chaîne de Validation & Gouvernance (Sprint 6) ──────────────
-  epic-6: in-progress
-  # Sprint 6
+  # ─── EPIC 6 — Chaîne de Validation & Gouvernance ──────────────────────────
+  epic-6: done
   6-1-transcripteur-submission: done
   6-2-manager-approval-rejection: done
   6-3-project-closure-golden-set-archival: done
-  epic-6-retrospective: optional
+  6-4-dashboard-expert-wiring: done
+  epic-6-retrospective: done
 
-  # ─── EPIC 7 — Export & Extensions Plateforme (Sprint 6-7) ────────────────
-  epic-7: backlog
-  # Sprint 6-7
-  7-1-export-docx-txt-srt: backlog
-  7-2-whisper-open-api: backlog
-  7-3-biblical-citation-detection: backlog
-  epic-7-retrospective: optional
+  # ─── EPIC 7 — Export & Extensions Plateforme ─────────────────────────────
+  epic-7: done
+  7-1-export-docx-txt-srt: done
+  7-2-whisper-open-api: done
+  7-3-biblical-citation-detection: done
+  epic-7-retrospective: done
 
+  # ─── EPIC 8 — Full UI Integration & Backend Hardening ────────────────────
+  epic-8: done
+  8-1-backend-hardening-and-telemetry: done
+  8-2-dashboards-admin-manager-stitch: done
+  8-3-dashboards-transcriber-expert-stitch: done
+  epic-8-retrospective: done
+
+  # ─── EPIC 9 — Shell "Azure Flow", Notifications & Primitives Atomiques ───
+  epic-9: in-progress
+  9-1-azure-design-tokens-theme-playground: ready-for-dev
+  9-2-virtualized-azuretable-shared-ui-primitives: backlog
+  9-3-unified-notification-provider-event-bus: backlog
+  9-4-azure-flow-shell-responsive-layout-breadcrumbs: backlog
+  epic-9-retrospective: optional
+
+  # ─── EPIC 10 — L2 - Centre d'Action Manager & Audit Trail ────────────────
+  epic-10: backlog
+  10-1-vue-detail-projet-actions-groupees: backlog
+  10-2-modals-glass-natures-labels-assignations: backlog
+  10-3-validation-one-click-modal-rejet-structure: backlog
+  10-4-audit-trail-projet-visibilite-partagee: backlog
+  epic-10-retrospective: optional
+
+  # ─── EPIC 11 — L3/L4 - Workspace "Karaoke" & Réconciliation Experte ──────
+  epic-11: backlog
+  11-1-workspace-karaoke-surlignage-neon-eco-mode: backlog
+  11-2-menu-contextuel-azure-accessibilite-clavier: backlog
+  11-3-interface-reconciliation-side-by-side-resizable: backlog
+  11-4-intelligence-linguistique-bible-preview-async: backlog
+  11-5-moteur-biblique-local-ingestion-donnees-souverainete: backlog
+  epic-11-retrospective: optional
+
+  # ─── EPIC 12 — L5 - Profil RGPD & Historique "Ghost Mode" ────────────────
+  epic-12: backlog
+  12-1-centre-profil-consentement-anonymisation-rgpd: backlog
+  12-2-visual-diff-ghost-mode-worker-based-performance: backlog
+  12-3-restauration-securisee-verrouillage-websocket: backlog
+  epic-12-retrospective: optional

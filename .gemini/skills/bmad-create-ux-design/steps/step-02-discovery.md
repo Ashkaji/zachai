@@ -62,6 +62,9 @@ Start by analyzing what we know from the loaded documents:
 **Key Features/Goals:**
 {summary of main features and goals from loaded documents}
 
+**Design System & Stitch Integration (If Stitch MCP is available):**
+"I see that the Stitch MCP is available. Would you like me to fetch the existing design project or design tokens from Google Stitch to use as a baseline for our UX specification? If so, please provide the Stitch project ID or name."
+
 Does this match your understanding? Are there any corrections or additions you'd like to make?"
 
 ### 2. Fill Context Gaps (If no documents or gaps exist)
