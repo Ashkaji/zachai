@@ -318,8 +318,17 @@ services:
       OV_DEVICE: ${OV_DEVICE:-CPU}
       INFER_TIMEOUT_SECONDS: ${INFER_TIMEOUT_SECONDS:-900}
       ENVIRONMENT: ${ENVIRONMENT:-development}
+      # Story 3.2 fallback / Story 3.3 registry
+      WHISPER_MODEL_PATH: ${WHISPER_MODEL_PATH:-/app/models/whisper-base-ov}
+      HF_WHISPER_OV_REPO: ${HF_WHISPER_OV_REPO:-OpenVINO/whisper-base-fp16-ov}
+      HF_TOKEN: ${HF_TOKEN:-}
     networks:
       - zachai-network
+    volumes:
+      # Optional host mount for local model development (Story 3.2 fallback).
+      # If WHISPER_MODEL_HOST_PATH is unset, this will point to a dummy/non-existent local path
+      # and the container will use internal storage or download at startup.
+      - ${WHISPER_MODEL_HOST_PATH:-./.ignore/empty-models}:${WHISPER_MODEL_PATH:-/app/models/whisper-base-ov}:rw
     depends_on:
       minio:
         condition: service_healthy

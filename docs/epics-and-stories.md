@@ -18,6 +18,9 @@
 - **Story 1.3 : Presigned URL Engine (FastAPI → MinIO)**
   - *As the System, I can generate scoped Presigned PUT/GET URLs (TTL 1h) for authenticated users so that sensitive files never transit through the API Gateway.*
 
+- **Story 1.4 : Orchestration Engine Bootstrap & BPMN Deployment**
+  - *As a System, I can automatically deploy BPMN definitions (`project-lifecycle.bpmn`, `lora-fine-tuning.bpmn`) to Camunda 7 during bootstrap so that orchestration logic is versioned and ready without manual intervention.*
+
 ---
 
 ## Epic 2 — Gestion Dynamique des Projets

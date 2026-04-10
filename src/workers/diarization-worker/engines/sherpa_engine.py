@@ -140,7 +140,7 @@ def _ensure_models_downloaded(cache_dir: Path) -> dict[str, str]:
         )
         emb_url = os.environ.get(
             "SHERPA_EMB_MODEL_URL",
-            "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recognition-models/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx",
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx",
         )
 
         if not seg_model.exists():

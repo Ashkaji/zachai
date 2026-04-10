@@ -537,7 +537,7 @@ def initial_load_sync() -> None:
         )
         return
 
-    local_path = os.environ.get("WHISPER_MODEL_PATH", "")
+    local_path = os.environ.get("WHISPER_MODEL_PATH", "/app/models/whisper-base-ov")
     eng = try_load_from_local_path(local_path, device)
     if eng:
         with model_lock:

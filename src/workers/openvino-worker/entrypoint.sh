@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
 
-# Configuration du chemin du modèle (par défaut /models)
-MODEL_PATH="${WHISPER_MODEL_PATH:-/models}"
-MODEL_REPO="${HF_MODEL_REPO:-OpenVINO/whisper-base-fp16-ov}"
+# Configuration du chemin du modèle (par défaut /app/models/whisper-base-ov)
+MODEL_PATH="${WHISPER_MODEL_PATH:-/app/models/whisper-base-ov}"
+MODEL_REPO="${HF_WHISPER_OV_REPO:-OpenVINO/whisper-base-fp16-ov}"
 DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-3600}"
 
 echo "--- Checking Whisper Model in $MODEL_PATH ---"
