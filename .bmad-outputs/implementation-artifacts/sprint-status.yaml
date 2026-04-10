@@ -104,7 +104,7 @@ development_status:
   9-2-virtualized-azuretable-shared-ui-primitives: done
   9-3-unified-notification-provider-event-bus: done
   9-4-azure-flow-shell-responsive-layout-breadcrumbs: done
-  epic-9-retrospective: optional
+  epic-9-retrospective: done
 
   # ─── EPIC 10 — L2 - Centre d'Action Manager & Audit Trail ────────────────
   epic-10: backlog
