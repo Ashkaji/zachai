@@ -13,10 +13,10 @@ export function Card({
     <section
       className="za-card-glow"
       style={{
-        background: "var(--color-surface)",
-        border: "1px solid var(--color-outline-ghost)",
+        background: "var(--color-surface-low)",
         borderRadius: "var(--radius-lg)",
         padding: "var(--spacing-5)",
+        // No-Line Rule: Border removed, tonal separation used
       }}
     >
       <div style={{ marginBottom: "var(--spacing-4)" }}>
@@ -56,12 +56,48 @@ export function Metric({
         padding: "var(--spacing-4)",
         borderRadius: "var(--radius-md)",
         background: "var(--color-surface-hi)",
-        border: "1px solid var(--color-outline-ghost)",
+        // No-Line Rule: Border removed
       }}
     >
-      <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase", tracking: "0.05em" }}>{label}</div>
+      <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
       <div style={{ marginTop: "var(--spacing-2)", fontSize: "1.75rem", fontWeight: 800, color: tone === "default" ? "var(--color-text)" : toneColor, fontFamily: "var(--font-headline)" }}>{value}</div>
     </div>
+  );
+}
+
+export function Badge({
+  children,
+  tone = "default",
+}: {
+  children: ReactNode;
+  tone?: "default" | "primary" | "success" | "error";
+}) {
+  const styles = {
+    default: { bg: "var(--color-surface-vhi)", text: "var(--color-text-muted)" },
+    primary: { bg: "var(--color-primary-soft)", text: "var(--color-primary)" },
+    success: { bg: "rgba(47, 138, 99, 0.15)", text: "var(--color-success)" },
+    error: { bg: "rgba(255, 113, 108, 0.15)", text: "var(--color-error)" },
+  };
+
+  const current = styles[tone];
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "4px 10px",
+        borderRadius: "var(--radius-sm)",
+        fontSize: "0.75rem",
+        fontWeight: 700,
+        background: current.bg,
+        color: current.text,
+        textTransform: "uppercase",
+        letterSpacing: "0.02em",
+      }}
+    >
+      {children}
+    </span>
   );
 }
 
@@ -89,7 +125,8 @@ export function DataTable({
                   fontWeight: 700,
                   textTransform: "uppercase",
                   letterSpacing: "0.05em",
-                  borderBottom: "1px solid var(--color-outline-ghost)",
+                  // No-Line Rule: borderBottom removed or made very subtle tonal difference
+                  borderBottom: "2px solid var(--color-bg)", 
                 }}
               >
                 {column}
@@ -109,8 +146,8 @@ export function DataTable({
                   key={`cell-${rowIndex}-${cellIndex}`} 
                   style={{ 
                     padding: "16px", 
-                    borderBottom: "1px solid var(--color-outline-ghost)",
                     fontSize: "0.9rem",
+                    borderBottom: "1px solid var(--color-surface-low)",
                   }}
                 >
                   {cell}

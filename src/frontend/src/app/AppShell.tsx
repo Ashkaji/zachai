@@ -1,8 +1,10 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import type { ReactNode } from "react";
 import { useTheme } from "../theme/ThemeContext";
 import type { AppRole } from "../types/rbac";
 import { ROLE_NAVIGATION, type AppRouteId } from "./navigation";
+import { useNotifications } from "../shared/notifications/NotificationContext";
+import { ChevronLeft, ChevronRight, LogOut, Moon, Sun } from "lucide-react";
 import {
   AdminDashboard,
   ExpertDashboard,
@@ -11,18 +13,7 @@ import {
 } from "../features/dashboard/RoleDashboards";
 import { NewProjectWizard } from "../features/project-wizard/NewProjectWizard";
 import { ProjectDetailManager } from "../features/projects/ProjectDetailManager";
-
-type Notification = {
-  id: string;
-  title: string;
-  body: string;
-};
-
-const NOTIFICATIONS: Notification[] = [
-  { id: "n1", title: "Validation en attente", body: "21 transcriptions attendent une décision manager." },
-  { id: "n2", title: "Cycle ML prêt", body: "Seuil Golden Set atteint, cycle LoRA prêt au lancement." },
-  { id: "n3", title: "Nouveau commentaire", body: "Un retour de rework a été ajouté sur Interview_042.wav." },
-];
+import { Playground } from "../dev/Playground";
 
 function roleTitle(role: AppRole): string {
   if (role === "admin") return "Admin";
@@ -43,6 +34,7 @@ export function AppShell({
   legacyEditor: ReactNode;
 }) {
   const { mode, toggleMode } = useTheme();
+  const { activeNotifications, dismissNotification } = useNotifications();
   const nav = useMemo(() => ROLE_NAVIGATION[role], [role]);
   
   // Adjusted mapping for active route IDs based on navigation.ts
@@ -52,6 +44,23 @@ export function AppShell({
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
   const [isNotificationsOpen, setNotificationsOpen] = useState(false);
   const [managerRefreshKey, setManagerRefreshKey] = useState(0);
+
+  // Responsive Sidebar State
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 1024) {
+        setIsCollapsed(true);
+      } else {
+        setIsCollapsed(false);
+      }
+    };
+    // Initial check
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   const handleViewProject = (id: number) => {
     setSelectedProjectId(id);
@@ -64,13 +73,19 @@ export function AppShell({
     setManagerRefreshKey((prev) => prev + 1);
   };
 
+  const hasCritical = activeNotifications.some(n => n.tier === "critical");
+  
+  const sidebarWidth = isCollapsed ? 88 : 280;
+  const currentNavItem = nav.find((n) => n.id === activeRoute);
+  const activeLabel = currentNavItem?.label || "ZachAI";
+
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "var(--color-bg)" }}>
       {/* 1. Sidebar (Floating Glass) */}
       <aside
         className="za-glass"
         style={{
-          width: "280px",
+          width: `${sidebarWidth}px`,
           position: "fixed",
           top: "var(--spacing-4)",
           left: "var(--spacing-4)",
@@ -79,32 +94,46 @@ export function AppShell({
           zIndex: 100,
           display: "flex",
           flexDirection: "column",
-          padding: "var(--spacing-6)",
+          padding: isCollapsed ? "var(--spacing-4)" : "var(--spacing-6)",
           border: "1px solid var(--color-outline-ghost)",
+          transition: "width 0.3s ease, padding 0.3s ease",
+          overflow: "hidden"
         }}
       >
-        <div style={{ marginBottom: "var(--spacing-8)" }}>
-          <h1
-            style={{
-              fontFamily: "var(--font-headline)",
-              fontSize: "1.5rem",
-              fontWeight: 900,
-              margin: 0,
-              color: "var(--color-primary)",
-              letterSpacing: "-0.02em",
-            }}
-          >
-            ZachAI
-          </h1>
-          <div style={{ fontSize: "0.75rem", fontWeight: 700, opacity: 0.6, textTransform: "uppercase", marginTop: "4px" }}>
-            {roleTitle(role)}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "var(--spacing-8)" }}>
+          <div style={{ opacity: isCollapsed ? 0 : 1, transition: "opacity 0.2s ease", whiteSpace: "nowrap" }}>
+            <h1
+              style={{
+                fontFamily: "var(--font-headline)",
+                fontSize: "1.5rem",
+                fontWeight: 900,
+                margin: 0,
+                color: "var(--color-primary)",
+                letterSpacing: "-0.02em",
+              }}
+            >
+              ZachAI
+            </h1>
+            <div style={{ fontSize: "0.75rem", fontWeight: 700, opacity: 0.6, textTransform: "uppercase", marginTop: "4px" }}>
+              {roleTitle(role)}
+            </div>
           </div>
+          
+          <button 
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="za-btn za-btn--ghost"
+            style={{ padding: "4px", minWidth: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center", border: "none" }}
+            aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+          </button>
         </div>
 
         <nav style={{ flex: 1 }}>
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: "8px" }}>
             {nav.map((item) => {
               const isActive = activeRoute === item.id;
+              const Icon = item.icon;
               return (
                 <li key={item.id}>
                   <button
@@ -115,17 +144,23 @@ export function AppShell({
                     className="za-btn za-btn--ghost"
                     style={{
                       width: "100%",
-                      textAlign: "left",
                       border: "none",
                       background: isActive ? "var(--color-primary-soft)" : "transparent",
                       color: isActive ? "var(--color-primary)" : "var(--color-text)",
-                      padding: "12px 16px",
+                      padding: isCollapsed ? "12px" : "12px 16px",
                       borderRadius: "var(--radius-md)",
                       fontWeight: isActive ? 700 : 500,
                       boxShadow: isActive ? "var(--glow-primary)" : "none",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: isCollapsed ? "center" : "flex-start",
+                      gap: "12px",
+                      transition: "all 0.2s ease"
                     }}
+                    title={isCollapsed ? item.label : undefined}
                   >
-                    {item.label}
+                    <Icon size={20} strokeWidth={1.5} />
+                    {!isCollapsed && <span style={{ whiteSpace: "nowrap" }}>{item.label}</span>}
                   </button>
                 </li>
               );
@@ -134,31 +169,55 @@ export function AppShell({
         </nav>
 
         <div style={{ marginTop: "auto", paddingTop: "var(--spacing-6)" }}>
-          <div
-            style={{
-              padding: "var(--spacing-4)",
-              background: "var(--color-surface-hi)",
-              borderRadius: "var(--radius-md)",
-              marginBottom: "var(--spacing-4)",
-            }}
-          >
-            <div style={{ fontWeight: 700, fontSize: "0.9rem", marginBottom: "4px", overflow: "hidden", textOverflow: "ellipsis" }}>{username}</div>
-            <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>{role === "admin" ? "Super Admin" : role}</div>
-          </div>
+          {!isCollapsed && (
+            <div
+              style={{
+                padding: "var(--spacing-4)",
+                background: "var(--color-surface-hi)",
+                borderRadius: "var(--radius-md)",
+                marginBottom: "var(--spacing-4)",
+                whiteSpace: "nowrap"
+              }}
+            >
+              <div style={{ fontWeight: 700, fontSize: "0.9rem", marginBottom: "4px", overflow: "hidden", textOverflow: "ellipsis" }}>{username}</div>
+              <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>{role === "admin" ? "Super Admin" : role}</div>
+            </div>
+          )}
           <div style={{ display: "grid", gap: "8px" }}>
             <button
               onClick={toggleMode}
               className="za-btn za-btn--ghost"
-              style={{ border: "none", width: "100%", textAlign: "left", padding: "8px 12px" }}
+              style={{ 
+                border: "none", 
+                width: "100%", 
+                padding: isCollapsed ? "12px" : "8px 12px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: isCollapsed ? "center" : "flex-start",
+                gap: "12px"
+              }}
+              title={`Mode ${mode === "dark" ? "Clair" : "Sombre"}`}
             >
-              Mode {mode === "dark" ? "Clair" : "Sombre"}
+              {mode === "dark" ? <Sun size={20} strokeWidth={1.5} /> : <Moon size={20} strokeWidth={1.5} />}
+              {!isCollapsed && <span style={{ whiteSpace: "nowrap" }}>Mode {mode === "dark" ? "Clair" : "Sombre"}</span>}
             </button>
             <button
               onClick={onSignout}
               className="za-btn za-btn--ghost"
-              style={{ border: "none", width: "100%", textAlign: "left", color: "var(--color-error)", padding: "8px 12px" }}
+              style={{ 
+                border: "none", 
+                width: "100%", 
+                color: "var(--color-error)", 
+                padding: isCollapsed ? "12px" : "8px 12px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: isCollapsed ? "center" : "flex-start",
+                gap: "12px"
+              }}
+              title="Déconnexion"
             >
-              Déconnexion
+              <LogOut size={20} strokeWidth={1.5} />
+              {!isCollapsed && <span style={{ whiteSpace: "nowrap" }}>Déconnexion</span>}
             </button>
           </div>
         </div>
@@ -168,9 +227,10 @@ export function AppShell({
       <main
         style={{
           flex: 1,
-          marginLeft: "312px", 
+          marginLeft: `${sidebarWidth + 32}px`, 
           padding: "var(--spacing-8)",
           minWidth: 0,
+          transition: "margin-left 0.3s ease"
         }}
       >
         <header
@@ -181,36 +241,46 @@ export function AppShell({
             marginBottom: "var(--spacing-8)",
           }}
         >
-          <h2 style={{ margin: 0, fontFamily: "var(--font-headline)", fontSize: "1.75rem", fontWeight: 800 }}>
-            {nav.find((n) => n.id === activeRoute)?.label || "ZachAI"}
-          </h2>
+          <div>
+            <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--color-text-muted)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "6px" }}>
+              <span>Azure Flow</span>
+              <span style={{ opacity: 0.5 }}>›</span>
+              <span>{roleTitle(role)}</span>
+            </div>
+            <h2 style={{ margin: 0, fontFamily: "var(--font-headline)", fontSize: "1.75rem", fontWeight: 800, color: "var(--color-primary)" }}>
+              {activeLabel}
+            </h2>
+          </div>
+          
           <div style={{ display: "flex", gap: "var(--spacing-4)" }}>
             <button
               className="za-btn za-btn--ghost"
               onClick={() => setNotificationsOpen(!isNotificationsOpen)}
-              style={{ position: "relative", border: "none" }}
+              style={{ position: "relative", border: "none", background: "var(--color-surface-low)" }}
             >
-              Notifications ({NOTIFICATIONS.length})
-              <span
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  right: 0,
-                  background: "var(--color-error)",
-                  width: 8,
-                  height: 8,
-                  borderRadius: "50%",
-                }}
-              />
+              Notifications ({activeNotifications.length})
+              {activeNotifications.length > 0 && (
+                <span
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    right: 0,
+                    background: hasCritical ? "var(--color-error)" : "var(--color-primary)",
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                  }}
+                />
+              )}
             </button>
           </div>
         </header>
 
         <section>
           {/* Unified route mapping */}
-          {(activeRoute === "dashboard" || activeRoute === "dashboard-admin") && role === "admin" ? <AdminDashboard /> : null}
+          {activeRoute === "dashboard-admin" && role === "admin" ? <AdminDashboard /> : null}
           
-          {(activeRoute === "dashboard" || activeRoute === "dashboard-manager") && role === "manager" ? (
+          {activeRoute === "dashboard-manager" && role === "manager" ? (
             <ManagerDashboard
               onCreateProject={() => setActiveRoute("project-wizard" as AppRouteId)}
               onViewProject={handleViewProject}
@@ -232,10 +302,11 @@ export function AppShell({
             />
           ) : null}
 
-          {activeRoute === "dashboard" && role === "expert" ? <ExpertDashboard /> : null}
-          {activeRoute === "dashboard" && role === "transcriber" ? <TranscriberDashboard /> : null}
+          {activeRoute === "dashboard-expert" && role === "expert" ? <ExpertDashboard /> : null}
+          {activeRoute === "dashboard-transcriber" && role === "transcriber" ? <TranscriberDashboard /> : null}
 
           {activeRoute === "legacy-editor" ? legacyEditor : null}
+          {activeRoute === "playground" ? <Playground /> : null}
         </section>
       </main>
 
@@ -264,21 +335,36 @@ export function AppShell({
           >
             <h3 style={{ margin: "0 0 var(--spacing-4)", fontSize: "1.1rem", fontWeight: 800 }}>Notifications</h3>
             <div style={{ display: "grid", gap: "12px", overflowY: "auto" }}>
-              {NOTIFICATIONS.map((notice) => (
-                <article
-                  key={notice.id}
-                  style={{
-                    padding: "var(--spacing-4)",
-                    background: "var(--color-surface-hi)",
-                    borderRadius: "var(--radius-md)",
-                  }}
-                >
-                  <h4 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 700 }}>{notice.title}</h4>
-                  <p style={{ margin: "var(--spacing-2) 0 0", color: "var(--color-text-muted)", fontSize: "0.85rem" }}>
-                    {notice.body}
-                  </p>
-                </article>
-              ))}
+              {activeNotifications.length === 0 ? (
+                <p style={{ color: "var(--color-text-muted)", fontSize: "0.85rem", margin: 0 }}>Aucune notification.</p>
+              ) : (
+                activeNotifications.map((notice) => (
+                  <article
+                    key={notice.id}
+                    style={{
+                      padding: "var(--spacing-4)",
+                      background: "var(--color-surface-hi)",
+                      borderRadius: "var(--radius-md)",
+                      borderLeft: notice.tier === "critical" ? "4px solid var(--color-error)" : "4px solid var(--color-primary)",
+                      position: "relative"
+                    }}
+                  >
+                    <button 
+                      onClick={() => dismissNotification(notice.id)}
+                      style={{ position: "absolute", top: "8px", right: "8px", background: "transparent", border: "none", color: "var(--color-text-muted)", cursor: "pointer" }}
+                    >
+                      ✕
+                    </button>
+                    <h4 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 700 }}>{notice.title}</h4>
+                    <p style={{ margin: "var(--spacing-2) 0 0", color: "var(--color-text-muted)", fontSize: "0.85rem" }}>
+                      {notice.body}
+                    </p>
+                    <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)", marginTop: "var(--spacing-2)", opacity: 0.6 }}>
+                      {new Date(notice.timestamp).toLocaleTimeString()}
+                    </div>
+                  </article>
+                ))
+              )}
             </div>
           </aside>
         </div>

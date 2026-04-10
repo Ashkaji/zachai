@@ -18,15 +18,18 @@
     "@tiptap/extension-paragraph": "^2.27.2",
     "@tiptap/extension-text": "^2.27.2",
     "@tiptap/react": "^2.27.2",
+    "lucide-react": "^1.8.0",
     "oidc-client-ts": "^3.1.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "react-oidc-context": "^3.2.0",
+    "react-window": "^2.2.7",
     "yjs": "^13.6.30"
   },
   "devDependencies": {
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
+    "@types/react-window": "^1.8.8",
     "@vitejs/plugin-react": "^4.4.0",
     "jsdom": "^24.0.0",
     "typescript": "^5.7.0",

@@ -2,6 +2,7 @@ import { useAuth } from "react-oidc-context";
 import { TranscriptionEditor } from "./editor/TranscriptionEditor";
 import { AppShell } from "./app/AppShell";
 import { ThemeProvider } from "./theme/ThemeContext";
+import { NotificationProvider } from "./shared/notifications/NotificationContext";
 import { resolveAppRole } from "./types/rbac";
 
 export function App() {
@@ -35,12 +36,14 @@ export function App() {
 
   return (
     <ThemeProvider>
-      <AppShell
-        role={role}
-        username={String(username)}
-        onSignout={() => auth.signoutRedirect()}
-        legacyEditor={<TranscriptionEditor />}
-      />
+      <NotificationProvider>
+        <AppShell
+          role={role}
+          username={String(username)}
+          onSignout={() => auth.signoutRedirect()}
+          legacyEditor={<TranscriptionEditor />}
+        />
+      </NotificationProvider>
     </ThemeProvider>
   );
 }

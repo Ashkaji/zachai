@@ -99,11 +99,11 @@ development_status:
   epic-8-retrospective: done
 
   # ─── EPIC 9 — Shell "Azure Flow", Notifications & Primitives Atomiques ───
-  epic-9: in-progress
-  9-1-azure-design-tokens-theme-playground: ready-for-dev
-  9-2-virtualized-azuretable-shared-ui-primitives: backlog
-  9-3-unified-notification-provider-event-bus: backlog
-  9-4-azure-flow-shell-responsive-layout-breadcrumbs: backlog
+  epic-9: done
+  9-1-azure-design-tokens-theme-playground: done
+  9-2-virtualized-azuretable-shared-ui-primitives: done
+  9-3-unified-notification-provider-event-bus: done
+  9-4-azure-flow-shell-responsive-layout-breadcrumbs: done
   epic-9-retrospective: optional
 
   # ─── EPIC 10 — L2 - Centre d'Action Manager & Audit Trail ────────────────

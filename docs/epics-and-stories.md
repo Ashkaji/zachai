@@ -148,7 +148,7 @@
 
 ## Epic 9 — Shell "Azure Flow", Notifications & Primitives Atomiques
 **Goal :** Finaliser le conteneur `AppShell` et créer la bibliothèque de composants réutilisables.
-**Statut :** En attente
+**Statut :** Terminé
 
 - **Story 9.1 : Composants Atomiques & Theme Playground**
   - *As a Developer, I can access a dedicated playground to validate that all UI primitives (Card, Metric, AzureTable) support Light/Dark modes and virtualization.*

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useAuth } from "react-oidc-context";
 import { bearerForApi } from "../../auth/api-client";
-import { ApiError } from "../../shared/api/zachaiApi";
 import { Card, DataTable, Metric } from "../../shared/ui/Primitives";
 import { formatIso } from "../../shared/utils/dateUtils";
 import {

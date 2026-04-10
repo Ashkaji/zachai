@@ -1,6 +1,6 @@
 # Story 9.1: Azure Design Tokens & Theme Playground
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -20,19 +20,19 @@ So that we eliminate visual debt and ensure 100% compliance with the `theme.css`
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Initialize/Consolidate `theme.css` (AC: 1)
-  - [ ] Extract existing CSS tokens (Light/Dark) from previous artifacts and Stitch specs.
-  - [ ] Consolidate tokens in `src/frontend/src/theme/theme.css`.
-  - [ ] Ensure spacing variables `--spacing-*` are defined and strictly adhered to.
-- [ ] Task 2: Create/Refactor Atomic Components (AC: 1)
-  - [ ] Refactor or create `Card` component strictly without 1px borders (No-Line rule, using tonal separation instead).
-  - [ ] Refactor or create `Metric` component.
-  - [ ] Refactor or create `Badge` component.
-  - [ ] Ensure they support the `data-theme` application.
-- [ ] Task 3: Build Theme Playground Route (AC: 1)
-  - [ ] Create `/dev/playground` route accessible for developers.
-  - [ ] Render `Card`, `Metric`, and `Badge` instances in both themes side-by-side or togglable.
-  - [ ] Ensure the playground highlights the "Azure Flow" visual identity.
+- [x] Task 1: Initialize/Consolidate `theme.css` (AC: 1)
+  - [x] Extract existing CSS tokens (Light/Dark) from previous artifacts and Stitch specs.
+  - [x] Consolidate tokens in `src/frontend/src/theme/theme.css`.
+  - [x] Ensure spacing variables `--spacing-*` are defined and strictly adhered to.
+- [x] Task 2: Create/Refactor Atomic Components (AC: 1)
+  - [x] Refactor or create `Card` component strictly without 1px borders (No-Line rule, using tonal separation instead).
+  - [x] Refactor or create `Metric = Metric component.
+  - [x] Refactor or create `Badge` component.
+  - [x] Ensure they support the `data-theme` application.
+- [x] Task 3: Build Theme Playground Route (AC: 1)
+  - [x] Create `/dev/playground` route accessible for developers.
+  - [x] Render `Card`, `Metric`, and `Badge` instances in both themes side-by-side or togglable.
+  - [x] Ensure the playground highlights the "Azure Flow" visual identity.
 
 ## Dev Notes
 
