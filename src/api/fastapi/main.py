@@ -3667,6 +3667,71 @@ async def list_audio_snapshots(
     ]
 
 
+@app.get("/v1/snapshots/{snapshot_id}/yjs")
+async def get_snapshot_yjs(
+    snapshot_id: str,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Return raw Yjs binary state of a snapshot (Story 12.2 AC 2)."""
+    roles = get_roles(payload)
+    sub = payload.get("sub")
+
+    stmt = select(SnapshotArtifact).where(SnapshotArtifact.snapshot_id == snapshot_id)
+    res = await db.execute(stmt)
+    snap = res.scalar_one_or_none()
+    if not snap:
+        raise HTTPException(status_code=404, detail={"error": "Snapshot not found"})
+
+    # Access control: Transcripteur must be assigned, Manager must own project, Admin always.
+    audio_id = snap.document_id
+    result = await db.execute(
+        select(AudioFile).where(AudioFile.id == audio_id).options(selectinload(AudioFile.assignment))
+    )
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
+
+    if "Admin" not in roles:
+        if "Manager" in roles:
+            pr = await db.execute(select(Project).where(Project.id == af.project_id))
+            proj = pr.scalar_one_or_none()
+            if not proj or proj.manager_id != sub:
+                raise HTTPException(status_code=403, detail={"error": "Not the project owner"})
+        else:
+            asg = af.assignment
+            if not asg or asg.transcripteur_id != sub:
+                raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
+
+    # Fetch JSON from MinIO
+    try:
+        # Snapshots are in 'snapshots' bucket as per _MINIO_BUCKETS and internal_client config
+        # SnapshotArtifact.json_object_key already includes 'snapshots/' prefix in some places?
+        # Let's check SnapshotArtifact creation in main.py
+        # L4860: json_object_key = str(export_out.get("json_object_key") or "")
+        # Export worker returns: "json_object_key": f"{SNAPSHOT_BUCKET}/{json_key}"
+        # So we need to strip the bucket name if we use internal_client.get_object(bucket, object_name)
+        bucket = "snapshots"
+        object_key = snap.json_object_key
+        if object_key.startswith(f"{bucket}/"):
+            object_key = object_key[len(bucket)+1:]
+
+        resp = internal_client.get_object(bucket, object_key)
+        data = json.loads(resp.read().decode("utf-8"))
+        yjs_b64 = data.get("yjs_state_binary")
+        if not yjs_b64:
+            raise HTTPException(status_code=502, detail={"error": "Snapshot JSON missing yjs_state_binary"})
+        
+        yjs_raw = base64.b64decode(yjs_b64.encode("ascii"), validate=True)
+        return Response(content=yjs_raw, media_type="application/octet-stream")
+    except S3Error as exc:
+        logger.error("minio_error snapshot_id=%s error=%s", snapshot_id, exc)
+        raise HTTPException(status_code=502, detail={"error": "Failed to fetch snapshot from storage"})
+    except Exception as exc:
+        logger.error("snapshot_yjs_error snapshot_id=%s error=%s", snapshot_id, exc)
+        raise HTTPException(status_code=502, detail={"error": str(exc)})
+
+
 @app.post("/v1/editor/restore/{audio_id}")
 async def restore_document_from_snapshot(
     audio_id: int,

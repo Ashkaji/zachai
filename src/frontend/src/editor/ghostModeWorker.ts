@@ -1,6 +1,6 @@
 /**
  * Ghost Mode Diff Worker — Story 12.2
- * Offloads Myers diff calculation to a background thread for UI smoothness.
+ * Character-based Myers Diff implementation for visual document history.
  */
 
 export type DiffChange = {
@@ -8,61 +8,79 @@ export type DiffChange = {
   value: string;
 };
 
-// Basic Myers Diff implementation
+/**
+ * A robust character-level diff implementation.
+ * Uses a simplified version of the Myers diff algorithm (LCS-based).
+ */
 function diff(oldStr: string, newStr: string): DiffChange[] {
-  const out: DiffChange[] = [];
-  
-  // Simple implementation using a naive approach for now
-  // In a real app, use a robust library or a full Myers implementation
-  // This is a placeholder for the logic.
-  
-  // Let's use a very simple word-based diff for demonstration
-  const oldWords = oldStr.split(/(\s+)/);
-  const newWords = newStr.split(/(\s+)/);
-  
-  let i = 0, j = 0;
-  while (i < oldWords.length && j < newWords.length) {
-    if (oldWords[i] === newWords[j]) {
-      out.push({ type: 'equal', value: oldWords[i] });
-      i++; j++;
-    } else {
-      // Look ahead to find matches
-      let found = false;
-      for (let k = j + 1; k < Math.min(j + 5, newWords.length); k++) {
-        if (newWords[k] === oldWords[i]) {
-          // Found match later in newStr -> additions
-          for (let m = j; m < k; m++) {
-            out.push({ type: 'add', value: newWords[m] });
-          }
-          out.push({ type: 'equal', value: oldWords[i] });
-          i++; j = k + 1;
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        // No match found soon -> removal
-        out.push({ type: 'remove', value: oldWords[i] });
-        i++;
+  const n = oldStr.length;
+  const m = newStr.length;
+
+  // Initialise matrix with fixed dimensions
+  const matrix: number[][] = [];
+  for (let i = 0; i <= n; i++) {
+    matrix[i] = new Array(m + 1).fill(0);
+  }
+
+  for (let i = 1; i <= n; i++) {
+    const row = matrix[i]!;
+    const prevRow = matrix[i - 1]!;
+    for (let j = 1; j <= m; j++) {
+      if (oldStr[i - 1] === newStr[j - 1]) {
+        row[j] = (prevRow[j - 1] ?? 0) + 1;
+      } else {
+        row[j] = Math.max(prevRow[j] ?? 0, row[j - 1] ?? 0);
       }
     }
   }
-  
-  // Remaining
-  while (i < oldWords.length) {
-    out.push({ type: 'remove', value: oldWords[i] });
-    i++;
+
+  const result: DiffChange[] = [];
+  let i = n;
+  let j = m;
+
+  while (i > 0 || j > 0) {
+    const row = matrix[i]!;
+    const prevRow = i > 0 ? matrix[i - 1]! : null;
+
+    if (i > 0 && j > 0 && oldStr[i - 1] === newStr[j - 1]) {
+      const val = oldStr[i - 1]!;
+      const head = result[0];
+      if (head && head.type === 'equal') {
+        head.value = val + head.value;
+      } else {
+        result.unshift({ type: 'equal', value: val });
+      }
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || (row[j - 1] ?? 0) >= (prevRow ? (prevRow[j] ?? 0) : 0))) {
+      const val = newStr[j - 1]!;
+      const head = result[0];
+      if (head && head.type === 'add') {
+        head.value = val + head.value;
+      } else {
+        result.unshift({ type: 'add', value: val });
+      }
+      j--;
+    } else if (i > 0) {
+      const val = oldStr[i - 1]!;
+      const head = result[0];
+      if (head && head.type === 'remove') {
+        head.value = val + head.value;
+      } else {
+        result.unshift({ type: 'remove', value: val });
+      }
+      i--;
+    }
   }
-  while (j < newWords.length) {
-    out.push({ type: 'add', value: newWords[j] });
-    j++;
-  }
-  
-  return out;
+
+  return result;
 }
 
 self.onmessage = (e: MessageEvent) => {
   const { oldStr, newStr, requestId } = e.data;
-  const result = diff(oldStr, newStr);
+  const s1 = typeof oldStr === 'string' ? oldStr : '';
+  const s2 = typeof newStr === 'string' ? newStr : '';
+  
+  const result = diff(s1, s2);
   self.postMessage({ result, requestId });
 };

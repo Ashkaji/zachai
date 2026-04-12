@@ -144,10 +144,11 @@
 }
 
 .zachai-ghost-deleted-marker {
-  background: rgba(0, 120, 212, 0.4);
   position: relative;
   display: inline-block;
   min-width: 4px;
+  vertical-align: baseline;
+  transition: all 0.3s ease;
 }
 
 .zachai-ghost-deleted-marker::before {
@@ -157,5 +158,5 @@
   left: 0;
   font-size: 0.7rem;
   color: #0078d4;
-  opacity: 0.8;
+  opacity: 0.6;
 }

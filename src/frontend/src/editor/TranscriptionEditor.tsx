@@ -13,7 +13,8 @@ import {
   SkipForward,
   SkipBack,
   Gauge,
-  Ghost
+  Ghost,
+  History
 } from "lucide-react";
 import Document from "@tiptap/extension-document";
 import Paragraph from "@tiptap/extension-paragraph";
@@ -27,6 +28,7 @@ import { BiblicalCitation } from "./BiblicalCitationMark";
 import { BubbleMenuShortcut } from "./BubbleMenuShortcut";
 import { AzureBubbleMenu } from "./AzureBubbleMenu";
 import { BiblePreviewPopup } from "./BiblePreviewPopup";
+import { HistoryPanel, type Snapshot } from "./HistoryPanel";
 import {
   MAX_RECONNECT_ATTEMPTS,
   computeReconnectDelayMs,
@@ -39,6 +41,7 @@ import {
   docRangeForTextSlice,
   recomputeGrammarApplyRange,
   type GrammarMatch,
+  type TextSpan,
 } from "./grammarUtils";
 import "./collaboration.css";
 
@@ -213,11 +216,13 @@ export function TranscriptionEditor() {
   // Story 12.2 — Ghost Mode
   const [ghostMode, setGhostMode] = useState(false);
   const [originalContent, setOriginalContent] = useState<string>("");
-  const [diffResult, setDiffResult] = useState<DiffChange[]>([]);
   const ghostModeRef = useRef(false);
   const originalContentRef = useRef("");
   const diffResultRef = useRef<DiffChange[]>([]);
   const workerRef = useRef<Worker | null>(null);
+
+  // Performance — Memoize document indexing (Issue 05)
+  const docIndexRef = useRef<{ text: string; spans: TextSpan[] }>({ text: "", spans: [] });
 
   const [grammarPopup, setGrammarPopup] = useState<{
     x: number;
@@ -232,12 +237,77 @@ export function TranscriptionEditor() {
     reference: string;
   } | null>(null);
 
+  // Story 12.2 — Snapshots
+  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
+  const [isTimelineOpen, setIsTimelineOpen] = useState(false);
+  const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(false);
+  const [activeSnapshotId, setActiveSnapshotId] = useState<string | null>(null);
+
+  const fetchSnapshots = useCallback(async () => {
+    if (!audioId || !token) return;
+    try {
+      const resp = await apiFetch(`/v1/audio-files/${audioId}/snapshots`, token);
+      if (resp.ok) {
+        const data = await resp.json();
+        setSnapshots(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch snapshots", err);
+    }
+  }, [audioId, token]);
+
+  useEffect(() => {
+    fetchSnapshots();
+  }, [fetchSnapshots]);
+
+  const handleSelectSnapshot = async (snapId: string) => {
+    if (!token) return;
+    setIsLoadingSnapshot(true);
+    setActiveSnapshotId(snapId);
+    setStatus("Fetching snapshot state…");
+    try {
+      const resp = await apiFetch(`/v1/snapshots/${snapId}/yjs`, token);
+      if (resp.ok) {
+        const buffer = await resp.arrayBuffer();
+        const yjsData = new Uint8Array(buffer);
+        const tempDoc = new Y.Doc();
+        Y.applyUpdate(tempDoc, yjsData);
+        // Tiptap collab uses 'default' XML fragment name
+        const text = tempDoc.getText("default").toString();
+        
+        setOriginalContent(text);
+        originalContentRef.current = text;
+        setGhostMode(true);
+        setStatus(`Comparing against snapshot ${snapId.slice(0, 8)}…`);
+        triggerDiff();
+      } else {
+        setStatus(`Failed to fetch snapshot Yjs: ${resp.status}`);
+      }
+    } catch (err) {
+      console.error("Failed to fetch snapshot Yjs", err);
+      setStatus("Error loading snapshot binary");
+    } finally {
+      setIsLoadingSnapshot(false);
+    }
+  };
+
+  const handleHoverSnapshot = async (snapId: string | null) => {
+    // Story 12.2 AC 3: Hover preview
+    if (snapId) {
+      const snap = snapshots.find(s => s.snapshot_id === snapId);
+      if (snap) {
+        setStatus(`Preview: ${snap.source} snapshot from ${new Date(snap.created_at).toLocaleTimeString()}`);
+      }
+    } else {
+      setStatus("");
+    }
+  };
+
   // Initialize Worker
   useEffect(() => {
     workerRef.current = new Worker(new URL('./ghostModeWorker.ts', import.meta.url), { type: 'module' });
     workerRef.current.onmessage = (e) => {
       const { result } = e.data;
-      setDiffResult(result);
       diffResultRef.current = result;
       paintAllDecorations();
     };
@@ -246,7 +316,7 @@ export function TranscriptionEditor() {
 
   const triggerDiff = useCallback(() => {
     if (!ghostModeRef.current || !workerRef.current || !editorRef.current) return;
-    const { text } = buildDocTextIndex(editorRef.current.state.doc);
+    const { text } = docIndexRef.current;
     workerRef.current.postMessage({
       oldStr: originalContentRef.current,
       newStr: text,
@@ -259,14 +329,13 @@ export function TranscriptionEditor() {
     ghostModeRef.current = ghostMode;
     if (ghostMode && !originalContent) {
       if (editorRef.current) {
-        const { text } = buildDocTextIndex(editorRef.current.state.doc);
+        const { text } = docIndexRef.current;
         setOriginalContent(text);
         originalContentRef.current = text;
       }
     }
     if (ghostMode) triggerDiff();
     else {
-      setDiffResult([]);
       diffResultRef.current = [];
       paintAllDecorations();
     }
@@ -462,9 +531,10 @@ export function TranscriptionEditor() {
     ed.view.setProps({
       decorations: (state) => {
         const decos: Decoration[] = [];
-        // Only paint grammar/spelling if enabled (Story 11.4 AC 1.3)
+        const { spans } = docIndexRef.current;
+        
+        // 1. Grammar/Spelling (Story 11.4)
         if (grammarEnabledRef.current) {
-          const { spans } = buildDocTextIndex(state.doc);
           for (const m of grammarMatchesRef.current) {
             const r = docRangeForTextSlice(spans, m.offset, m.length);
             if (!r) continue;
@@ -475,6 +545,8 @@ export function TranscriptionEditor() {
             decos.push(Decoration.inline(r.from, r.to, { class: cls }));
           }
         }
+
+        // 2. Karaoke Highlight (Story 5.3)
         const activeKey = activeIntervalKeyRef.current;
         if (activeKey) {
           const parts = activeKey.split("-");
@@ -504,6 +576,34 @@ export function TranscriptionEditor() {
             }
           }
         }
+
+        // 3. Ghost Mode Diff (Story 12.2)
+        if (ghostModeRef.current && diffResultRef.current.length > 0) {
+          let currentOffset = 0;
+          for (const part of diffResultRef.current) {
+            if (part.type === 'equal') {
+              currentOffset += part.value.length;
+            } else if (part.type === 'add') {
+              const r = docRangeForTextSlice(spans, currentOffset, part.value.length);
+              if (r) {
+                decos.push(Decoration.inline(r.from, r.to, { class: "zachai-ghost-added" }));
+              }
+              currentOffset += part.value.length;
+            } else if (part.type === 'remove') {
+              const r = docRangeForTextSlice(spans, currentOffset, 1);
+              if (r) {
+                // Removal marker (widget decoration) — "Spectral Blue" (Story 12.2 AC 2.3)
+                const widget = document.createElement("span");
+                widget.className = "zachai-ghost-deleted-marker";
+                widget.style.color = "rgba(0, 120, 212, 0.4)";
+                widget.style.textDecoration = "line-through";
+                widget.innerText = part.value;
+                decos.push(Decoration.widget(r.from, widget));
+              }
+            }
+          }
+        }
+
         return DecorationSet.create(state.doc, decos);
       },
     });
@@ -531,7 +631,7 @@ export function TranscriptionEditor() {
         const ed = editor;
         const tok = token;
         if (!ed || !tok || !grammarEnabledRef.current) return;
-        const { text } = buildDocTextIndex(ed.state.doc);
+        const { text } = docIndexRef.current;
         if (!text.trim()) {
           setGrammarNote("");
           return;
@@ -884,7 +984,7 @@ export function TranscriptionEditor() {
           const posInfo = ed.view.posAtCoords(coords);
           if (posInfo == null) return;
           const pos = posInfo.pos;
-          const { text, spans } = buildDocTextIndex(ed.state.doc);
+          const { text, spans } = docIndexRef.current;
           for (const m of grammarMatchesRef.current) {
             const r = docRangeForTextSlice(spans, m.offset, m.length);
             if (r && pos >= r.from && pos < r.to) {
@@ -1059,6 +1159,9 @@ export function TranscriptionEditor() {
   useEffect(() => {
     if (!editor) return;
     const handler = () => {
+      // Memoize document indexing (Issue 05)
+      docIndexRef.current = buildDocTextIndex(editor.state.doc);
+
       debouncedSubmit();
       rebuildWhisperSegmentIndex();
 
@@ -1072,7 +1175,7 @@ export function TranscriptionEditor() {
           const ed = editorRef.current;
           const tok = token;
           if (!ed || !tok || !grammarEnabledRef.current) return;
-          const { text } = buildDocTextIndex(ed.state.doc);
+          const { text } = docIndexRef.current;
           if (!text.trim()) {
             setGrammarNote("");
             return;
@@ -1130,6 +1233,9 @@ export function TranscriptionEditor() {
       }
     };
     editor.on("update", handler);
+    // Initial indexing
+    docIndexRef.current = buildDocTextIndex(editor.state.doc);
+
     return () => {
       editor.off("update", handler);
       if (pendingRef.current) clearTimeout(pendingRef.current);
@@ -1209,230 +1315,262 @@ export function TranscriptionEditor() {
   }
 
   return (
-    <div className="za-workspace-container">
-      {/* Header / Toolbar Section */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: "var(--spacing-6)",
-          padding: "var(--spacing-4)",
-          borderRadius: "var(--radius-md)",
-        }}
-        className="za-glass za-card-glow"
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-4)" }}>
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            <span style={{ fontWeight: 700, fontSize: "1.1rem" }}>Audio #{audioId}</span>
-            <span style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
-              {status || "Syncing..."}
-            </span>
+    <div className="za-workspace-container" style={{ display: "flex", flexDirection: "row", padding: 0 }}>
+      {/* Sidebar Toggle (Left edge hover or static) */}
+      
+      {/* Main Workspace Area */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "var(--spacing-8) 5%", transition: "all 0.3s ease" }}>
+        
+        {/* Header / Toolbar Section */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "var(--spacing-6)",
+            padding: "var(--spacing-4)",
+            borderRadius: "var(--radius-md)",
+          }}
+          className="za-glass za-card-glow"
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-4)" }}>
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              <span style={{ fontWeight: 700, fontSize: "1.1rem" }}>Audio #{audioId}</span>
+              <span style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
+                {status || "Syncing..."}
+              </span>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-2)" }}>
+            <button
+              type="button"
+              className={`za-btn ${isTimelineOpen ? "za-btn--primary" : "za-btn--ghost"}`}
+              title="Version History (Snapshots)"
+              onClick={() => setIsTimelineOpen(!isTimelineOpen)}
+            >
+              <History size={18} />
+            </button>
+
+            <button
+              type="button"
+              className={`za-btn ${ghostMode ? "za-btn--primary" : "za-btn--ghost"}`}
+              title="Toggle Ghost Mode (Visual Diff)"
+              onClick={() => setGhostMode((v) => !v)}
+            >
+              <Ghost size={18} />
+            </button>
+
+            <button
+              type="button"
+              className="za-btn za-btn--ghost"
+              title={ecoMode ? "Disable Eco-Mode" : "Enable Eco-Mode (Better Performance)"}
+              onClick={() => setEcoMode(!ecoMode)}
+              style={{ color: ecoMode ? "var(--color-primary)" : "inherit" }}
+            >
+              {ecoMode ? <ZapOff size={18} /> : <Zap size={18} />}
+            </button>
+            
+            <button
+              type="button"
+              className={`za-btn ${grammarEnabled ? "za-btn--primary" : "za-btn--ghost"}`}
+              title="Toggle grammar highlights"
+              onClick={() => setGrammarEnabled((v) => !v)}
+            >
+              <Type size={18} />
+            </button>
           </div>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-2)" }}>
-          <button
-            type="button"
-            className={`za-btn ${ghostMode ? "za-btn--primary" : "za-btn--ghost"}`}
-            title="Toggle Ghost Mode (Visual Diff)"
-            onClick={() => setGhostMode((v) => !v)}
-          >
-            <Ghost size={18} />
-          </button>
+        {/* Main Editor Canvas */}
+        <div
+          style={{
+            position: "relative",
+            flex: 1,
+          }}
+          ref={editorContainerRef}
+        >
+          {editor && (
+            <>
+              <AzureBubbleMenu editor={editor} audioRef={audioRef} />
 
-          <button
-            type="button"
-            className="za-btn za-btn--ghost"
-            title={ecoMode ? "Disable Eco-Mode" : "Enable Eco-Mode (Better Performance)"}
-            onClick={() => setEcoMode(!ecoMode)}
-            style={{ color: ecoMode ? "var(--color-primary)" : "inherit" }}
-          >
-            {ecoMode ? <ZapOff size={18} /> : <Zap size={18} />}
-          </button>
-          
-          <button
-            type="button"
-            className={`za-btn ${grammarEnabled ? "za-btn--primary" : "za-btn--ghost"}`}
-            title="Toggle grammar highlights"
-            onClick={() => setGrammarEnabled((v) => !v)}
-          >
-            <Type size={18} />
-          </button>
-        </div>
-      </div>
+              <FloatingMenu editor={editor} tippyOptions={{ duration: 300 }}>
+                <div className="za-glass za-card-glow" style={{ 
+                  display: "flex", 
+                  gap: "var(--spacing-1)", 
+                  padding: "var(--spacing-1)",
+                  borderRadius: "var(--radius-sm)" 
+                }}>
+                  <button
+                    onClick={() => {/* editor.chain().focus().toggleBold().run() */}}
+                    className="za-btn za-btn--ghost"
+                    style={{ padding: "6px" }}
+                  >
+                    <Bold size={16} />
+                  </button>
+                  <button
+                    onClick={() => {/* editor.chain().focus().toggleItalic().run() */}}
+                    className="za-btn za-btn--ghost"
+                    style={{ padding: "6px" }}
+                  >
+                    <Italic size={16} />
+                  </button>
+                </div>
+              </FloatingMenu>
+            </>
+          )}
 
-      {/* Main Editor Canvas */}
-      <div
-        style={{
-          position: "relative",
-          flex: 1,
-        }}
-        ref={editorContainerRef}
-      >
-        {editor && (
-          <>
-            <AzureBubbleMenu editor={editor} audioRef={audioRef} />
+          <EditorContent editor={editor} className="za-editor-canvas" />
 
-            <FloatingMenu editor={editor} tippyOptions={{ duration: 300 }}>
-              <div className="za-glass za-card-glow" style={{ 
-                display: "flex", 
-                gap: "var(--spacing-1)", 
-                padding: "var(--spacing-1)",
-                borderRadius: "var(--radius-sm)" 
-              }}>
-                <button
-                  onClick={() => {/* editor.chain().focus().toggleBold().run() */}}
-                  className="za-btn za-btn--ghost"
-                  style={{ padding: "6px" }}
-                >
-                  <Bold size={16} />
-                </button>
-                <button
-                  onClick={() => {/* editor.chain().focus().toggleItalic().run() */}}
-                  className="za-btn za-btn--ghost"
-                  style={{ padding: "6px" }}
-                >
-                  <Italic size={16} />
-                </button>
+          {/* Bible Popup (Story 11.4) */}
+          {biblePopup && token && (
+            <div id="zachai-bible-popup" className="za-bible-popup">
+              <BiblePreviewPopup
+                x={biblePopup.x}
+                y={biblePopup.y}
+                reference={biblePopup.reference}
+                token={token}
+              />
+            </div>
+          )}
+
+          {/* Grammar Popup (from Story 5.5) */}
+          {grammarPopup && (
+            <div
+              id="zachai-grammar-popup"
+              role="dialog"
+              className="za-glass za-card-glow"
+              style={{
+                position: "fixed",
+                left: Math.min(grammarPopup.x, typeof window !== "undefined" ? window.innerWidth - 260 : grammarPopup.x),
+                top: grammarPopup.y + 8,
+                zIndex: 50,
+                maxWidth: 260,
+                padding: "var(--spacing-3)",
+                borderRadius: "var(--radius-md)",
+                fontSize: "0.8125rem",
+              }}
+            >
+              <div style={{ marginBottom: "var(--spacing-2)", fontWeight: 600 }}>
+                {grammarPopup.match.shortMessage || grammarPopup.match.message || "Suggestion"}
               </div>
-            </FloatingMenu>
-          </>
-        )}
-
-        <EditorContent editor={editor} className="za-editor-canvas" />
-
-        {/* Bible Popup (Story 11.4) */}
-        {biblePopup && token && (
-          <div id="zachai-bible-popup" className="za-bible-popup">
-            <BiblePreviewPopup
-              x={biblePopup.x}
-              y={biblePopup.y}
-              reference={biblePopup.reference}
-              token={token}
-            />
-          </div>
-        )}
-
-        {/* Grammar Popup (from Story 5.5) */}
-        {grammarPopup && (
-          <div
-            id="zachai-grammar-popup"
-            role="dialog"
-            className="za-glass za-card-glow"
-            style={{
-              position: "fixed",
-              left: Math.min(grammarPopup.x, typeof window !== "undefined" ? window.innerWidth - 260 : grammarPopup.x),
-              top: grammarPopup.y + 8,
-              zIndex: 50,
-              maxWidth: 260,
-              padding: "var(--spacing-3)",
-              borderRadius: "var(--radius-md)",
-              fontSize: "0.8125rem",
-            }}
-          >
-            <div style={{ marginBottom: "var(--spacing-2)", fontWeight: 600 }}>
-              {grammarPopup.match.shortMessage || grammarPopup.match.message || "Suggestion"}
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-1)" }}>
+                {(grammarPopup.match.replacements?.length
+                  ? grammarPopup.match.replacements
+                  : []
+                ).slice(0, 5).map((rep, idx) => (
+                  <button
+                    key={`${rep}-${idx}`}
+                    type="button"
+                    onClick={() => applyGrammarReplacement(rep)}
+                    className="za-btn za-btn--ghost"
+                    style={{ textAlign: "left", fontSize: "0.8rem" }}
+                  >
+                    {rep}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-1)" }}>
-              {(grammarPopup.match.replacements?.length
-                ? grammarPopup.match.replacements
-                : []
-              ).slice(0, 5).map((rep, idx) => (
-                <button
-                  key={`${rep}-${idx}`}
-                  type="button"
-                  onClick={() => applyGrammarReplacement(rep)}
-                  className="za-btn za-btn--ghost"
-                  style={{ textAlign: "left", fontSize: "0.8rem" }}
-                >
-                  {rep}
-                </button>
-              ))}
-            </div>
+          )}
+        </div>
+
+        {/* Audio Bottom Dock (Task 5) */}
+        <div
+          style={{
+            position: "fixed",
+            bottom: "var(--spacing-6)",
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: "90%",
+            maxWidth: "800px",
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--spacing-4)",
+            padding: "var(--spacing-3) var(--spacing-6)",
+            borderRadius: "999px",
+            zIndex: 100,
+          }}
+          className="za-glass za-card-glow"
+        >
+          <div style={{ display: "flex", gap: "var(--spacing-2)" }}>
+            <button onClick={() => seekRelative(-5)} className="za-btn za-btn--ghost">
+              <SkipBack size={20} />
+            </button>
+            <button onClick={togglePlay} className="za-btn za-btn--primary" style={{ borderRadius: "50%", width: "44px", height: "44px", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>
+              {isPlaying ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" style={{ marginLeft: "2px" }} />}
+            </button>
+            <button onClick={() => seekRelative(5)} className="za-btn za-btn--ghost">
+              <SkipForward size={20} />
+            </button>
           </div>
-        )}
+
+          {/* Stylized Waveform Placeholder */}
+          <div style={{ flex: 1, height: "32px", display: "flex", alignItems: "center", gap: "2px" }}>
+            {Array.from({ length: 40 }).map((_, i) => (
+              <div 
+                key={i} 
+                style={{ 
+                  flex: 1, 
+                  height: `${20 + Math.sin(i * 0.5) * 15}%`, 
+                  background: "var(--color-primary)",
+                  opacity: 0.3 + (i % 5) * 0.1,
+                  borderRadius: "1px"
+                }} 
+              />
+            ))}
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-2)" }}>
+            <Gauge size={18} className="color-text-muted" />
+            <select 
+              value={audioPlaybackSpeed} 
+              onChange={(e) => {
+                const val = parseFloat(e.target.value);
+                setAudioPlaybackSpeed(val);
+                if (audioRef.current) audioRef.current.playbackRate = val;
+              }}
+              className="za-select"
+              style={{ width: "auto", padding: "4px 8px" }}
+            >
+              <option value="0.5">0.5x</option>
+              <option value="1">1.0x</option>
+              <option value="1.25">1.25x</option>
+              <option value="1.5">1.5x</option>
+              <option value="2">2.0x</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Footer Info */}
+        <div style={{ 
+          marginTop: "var(--spacing-8)", 
+          fontSize: "0.75rem", 
+          color: "var(--color-text-muted)",
+          textAlign: "center",
+          paddingBottom: "80px" // Space for the dock
+        }}>
+          <span>{audioStatusLine}</span>
+          {collabLine && <span style={{ marginLeft: "1rem" }}>{collabLine}</span>}
+          {grammarNote && <span style={{ marginLeft: "1rem", color: "var(--color-secondary)" }}>{grammarNote}</span>}
+        </div>
       </div>
 
-      {/* Audio Bottom Dock (Task 5) */}
-      <div
-        style={{
-          position: "fixed",
-          bottom: "var(--spacing-6)",
-          left: "50%",
-          transform: "translateX(-50%)",
-          width: "90%",
-          maxWidth: "800px",
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--spacing-4)",
-          padding: "var(--spacing-3) var(--spacing-6)",
-          borderRadius: "999px",
-          zIndex: 100,
+      {/* Version History Sidebar (Story 12.2) */}
+      <HistoryPanel 
+        isOpen={isTimelineOpen}
+        onClose={() => setIsTimelineOpen(false)}
+        snapshots={snapshots}
+        onSelectSnapshot={handleSelectSnapshot}
+        onHoverSnapshot={handleHoverSnapshot}
+        isLoading={isLoadingSnapshot}
+        activeSnapshotId={activeSnapshotId}
+        ghostMode={ghostMode}
+        onClearDiff={() => {
+          setGhostMode(false);
+          setOriginalContent("");
+          setActiveSnapshotId(null);
         }}
-        className="za-glass za-card-glow"
-      >
-        <div style={{ display: "flex", gap: "var(--spacing-2)" }}>
-          <button onClick={() => seekRelative(-5)} className="za-btn za-btn--ghost">
-            <SkipBack size={20} />
-          </button>
-          <button onClick={togglePlay} className="za-btn za-btn--primary" style={{ borderRadius: "50%", width: "44px", height: "44px", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>
-            {isPlaying ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" style={{ marginLeft: "2px" }} />}
-          </button>
-          <button onClick={() => seekRelative(5)} className="za-btn za-btn--ghost">
-            <SkipForward size={20} />
-          </button>
-        </div>
-
-        {/* Stylized Waveform Placeholder */}
-        <div style={{ flex: 1, height: "32px", display: "flex", alignItems: "center", gap: "2px" }}>
-          {Array.from({ length: 40 }).map((_, i) => (
-            <div 
-              key={i} 
-              style={{ 
-                flex: 1, 
-                height: `${20 + Math.sin(i * 0.5) * 15}%`, 
-                background: "var(--color-primary)",
-                opacity: 0.3 + (i % 5) * 0.1,
-                borderRadius: "1px"
-              }} 
-            />
-          ))}
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-2)" }}>
-          <Gauge size={18} className="color-text-muted" />
-          <select 
-            value={audioPlaybackSpeed} 
-            onChange={(e) => {
-              const val = parseFloat(e.target.value);
-              setAudioPlaybackSpeed(val);
-              if (audioRef.current) audioRef.current.playbackRate = val;
-            }}
-            className="za-select"
-            style={{ width: "auto", padding: "4px 8px" }}
-          >
-            <option value="0.5">0.5x</option>
-            <option value="1">1.0x</option>
-            <option value="1.25">1.25x</option>
-            <option value="1.5">1.5x</option>
-            <option value="2">2.0x</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Footer Info */}
-      <div style={{ 
-        marginTop: "var(--spacing-8)", 
-        fontSize: "0.75rem", 
-        color: "var(--color-text-muted)",
-        textAlign: "center",
-        paddingBottom: "80px" // Space for the dock
-      }}>
-        <span>{audioStatusLine}</span>
-        {collabLine && <span style={{ marginLeft: "1rem" }}>{collabLine}</span>}
-        {grammarNote && <span style={{ marginLeft: "1rem", color: "var(--color-secondary)" }}>{grammarNote}</span>}
-      </div>
+      />
     </div>
   );
 }

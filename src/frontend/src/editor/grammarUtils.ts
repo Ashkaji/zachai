@@ -44,35 +44,45 @@ export function buildDocTextIndex(doc: PMNode): { text: string; spans: TextSpan[
   return { text, spans };
 }
 
-function sliceCoveredBySpans(spans: TextSpan[], offset: number, end: number): boolean {
-  for (let i = offset; i < end; i++) {
-    const covered = spans.some((s) => i >= s.textStart && i < s.textEnd);
-    if (!covered) return false;
-  }
-  return true;
-}
-
-/** Map a UTF-16 slice in `buildDocTextIndex` text to an inclusive-exclusive ProseMirror range. */
+/** 
+ * Map a UTF-16 slice in `buildDocTextIndex` text to an inclusive-exclusive ProseMirror range.
+ * Now handles characters not covered by spans (like BLOCK_SEP) by finding the nearest positions.
+ */
 export function docRangeForTextSlice(
   spans: TextSpan[],
   offset: number,
   length: number,
 ): { from: number; to: number } | null {
-  if (length <= 0 || offset < 0) return null;
+  if (length <= 0 || offset < 0 || spans.length === 0) return null;
   const end = offset + length;
-  if (!sliceCoveredBySpans(spans, offset, end)) return null;
+
   let fromPos: number | null = null;
   let toPos: number | null = null;
+
   for (const s of spans) {
     const overlapStart = Math.max(offset, s.textStart);
     const overlapEnd = Math.min(end, s.textEnd);
-    if (overlapStart >= overlapEnd) continue;
-    const localFrom = s.from + (overlapStart - s.textStart);
-    const localTo = s.from + (overlapEnd - s.textStart);
-    if (fromPos === null) fromPos = localFrom;
-    toPos = localTo;
+    
+    if (overlapStart < overlapEnd) {
+      const localFrom = s.from + (overlapStart - s.textStart);
+      const localTo = s.from + (overlapEnd - s.textStart);
+      if (fromPos === null || localFrom < fromPos) fromPos = localFrom;
+      if (toPos === null || localTo > toPos) toPos = localTo;
+    }
   }
-  if (fromPos === null || toPos === null) return null;
+
+  // If no overlap with actual text spans was found, check if it's a separator-only slice
+  if (fromPos === null || toPos === null) {
+    // Find the span immediately following the offset to get a fallback position
+    const nextSpan = spans.find(s => s.textStart >= offset);
+    if (nextSpan) {
+      return { from: nextSpan.from, to: nextSpan.from };
+    }
+    // Fallback to the end of the last span
+    const lastSpan = spans[spans.length - 1]!;
+    return { from: lastSpan.to, to: lastSpan.to };
+  }
+
   return { from: fromPos, to: toPos };
 }
 
