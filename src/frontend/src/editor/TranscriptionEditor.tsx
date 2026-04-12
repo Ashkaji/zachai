@@ -25,6 +25,7 @@ import { WhisperSegment, type WhisperSegmentAttrs } from "./WhisperSegmentMark";
 import { BiblicalCitation } from "./BiblicalCitationMark";
 import { BubbleMenuShortcut } from "./BubbleMenuShortcut";
 import { AzureBubbleMenu } from "./AzureBubbleMenu";
+import { BiblePreviewPopup } from "./BiblePreviewPopup";
 import {
   MAX_RECONNECT_ATTEMPTS,
   computeReconnectDelayMs,
@@ -201,12 +202,18 @@ export function TranscriptionEditor() {
   const [grammarNote, setGrammarNote] = useState("");
   const [grammarEnabled, setGrammarEnabled] = useState(true);
   const [ecoMode, setEcoMode] = useState(false);
+  
   const [grammarPopup, setGrammarPopup] = useState<{
     x: number;
     y: number;
     match: GrammarMatch;
-    /** Substring from grammar index at popup open; apply recomputes range and must match this. */
     expectedSlice: string;
+  } | null>(null);
+
+  const [biblePopup, setBiblePopup] = useState<{
+    x: number;
+    y: number;
+    reference: string;
   } | null>(null);
 
   // Task 2: Sync ecoMode to root class for CSS conditional styling
@@ -399,6 +406,7 @@ export function TranscriptionEditor() {
     ed.view.setProps({
       decorations: (state) => {
         const decos: Decoration[] = [];
+        // Only paint grammar/spelling if enabled (Story 11.4 AC 1.3)
         if (grammarEnabledRef.current) {
           const { spans } = buildDocTextIndex(state.doc);
           for (const m of grammarMatchesRef.current) {
@@ -793,8 +801,24 @@ export function TranscriptionEditor() {
 
     const onClick = (ev: MouseEvent) => {
       const target = ev.target as HTMLElement | null;
-      if (target?.closest?.("#zachai-grammar-popup")) return;
+      if (target?.closest?.("#zachai-grammar-popup, .za-bible-popup")) return;
 
+      // Reset popups
+      setGrammarPopup(null);
+      setBiblePopup(null);
+
+      // 1. Bible Citation detection (Story 11.4 AC 2.1)
+      const bibleEl = target?.closest?.(".za-biblical-citation") as HTMLElement | null;
+      if (bibleEl) {
+        setBiblePopup({
+          x: ev.clientX,
+          y: ev.clientY,
+          reference: bibleEl.innerText.trim(),
+        });
+        return;
+      }
+
+      // 2. Grammar Suggestion detection (Story 5.5)
       if (grammarEnabledRef.current) {
         const gEl = target?.closest?.(".zachai-grammar-spelling, .zachai-grammar-style");
         if (gEl) {
@@ -822,8 +846,6 @@ export function TranscriptionEditor() {
           }
         }
       }
-
-      setGrammarPopup(null);
 
       const span = target?.closest?.("span[data-whisper-segment]") as HTMLElement | null;
       if (!span) return;
@@ -966,15 +988,17 @@ export function TranscriptionEditor() {
   }, [submitCorrections]);
 
   useEffect(() => {
-    if (!grammarPopup) return;
+    if (!grammarPopup && !biblePopup) return;
     const onDown = (e: MouseEvent) => {
-      const el = document.getElementById("zachai-grammar-popup");
-      if (el?.contains(e.target as Node)) return;
+      const gEl = document.getElementById("zachai-grammar-popup");
+      const bEl = document.getElementById("zachai-bible-popup");
+      if (gEl?.contains(e.target as Node) || bEl?.contains(e.target as Node)) return;
       setGrammarPopup(null);
+      setBiblePopup(null);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [grammarPopup]);
+  }, [grammarPopup, biblePopup]);
 
   useEffect(() => {
     if (!editor) return;
@@ -1212,6 +1236,18 @@ export function TranscriptionEditor() {
         )}
 
         <EditorContent editor={editor} className="za-editor-canvas" />
+
+        {/* Bible Popup (Story 11.4) */}
+        {biblePopup && token && (
+          <div id="zachai-bible-popup" className="za-bible-popup">
+            <BiblePreviewPopup
+              x={biblePopup.x}
+              y={biblePopup.y}
+              reference={biblePopup.reference}
+              token={token}
+            />
+          </div>
+        )}
 
         {/* Grammar Popup (from Story 5.5) */}
         {grammarPopup && (

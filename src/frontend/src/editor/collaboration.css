@@ -125,13 +125,15 @@
 
 /* Story 5.5 — LanguageTool grammar (docs/ux-design.md §5.D) */
 .zachai-grammar-spelling {
-  text-decoration: underline wavy var(--color-error);
+  text-decoration: underline wavy #ff4d4d;
   text-underline-offset: 4px;
+  text-decoration-thickness: 1.5px;
 }
 
 .zachai-grammar-style {
-  text-decoration: underline wavy var(--color-secondary);
+  text-decoration: underline wavy #f59e0b;
   text-underline-offset: 4px;
+  text-decoration-thickness: 1.5px;
 }
 
 /* Biblical Citations (Story 11.1) */
