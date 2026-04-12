@@ -117,7 +117,7 @@ development_status:
   # ─── EPIC 11 — L3/L4 - Workspace "Karaoke" & Réconciliation Experte ──────
   epic-11: in-progress
   11-1-workspace-karaoke-surlignage-neon-eco-mode: done
-  11-2-menu-contextuel-azure-accessibilite-clavier: ready-for-dev
+  11-2-menu-contextuel-azure-accessibilite-clavier: done
   11-3-interface-reconciliation-side-by-side-resizable: backlog
   11-4-intelligence-linguistique-bible-preview-async: backlog
   11-5-moteur-biblique-local-ingestion-donnees-souverainete: backlog

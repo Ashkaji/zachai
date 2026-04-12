@@ -2302,8 +2302,8 @@ async def log_audit_action(
     Asynchronous; caller must commit the transaction (usually shared with the main action).
     """
     try:
-        # details is dict, AuditLog expects bytes (JSON)
-        details_bytes = json.dumps(details).encode("utf-8")
+        # details is dict, AuditLog expects bytes (JSON). Use default=str for non-serializable types.
+        details_bytes = json.dumps(details, default=str).encode("utf-8")
         log = AuditLog(
             project_id=project_id,
             user_id=user_id,
@@ -3009,6 +3009,8 @@ async def get_project_audit_trail(
     project_id: int,
     payload: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
 ) -> list:
     """Project audit log (chronological); Manager owner or Admin."""
     roles = get_roles(payload)
@@ -3022,6 +3024,8 @@ async def get_project_audit_trail(
         select(AuditLog)
         .where(AuditLog.project_id == project_id)
         .order_by(AuditLog.created_at.desc())
+        .limit(limit)
+        .offset(offset)
     )
     res = await db.execute(stmt)
     logs = res.scalars().all()

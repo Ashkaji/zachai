@@ -95,7 +95,8 @@ export function AppShell({
           display: "flex",
           flexDirection: "column",
           padding: isCollapsed ? "var(--spacing-4)" : "var(--spacing-6)",
-          border: "1px solid var(--color-outline-ghost)",
+          border: "none",
+          boxShadow: "var(--glow-primary), 0 8px 32px rgba(0,0,0,0.1)",
           transition: "width 0.3s ease, padding 0.3s ease",
           overflow: "hidden"
         }}
@@ -329,8 +330,8 @@ export function AppShell({
               padding: "var(--spacing-6)",
               display: "flex",
               flexDirection: "column",
-              boxShadow: "0 20px 40px rgba(0,0,0,0.3)",
-              border: "1px solid var(--color-outline-ghost)",
+              boxShadow: "0 20px 40px rgba(0,0,0,0.3), var(--glow-primary)",
+              border: "none",
             }}
           >
             <h3 style={{ margin: "0 0 var(--spacing-4)", fontSize: "1.1rem", fontWeight: 800 }}>Notifications</h3>

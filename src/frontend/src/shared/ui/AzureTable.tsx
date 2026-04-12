@@ -1,5 +1,5 @@
 import { List } from "react-window";
-import { type ReactNode, useMemo, type CSSProperties } from "react";
+import { type ReactNode, useMemo, type CSSProperties, memo } from "react";
 
 export interface AzureTableColumn {
   key: string;
@@ -22,7 +22,8 @@ interface RowData<T> {
   renderCell: (item: T, column: AzureTableColumn) => ReactNode;
 }
 
-const Row = <T,>({
+// Optimization: Memoize the Row component (Story 11 review)
+const Row = memo(<T,>({
   index,
   style,
   data,
@@ -67,7 +68,7 @@ const Row = <T,>({
       ))}
     </div>
   );
-};
+}) as any;
 
 export function AzureTable<T>({
   columns,

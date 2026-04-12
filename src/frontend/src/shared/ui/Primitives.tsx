@@ -150,7 +150,7 @@ export function DataTable({
                   width: "48px",
                   padding: "12px 16px",
                   background: "var(--color-surface-hi)",
-                  borderBottom: "2px solid var(--color-bg)",
+                  borderBottom: "none", // No-Line rule
                 }}
               >
                 <input
@@ -173,7 +173,7 @@ export function DataTable({
                   fontWeight: 700,
                   textTransform: "uppercase",
                   letterSpacing: "0.05em",
-                  borderBottom: "2px solid var(--color-bg)",
+                  borderBottom: "none", // No-Line rule
                 }}
               >
                 {column}
@@ -198,7 +198,7 @@ export function DataTable({
             <td
               style={{
                 padding: "16px",
-                borderBottom: "1px solid var(--color-surface-low)",
+                borderBottom: "none", // No-Line rule
               }}
             >
               <input
@@ -216,7 +216,7 @@ export function DataTable({
                     style={{
                       padding: "16px",
                       fontSize: "0.9rem",
-                      borderBottom: "1px solid var(--color-surface-low)",
+                      borderBottom: "none", // No-Line rule
                     }}
                   >
                     {cell}

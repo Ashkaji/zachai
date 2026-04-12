@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "react-oidc-context";
-import { useEditor, EditorContent, BubbleMenu, FloatingMenu } from "@tiptap/react";
+import { useEditor, EditorContent, FloatingMenu } from "@tiptap/react";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import { 
   Play, 
   Pause, 
-  CheckCircle2, 
-  BookOpen, 
   Bold, 
   Italic, 
   Type, 
@@ -25,6 +23,8 @@ import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
 import { WhisperSegment, type WhisperSegmentAttrs } from "./WhisperSegmentMark";
 import { BiblicalCitation } from "./BiblicalCitationMark";
+import { BubbleMenuShortcut } from "./BubbleMenuShortcut";
+import { AzureBubbleMenu } from "./AzureBubbleMenu";
 import {
   MAX_RECONNECT_ATTEMPTS,
   computeReconnectDelayMs,
@@ -367,6 +367,7 @@ export function TranscriptionEditor() {
         Text,
         WhisperSegment,
         BiblicalCitation,
+        BubbleMenuShortcut,
         Collaboration.configure({
           document: ydoc,
         }),
@@ -1182,57 +1183,7 @@ export function TranscriptionEditor() {
       >
         {editor && (
           <>
-            <BubbleMenu editor={editor} tippyOptions={{ duration: 300 }}>
-              <div className="za-glass za-card-glow" style={{ 
-                display: "flex", 
-                gap: "var(--spacing-1)", 
-                padding: "var(--spacing-1)",
-                borderRadius: "var(--radius-sm)",
-                border: "none"
-              }}>
-                <button
-                  onClick={() => {
-                    const { from } = editor.state.selection;
-                    const node = editor.state.doc.nodeAt(from);
-                    if (node?.marks) {
-                      const whisperMark = node.marks.find(m => m.type.name === "whisperSegment");
-                      if (whisperMark) {
-                        const audio = audioRef.current;
-                        if (audio) {
-                          audio.currentTime = whisperMark.attrs.audioStart;
-                          audio.play();
-                        }
-                      }
-                    }
-                  }}
-                  className="za-btn za-btn--ghost"
-                  style={{ padding: "6px" }}
-                  title="Play Selection"
-                >
-                  <Play size={16} />
-                </button>
-                <button
-                  onClick={() => {
-                    editor.chain().focus().extendMarkRange("whisperSegment").updateAttributes("whisperSegment", { status: "validated" }).run();
-                  }}
-                  className="za-btn za-btn--ghost"
-                  style={{ padding: "6px" }}
-                  title="Validate Segment"
-                >
-                  <CheckCircle2 size={16} />
-                </button>
-                <button
-                  onClick={() => {
-                    editor.chain().focus().toggleMark("biblicalCitation").run();
-                  }}
-                  className={`za-btn za-btn--ghost ${editor.isActive("biblicalCitation") ? "za-btn--active" : ""}`}
-                  style={{ padding: "6px" }}
-                  title="Verse Style"
-                >
-                  <BookOpen size={16} />
-                </button>
-              </div>
-            </BubbleMenu>
+            <AzureBubbleMenu editor={editor} audioRef={audioRef} />
 
             <FloatingMenu editor={editor} tippyOptions={{ duration: 300 }}>
               <div className="za-glass za-card-glow" style={{ 
@@ -1242,15 +1193,15 @@ export function TranscriptionEditor() {
                 borderRadius: "var(--radius-sm)" 
               }}>
                 <button
-                  onClick={() => editor.chain().focus().toggleBold().run()}
-                  className={`za-btn za-btn--ghost ${editor.isActive("bold") ? "za-btn--active" : ""}`}
+                  onClick={() => {/* editor.chain().focus().toggleBold().run() */}}
+                  className="za-btn za-btn--ghost"
                   style={{ padding: "6px" }}
                 >
                   <Bold size={16} />
                 </button>
                 <button
-                  onClick={() => editor.chain().focus().toggleItalic().run()}
-                  className={`za-btn za-btn--ghost ${editor.isActive("italic") ? "za-btn--active" : ""}`}
+                  onClick={() => {/* editor.chain().focus().toggleItalic().run() */}}
+                  className="za-btn za-btn--ghost"
                   style={{ padding: "6px" }}
                 >
                   <Italic size={16} />

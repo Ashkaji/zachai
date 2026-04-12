@@ -24,9 +24,14 @@ class NotificationEventBus {
   }
 
   emit(notification: Omit<Notification, "id" | "timestamp">) {
+    // Fallback for crypto.randomUUID in non-secure or legacy environments
+    const id = (typeof crypto !== "undefined" && crypto.randomUUID) 
+      ? crypto.randomUUID() 
+      : Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
+
     const fullNotification: Notification = {
       ...notification,
-      id: crypto.randomUUID(),
+      id,
       timestamp: new Date().toISOString(),
     };
     this.listeners.forEach((listener) => listener(fullNotification));

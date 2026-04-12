@@ -1,7 +1,8 @@
 export function formatIso(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString();
+  // Use French locale by default (Story 11 review)
+  return d.toLocaleString("fr-FR");
 }
 
 export function formatDuration(seconds: number): string {
