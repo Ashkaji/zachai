@@ -6,7 +6,7 @@ import {
   cancelAccountDeletion 
 } from "./ProfileApi";
 
-global.fetch = vi.fn();
+vi.stubGlobal('fetch', vi.fn());
 
 describe("ProfileApi", () => {
   beforeEach(() => {

@@ -54,6 +54,11 @@ export function ReconciliationWorkspace({ audioId, onBack }: ReconciliationWorks
   const isScrolling = useRef<"left" | "right" | null>(null);
 
   useEffect(() => {
+    // Logic using token and audioId will go here when API is integrated
+    if (!token || !audioId) return;
+  }, [token, audioId]);
+
+  useEffect(() => {
     if (!syncScroll) return;
 
     const handleScroll = (source: "left" | "right") => () => {

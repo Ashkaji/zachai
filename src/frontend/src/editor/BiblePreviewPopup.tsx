@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { apiFetch } from "../auth/api-client";
 
 interface BiblePreviewPopupProps {
   x: number;
@@ -9,7 +8,7 @@ interface BiblePreviewPopupProps {
 }
 
 /** Mock function to simulate a Bible Engine API call until it's implemented. */
-async function mockFetchVerse(reference: string, token: string): Promise<string> {
+async function mockFetchVerse(reference: string, _token: string): Promise<string> {
   // Simulate network delay
   await new Promise((resolve) => setTimeout(resolve, 800));
   
@@ -39,7 +38,7 @@ export function BiblePreviewPopup({ x, y, reference, token }: BiblePreviewPopupP
           setLoading(false);
         }
       })
-      .catch((err) => {
+      .catch(() => {
         if (!cancelled) {
           setError("Erreur lors de la récupération du verset.");
           setLoading(false);

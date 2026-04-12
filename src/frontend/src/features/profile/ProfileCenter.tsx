@@ -3,15 +3,11 @@ import { useAuth } from "react-oidc-context";
 import { bearerForApi } from "../../auth/api-client";
 import { Card, Badge } from "../../shared/ui/Primitives";
 import { 
-  Shield, 
   Download, 
   Trash2, 
   User, 
   RefreshCcw, 
   AlertTriangle,
-  Database,
-  Eye,
-  CheckCircle2
 } from "lucide-react";
 import { 
   fetchMyProfile, 
@@ -51,7 +47,7 @@ function Toggle({
           border: "none",
           cursor: disabled ? "not-allowed" : "pointer",
           transition: "all 0.2s ease",
-          opacity: disabled ? 0.5 : 1,
+          opacity: disabled ? "0.5" : 1,
           boxShadow: checked ? "var(--glow-primary)" : "inset 0 2px 4px rgba(0,0,0,0.1)"
         }}
       >
@@ -131,19 +127,15 @@ export function ProfileCenter() {
       setProfile({ ...profile, consents: newStatus });
       
       notify({
-        id: `consent-upd-${Date.now()}`,
-        tier: "standard",
+        tier: "informational",
         title: "Consentements mis à jour",
         body: "Vos préférences RGPD ont été enregistrées.",
-        timestamp: new Date().toISOString()
       });
     } catch (e: any) {
       notify({
-        id: `consent-err-${Date.now()}`,
         tier: "critical",
         title: "Erreur",
         body: e.message || "Impossible de mettre à jour les consentements.",
-        timestamp: new Date().toISOString()
       });
     } finally {
       setBusy(false);
@@ -156,19 +148,15 @@ export function ProfileCenter() {
       setBusy(true);
       await exportMyData(token);
       notify({
-        id: `export-ok-${Date.now()}`,
-        tier: "standard",
+        tier: "informational",
         title: "Export prêt",
         body: "Votre archive de données a été générée avec succès.",
-        timestamp: new Date().toISOString()
       });
     } catch (e: any) {
       notify({
-        id: `export-err-${Date.now()}`,
         tier: "critical",
         title: "Erreur d'export",
         body: e.message,
-        timestamp: new Date().toISOString()
       });
     } finally {
       setBusy(false);
@@ -182,11 +170,9 @@ export function ProfileCenter() {
       const newStatus = await requestAccountDeletion(token);
       setProfile(p => p ? { ...p, consents: newStatus } : null);
       notify({
-        id: `delete-req-${Date.now()}`,
         tier: "critical",
         title: "Suppression demandée",
         body: "Votre demande a été prise en compte. Le compte sera supprimé dans 48 heures.",
-        timestamp: new Date().toISOString()
       });
     } catch (e: any) {
       setError(e.message);
@@ -202,11 +188,9 @@ export function ProfileCenter() {
       const newStatus = await cancelAccountDeletion(token);
       setProfile(p => p ? { ...p, consents: newStatus } : null);
       notify({
-        id: `delete-cancel-${Date.now()}`,
-        tier: "standard",
+        tier: "informational",
         title: "Suppression annulée",
         body: "Votre demande de suppression de compte a été annulée.",
-        timestamp: new Date().toISOString()
       });
     } catch (e: any) {
       setError(e.message);

@@ -43,6 +43,7 @@ import {
   type GrammarMatch,
   type TextSpan,
 } from "./grammarUtils";
+import { useNotifications } from "../shared/notifications/NotificationContext";
 import "./collaboration.css";
 
 // --- Types for Ghost Mode ---
@@ -164,6 +165,7 @@ function collectMarkedSegments(
 export function TranscriptionEditor() {
   const auth = useAuth();
   const token = useMemo(() => bearerForApi(auth.user), [auth.user]);
+  const { notify } = useNotifications();
   const audioIdParam = new URLSearchParams(window.location.search).get("audio_id");
   const audioId =
     audioIdParam && /^\d+$/.test(audioIdParam) ? parseInt(audioIdParam, 10) : null;
@@ -242,6 +244,47 @@ export function TranscriptionEditor() {
   const [isTimelineOpen, setIsTimelineOpen] = useState(false);
   const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(false);
   const [activeSnapshotId, setActiveSnapshotId] = useState<string | null>(null);
+
+  // Story 12.3: Restoration State
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [snapshotToRestore, setSnapshotToRestore] = useState<string | null>(null);
+
+  const handleRestoreSnapshot = async (snapId: string) => {
+    if (!audioId || !token) return;
+    
+    setIsRestoring(true);
+    setShowRestoreConfirm(false);
+    
+    try {
+      const resp = await apiFetch(`/v1/editor/restore/${audioId}`, token, {
+        method: "POST",
+        body: JSON.stringify({ snapshot_id: snapId }),
+      });
+      
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.error || "Restoration failed");
+      }
+      
+      // Force reconnect to get new state from Hocuspocus
+      provider?.disconnect();
+      provider?.connect();
+      
+      notify({ tier: "informational", title: "Restoration", body: "Document restored successfully" });
+      setStatus("Document restored successfully");
+      setIsTimelineOpen(false);
+      setActiveSnapshotId(null);
+      setGhostMode(false);
+    } catch (err) {
+      console.error("restore_error", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      notify({ tier: "critical", title: "Restoration Failed", body: msg });
+      setStatus(`Restoration failed: ${msg}`);
+    } finally {
+      setIsRestoring(false);
+    }
+  };
 
   const fetchSnapshots = useCallback(async () => {
     if (!audioId || !token) return;
@@ -1316,6 +1359,77 @@ export function TranscriptionEditor() {
 
   return (
     <div className="za-workspace-container" style={{ display: "flex", flexDirection: "row", padding: 0 }}>
+      {/* Restoration Overlay (Story 12.3 AC 4) */}
+      {isRestoring && (
+        <div 
+          className="za-glass"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(0, 0, 0, 0.7)',
+            backdropFilter: 'blur(8px)',
+            color: 'white',
+          }}
+        >
+          <div className="za-spinner" style={{ width: '48px', height: '48px', marginBottom: '1.5rem' }} />
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: '0.5rem' }}>Restoring Document</h2>
+          <p style={{ opacity: 0.8 }}>Please wait while we recover the selected version...</p>
+        </div>
+      )}
+
+      {/* Restoration Confirmation Modal (Story 12.3 AC 2.1) */}
+      {showRestoreConfirm && (
+        <div 
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(0, 0, 0, 0.5)',
+          }}
+        >
+          <div 
+            className="za-card za-glass" 
+            style={{ 
+              width: '400px', 
+              padding: 'var(--spacing-6)', 
+              border: '1px solid #e54242',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)'
+            }}
+          >
+            <h3 style={{ color: '#e54242', marginTop: 0, marginBottom: 'var(--spacing-4)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Zap size={20} /> Danger Zone
+            </h3>
+            <p style={{ fontSize: '0.9rem', lineHeight: 1.5, marginBottom: 'var(--spacing-6)' }}>
+              You are about to restore a previous version of this document. 
+              <strong> All changes made since this version will be permanently lost.</strong>
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--spacing-3)' }}>
+              <button 
+                onClick={() => setShowRestoreConfirm(false)} 
+                className="za-btn za-btn--ghost"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={() => snapshotToRestore && handleRestoreSnapshot(snapshotToRestore)} 
+                className="za-btn"
+                style={{ background: '#e54242', color: 'white' }}
+              >
+                Confirm Restoration
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Sidebar Toggle (Left edge hover or static) */}
       
       {/* Main Workspace Area */}
@@ -1562,6 +1676,10 @@ export function TranscriptionEditor() {
         snapshots={snapshots}
         onSelectSnapshot={handleSelectSnapshot}
         onHoverSnapshot={handleHoverSnapshot}
+        onRestoreSnapshot={(snapId) => {
+          setSnapshotToRestore(snapId);
+          setShowRestoreConfirm(true);
+        }}
         isLoading={isLoadingSnapshot}
         activeSnapshotId={activeSnapshotId}
         ghostMode={ghostMode}

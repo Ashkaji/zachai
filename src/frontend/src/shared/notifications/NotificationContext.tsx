@@ -45,6 +45,7 @@ interface NotificationContextType {
   activeNotifications: Notification[]; // Only Critical and Informational
   dismissNotification: (id: string) => void;
   clearAll: () => void;
+  notify: (notification: Omit<Notification, "id" | "timestamp">) => void;
 }
 
 const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
@@ -67,6 +68,10 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     setNotifications([]);
   };
 
+  const notify = (notification: Omit<Notification, "id" | "timestamp">) => {
+    eventBus.emit(notification);
+  };
+
   const activeNotifications = notifications.filter(
     (n) => n.tier === "critical" || n.tier === "informational"
   );
@@ -78,6 +83,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         activeNotifications,
         dismissNotification,
         clearAll,
+        notify,
       }}
     >
       {children}

@@ -93,6 +93,8 @@ const pool = new pg.Pool({
 const redisTicket = new Redis(redisUrl);
 /** Dedicated client for @hocuspocus/extension-redis (pub/sub + distinct prefix). */
 const redisCollab = new Redis(redisUrl);
+/** Dedicated client for signals (restoration, etc.). Story 12.3 AC 1.1 */
+const redisSignals = new Redis(redisUrl);
 
 async function loadDocumentState(documentId: number, document: Y.Doc): Promise<void> {
   const client = await pool.connect();
@@ -211,6 +213,13 @@ const server = Server.configure({
       throw new Error("Invalid document id");
     }
 
+    // Story 12.3 AC 1.2: Conflict Prevention
+    const lockKey = `lock:document:${documentId}:restoring`;
+    const isLocked = await redisTicket.exists(lockKey);
+    if (isLocked) {
+      throw new Error("Document is currently being restored and is locked.");
+    }
+
     const payload = await consumeTicket(redisTicket, ticketId);
     if (!payload) {
       throw new Error("Invalid or expired ticket");
@@ -257,6 +266,14 @@ const server = Server.configure({
   async onChange({ documentName, document }) {
     const documentId = parseInt(documentName, 10);
     if (Number.isNaN(documentId)) return;
+
+    // Story 12.3 AC 1.2: Conflict Prevention (extra safety for existing connections)
+    const lockKey = `lock:document:${documentId}:restoring`;
+    const isLocked = await redisTicket.exists(lockKey);
+    if (isLocked) {
+      throw new Error("Document is locked for restoration");
+    }
+
     latestDocuments.set(documentId, document);
     snapshotScheduler.onUpdate(documentId);
   },
@@ -274,12 +291,45 @@ void server.listen();
 log("info", `listening on ws://${HOST}:${PORT} (document name = audio_files.id)`);
 log("info", `Redis collab prefix: ${HOCUSPOCUS_REDIS_PREFIX}`);
 
+// Story 12.3 AC 1.1: Redis signals for reload
+redisSignals.subscribe("hocuspocus:signals", (err) => {
+  if (err) {
+    log("error", "failed to subscribe to hocuspocus:signals", { error: err.message });
+  } else {
+    log("info", "subscribed to hocuspocus:signals");
+  }
+});
+
+redisSignals.on("message", async (channel, message) => {
+  if (channel === "hocuspocus:signals") {
+    try {
+      const data = JSON.parse(message);
+      if (data.type === "reload") {
+        const documentId = data.document_id;
+        const documentName = String(documentId);
+        log("info", "received reload signal", { document_id: documentId });
+        
+        // Story 12.3 AC 1.1 Step 5: Flush cache
+        const document = server.documents.get(documentName);
+        if (document) {
+          log("info", "flushing document cache for reload", { document_id: documentId });
+          // Destroying the document instance forces a reload from persistent storage on next sync
+          await document.destroy();
+        }
+      }
+    } catch (e) {
+      log("error", "failed to process signal message", { message, error: String(e) });
+    }
+  }
+});
+
 function shutdown() {
   log("info", "shutting down");
   snapshotScheduler.dispose();
   void server.destroy();
   void redisTicket.quit();
   void redisCollab.quit();
+  void redisSignals.quit();
   void pool.end();
   process.exit(0);
 }

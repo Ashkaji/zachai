@@ -3732,6 +3732,17 @@ async def get_snapshot_yjs(
         raise HTTPException(status_code=502, detail={"error": str(exc)})
 
 
+async def _signal_hocuspocus_reload(audio_id: int):
+    """Broadcast reload signal to Hocuspocus instances via Redis Pub/Sub (Story 12.3 AC 1.1)."""
+    if _redis_client is not None:
+        try:
+            msg = json.dumps({"type": "reload", "document_id": audio_id})
+            await _redis_client.publish("hocuspocus:signals", msg)
+            logger.info("sent_hocuspocus_reload_signal audio_id=%s", audio_id)
+        except Exception as exc:
+            logger.error("failed_to_signal_hocuspocus audio_id=%s error=%s", audio_id, exc)
+
+
 @app.post("/v1/editor/restore/{audio_id}")
 async def restore_document_from_snapshot(
     audio_id: int,
@@ -3767,8 +3778,8 @@ async def restore_document_from_snapshot(
         raise HTTPException(status_code=503, detail={"error": "Redis unavailable"})
     
     lock_key = f"lock:document:{audio_id}:restoring"
-    # Try to acquire lock for 60s
-    locked = await _redis_client.set(lock_key, sub, nx=True, ex=60)
+    # Try to acquire lock for 120s (Story 12.3 Adjusted TTL for large Yjs states)
+    locked = await _redis_client.set(lock_key, sub, nx=True, ex=120)
     if not locked:
         raise HTTPException(status_code=409, detail={"error": "Restoration already in progress by another user"})
 
@@ -3783,18 +3794,37 @@ async def restore_document_from_snapshot(
         if not snap:
             raise HTTPException(status_code=404, detail={"error": "Snapshot not found"})
 
-        # 4. Fetch Yjs binary from MinIO (Story 5.4 uses snap.json_object_key for JSON but snap.json_object_key might be used for yjs if we didn't store it)
-        # Wait, the SnapshotArtifact has yjs_sha256 but where is the Yjs object key?
-        # Story 5.4 implementation in Implementation Record says:
-        # "Snapshot includes: .json (human readable segments) and .yjs (binary state for Hocuspocus recovery)"
-        # Actually, let's assume snap.json_object_key.replace(".json", ".yjs") if not explicit.
-        # But wait, looking at SnapshotArtifact model: json_object_key, docx_object_key.
-        # I should check where the Yjs binary is stored.
+        # 4. Fetch Yjs binary from MinIO
+        bucket = "snapshots"
+        object_key = snap.json_object_key
+        if object_key.startswith(f"{bucket}/"):
+            object_key = object_key[len(bucket)+1:]
+
+        try:
+            resp = internal_client.get_object(bucket, object_key)
+            data = json.loads(resp.read().decode("utf-8"))
+            yjs_b64 = data.get("yjs_state_binary")
+            if not yjs_b64:
+                raise HTTPException(status_code=502, detail={"error": "Snapshot JSON missing yjs_state_binary"})
+            yjs_raw = base64.b64decode(yjs_b64.encode("ascii"), validate=True)
+        except S3Error as exc:
+            logger.error("minio_error snapshot_id=%s error=%s", body.snapshot_id, exc)
+            raise HTTPException(status_code=502, detail={"error": "Failed to fetch snapshot from storage"})
+        except Exception as exc:
+            logger.error("snapshot_yjs_error snapshot_id=%s error=%s", body.snapshot_id, exc)
+            raise HTTPException(status_code=502, detail={"error": str(exc)})
+
+        # 5. Swap Yjs State in DB
+        async with db.begin_nested():
+            # Story 12.3 Adjusted: Serialize document access to prevent race with concurrent Hocuspocus stores
+            await db.execute(select(AudioFile).where(AudioFile.id == audio_id).with_for_update())
+            
+            # Delete all logs for this document
+            await db.execute(delete(YjsLog).where(YjsLog.document_id == audio_id))
+            # Insert the snapshot state as the new authoritative start
+            new_log = YjsLog(document_id=audio_id, update_binary=yjs_raw)
+            db.add(new_log)
         
-        # Let's assume for this story that we restore the JSON segments and notify Hocuspocus to reload.
-        # Actually, AC 3 says "WebSocket message to all collaborators when restoration starts".
-        
-        # We'll log the audit action first
         await log_audit_action(
             db,
             af.project_id,
@@ -3804,19 +3834,20 @@ async def restore_document_from_snapshot(
         )
         await db.commit()
 
-        # In a real implementation, we would update the Yjs document state in Redis/Postgres 
-        # and send a broadcast message.
+        # 6. Flush Hocuspocus Cache
+        await _signal_hocuspocus_reload(audio_id)
         
         logger.info("document_restored audio_id=%s snapshot_id=%s user_id=%s", audio_id, body.snapshot_id, sub)
         
         return {
             "status": "ok",
-            "message": "Document restoration successful",
+            "message": "Document restoration successful. Collaborators will be re-synced.",
             "snapshot_id": body.snapshot_id
         }
     finally:
         # Release lock
         await _redis_client.delete(lock_key)
+
 
 
 @app.get("/v1/me/audio-tasks")
@@ -4850,6 +4881,15 @@ async def post_editor_ticket(
             status_code=403,
             detail={"error": "Transcripteur, Expert, or Admin role required"},
         )
+
+    # Story 12.3 AC 1.2: Conflict Prevention
+    if _redis_client is not None:
+        lock_key = f"lock:document:{body.document_id}:restoring"
+        if await _redis_client.exists(lock_key):
+            raise HTTPException(
+                status_code=423,
+                detail={"error": "Document is currently being restored and is locked."}
+            )
 
     result = await db.execute(
         select(AudioFile)

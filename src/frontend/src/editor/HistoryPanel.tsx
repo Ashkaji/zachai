@@ -13,6 +13,7 @@ interface HistoryPanelProps {
   snapshots: Snapshot[];
   onSelectSnapshot: (snapId: string) => void;
   onHoverSnapshot?: (snapId: string | null) => void;
+  onRestoreSnapshot: (snapId: string) => void;
   isLoading: boolean;
   activeSnapshotId: string | null;
   ghostMode: boolean;
@@ -25,6 +26,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
   snapshots,
   onSelectSnapshot,
   onHoverSnapshot,
+  onRestoreSnapshot,
   isLoading,
   activeSnapshotId,
   ghostMode,
@@ -92,65 +94,88 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
           <div
             style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-2)" }}
           >
-            {snapshots.map((snap) => (
-              <button
-                key={snap.snapshot_id}
-                onClick={() => onSelectSnapshot(snap.snapshot_id)}
-                onMouseEnter={() => onHoverSnapshot?.(snap.snapshot_id)}
-                onMouseLeave={() => onHoverSnapshot?.(null)}
-                disabled={isLoading}
-                className={`za-card za-glass-hover ${
-                  activeSnapshotId === snap.snapshot_id ? "za-card--active" : ""
-                }`}
-                style={{
-                  textAlign: "left",
-                  width: "100%",
-                  padding: "var(--spacing-3)",
-                  border: "1px solid var(--color-border-soft)",
-                  borderRadius: "var(--radius-md)",
-                  cursor: "pointer",
-                  position: "relative",
-                  background: activeSnapshotId === snap.snapshot_id ? "rgba(0, 120, 212, 0.1)" : "transparent",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                  <div
+            {snapshots.map((snap) => {
+              const isActive = activeSnapshotId === snap.snapshot_id;
+              return (
+                <div key={snap.snapshot_id} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                  <button
+                    onClick={() => onSelectSnapshot(snap.snapshot_id)}
+                    onMouseEnter={() => onHoverSnapshot?.(snap.snapshot_id)}
+                    onMouseLeave={() => onHoverSnapshot?.(null)}
+                    disabled={isLoading}
+                    className={`za-card za-glass-hover ${
+                      isActive ? "za-card--active" : ""
+                    }`}
                     style={{
-                      width: "8px",
-                      height: "8px",
-                      borderRadius: "50%",
-                      background:
-                        snap.source === "manual"
-                          ? "var(--color-secondary)"
-                          : "#0078d4",
+                      textAlign: "left",
+                      width: "100%",
+                      padding: "var(--spacing-3)",
+                      border: "1px solid var(--color-border-soft)",
+                      borderRadius: "var(--radius-md)",
+                      cursor: "pointer",
+                      position: "relative",
+                      background: isActive ? "rgba(0, 120, 212, 0.1)" : "transparent",
                     }}
-                  />
-                  <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>
-                    {new Date(snap.created_at).toLocaleString()}
-                  </span>
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                      <div
+                        style={{
+                          width: "8px",
+                          height: "8px",
+                          borderRadius: "50%",
+                          background:
+                            snap.source === "manual"
+                              ? "var(--color-secondary)"
+                              : "#0078d4",
+                        }}
+                      />
+                      <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>
+                        {new Date(snap.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "0.7rem",
+                        color: "var(--color-text-muted)",
+                        marginLeft: "18px",
+                        marginTop: "4px",
+                      }}
+                    >
+                      {snap.source} • {snap.snapshot_id.slice(0, 8)}
+                    </div>
+                    <ChevronRight
+                      size={14}
+                      style={{
+                        position: "absolute",
+                        right: "12px",
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        opacity: 0.3,
+                      }}
+                    />
+                  </button>
+                  {isActive && (
+                    <button
+                      onClick={() => onRestoreSnapshot(snap.snapshot_id)}
+                      className="za-btn za-btn--primary"
+                      style={{
+                        fontSize: "0.75rem",
+                        padding: "4px 12px",
+                        height: "auto",
+                        width: "fit-content",
+                        alignSelf: "flex-end",
+                        marginRight: "4px",
+                        background: "rgba(229, 66, 66, 0.1)",
+                        color: "#e54242",
+                        border: "1px solid rgba(229, 66, 66, 0.2)",
+                      }}
+                    >
+                      Restore this version
+                    </button>
+                  )}
                 </div>
-                <div
-                  style={{
-                    fontSize: "0.7rem",
-                    color: "var(--color-text-muted)",
-                    marginLeft: "18px",
-                    marginTop: "4px",
-                  }}
-                >
-                  {snap.source} • {snap.snapshot_id.slice(0, 8)}
-                </div>
-                <ChevronRight
-                  size={14}
-                  style={{
-                    position: "absolute",
-                    right: "12px",
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    opacity: 0.3,
-                  }}
-                />
-              </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
