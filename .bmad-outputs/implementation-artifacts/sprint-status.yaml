@@ -125,8 +125,8 @@ development_status:
 
 
   # ─── EPIC 12 — L5 - Profil RGPD & Historique "Ghost Mode" ────────────────
-  epic-12: backlog
-  12-1-centre-profil-consentement-anonymisation-rgpd: backlog
-  12-2-visual-diff-ghost-mode-worker-based-performance: backlog
-  12-3-restauration-securisee-verrouillage-websocket: backlog
+  epic-12: in-progress
+  12-1-centre-profil-consentement-anonymisation-rgpd: ready-for-dev
+  12-2-visual-diff-ghost-mode-worker-based-performance: ready-for-dev
+  12-3-restauration-securisee-verrouillage-websocket: ready-for-dev
   epic-12-retrospective: optional

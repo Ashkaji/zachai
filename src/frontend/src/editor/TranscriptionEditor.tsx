@@ -12,7 +12,8 @@ import {
   ZapOff,
   SkipForward,
   SkipBack,
-  Gauge
+  Gauge,
+  Ghost
 } from "lucide-react";
 import Document from "@tiptap/extension-document";
 import Paragraph from "@tiptap/extension-paragraph";
@@ -40,6 +41,12 @@ import {
   type GrammarMatch,
 } from "./grammarUtils";
 import "./collaboration.css";
+
+// --- Types for Ghost Mode ---
+type DiffChange = {
+  type: 'add' | 'remove' | 'equal';
+  value: string;
+};
 
 interface Segment {
   start: number;
@@ -203,6 +210,15 @@ export function TranscriptionEditor() {
   const [grammarEnabled, setGrammarEnabled] = useState(true);
   const [ecoMode, setEcoMode] = useState(false);
   
+  // Story 12.2 — Ghost Mode
+  const [ghostMode, setGhostMode] = useState(false);
+  const [originalContent, setOriginalContent] = useState<string>("");
+  const [diffResult, setDiffResult] = useState<DiffChange[]>([]);
+  const ghostModeRef = useRef(false);
+  const originalContentRef = useRef("");
+  const diffResultRef = useRef<DiffChange[]>([]);
+  const workerRef = useRef<Worker | null>(null);
+
   const [grammarPopup, setGrammarPopup] = useState<{
     x: number;
     y: number;
@@ -215,6 +231,46 @@ export function TranscriptionEditor() {
     y: number;
     reference: string;
   } | null>(null);
+
+  // Initialize Worker
+  useEffect(() => {
+    workerRef.current = new Worker(new URL('./ghostModeWorker.ts', import.meta.url), { type: 'module' });
+    workerRef.current.onmessage = (e) => {
+      const { result } = e.data;
+      setDiffResult(result);
+      diffResultRef.current = result;
+      paintAllDecorations();
+    };
+    return () => workerRef.current?.terminate();
+  }, []);
+
+  const triggerDiff = useCallback(() => {
+    if (!ghostModeRef.current || !workerRef.current || !editorRef.current) return;
+    const { text } = buildDocTextIndex(editorRef.current.state.doc);
+    workerRef.current.postMessage({
+      oldStr: originalContentRef.current,
+      newStr: text,
+      requestId: Date.now()
+    });
+  }, []);
+
+  // Sync refs and trigger initial diff
+  useEffect(() => {
+    ghostModeRef.current = ghostMode;
+    if (ghostMode && !originalContent) {
+      if (editorRef.current) {
+        const { text } = buildDocTextIndex(editorRef.current.state.doc);
+        setOriginalContent(text);
+        originalContentRef.current = text;
+      }
+    }
+    if (ghostMode) triggerDiff();
+    else {
+      setDiffResult([]);
+      diffResultRef.current = [];
+      paintAllDecorations();
+    }
+  }, [ghostMode, triggerDiff]);
 
   // Task 2: Sync ecoMode to root class for CSS conditional styling
   useEffect(() => {
@@ -1176,6 +1232,15 @@ export function TranscriptionEditor() {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-2)" }}>
+          <button
+            type="button"
+            className={`za-btn ${ghostMode ? "za-btn--primary" : "za-btn--ghost"}`}
+            title="Toggle Ghost Mode (Visual Diff)"
+            onClick={() => setGhostMode((v) => !v)}
+          >
+            <Ghost size={18} />
+          </button>
+
           <button
             type="button"
             className="za-btn za-btn--ghost"

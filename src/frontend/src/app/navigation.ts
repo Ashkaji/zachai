@@ -5,7 +5,8 @@ import {
   CheckSquare, 
   FolderPlus, 
   FileEdit, 
-  Palette 
+  Palette,
+  UserCircle
 } from "lucide-react";
 import type { AppRole } from "../types/rbac";
 
@@ -18,7 +19,8 @@ export type AppRouteId =
   | "project-detail"
   | "reconciliation-workspace"
   | "legacy-editor"
-  | "playground";
+  | "playground"
+  | "profile";
 
 export type NavItem = {
   id: AppRouteId;
@@ -28,6 +30,7 @@ export type NavItem = {
 };
 
 const BASE_ITEMS: NavItem[] = [
+  { id: "profile", label: "Profil & Sécurité", description: "RGPD, préférences, export", icon: UserCircle },
   { id: "legacy-editor", label: "Éditeur hérité", description: "Migration progressive", icon: FileEdit }
 ];
 

@@ -15,6 +15,7 @@ import { NewProjectWizard } from "../features/project-wizard/NewProjectWizard";
 import { ProjectDetailManager } from "../features/projects/ProjectDetailManager";
 import { Playground } from "../dev/Playground";
 import { ReconciliationWorkspace } from "../features/reconciliation/ReconciliationWorkspace";
+import { ProfileCenter } from "../features/profile/ProfileCenter";
 
 function roleTitle(role: AppRole): string {
   if (role === "admin") return "Admin";
@@ -321,6 +322,7 @@ export function AppShell({
           ) : null}
           {activeRoute === "dashboard-transcriber" && role === "transcriber" ? <TranscriberDashboard /> : null}
 
+          {activeRoute === "profile" ? <ProfileCenter /> : null}
           {activeRoute === "legacy-editor" ? legacyEditor : null}
           {activeRoute === "playground" ? <Playground /> : null}
         </section>
