@@ -747,11 +747,33 @@ if root_logger.handlers:
         handler.addFilter(RequestIdFilter())
         handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] [%(request_id)s] %(name)s: %(message)s"))
 
+# OpenAPI /docs sidebar: group routes by domain (single tag per operation).
+OPENAPI_TAGS: list[dict[str, str]] = [
+    {"name": "Health", "description": "Orchestration liveness."},
+    {"name": "Presigned uploads", "description": "Browser→MinIO presigned PUT/GET; binaries never pass through FastAPI."},
+    {"name": "Natures", "description": "Project nature templates and label schemas."},
+    {"name": "Projects", "description": "Projects, lifecycle, audit trail, assignment, dashboard status."},
+    {"name": "Project audio", "description": "Presign upload, register, FFmpeg normalization for project audio."},
+    {"name": "Tasks", "description": "Transcripteur and Expert work queues."},
+    {"name": "Profile & GDPR", "description": "Current user profile, consents, export, deletion workflow."},
+    {"name": "Admin", "description": "Privileged maintenance (e.g. purge user)."},
+    {"name": "Snapshots & history", "description": "Yjs snapshot listing, fetch, restore, Ghost Mode data."},
+    {"name": "Golden Set", "description": "Training pairs, Label Studio ingest, LoRA threshold counter."},
+    {"name": "Transcription workflow", "description": "Submit, validate, read transcription segments."},
+    {"name": "Export", "description": "Validated transcript/subtitle downloads."},
+    {"name": "Open APIs", "description": "Whisper ASR and citation detection (API-key auth, not Keycloak)."},
+    {"name": "Media", "description": "Presigned playback URL for normalized audio."},
+    {"name": "Editor & collaboration", "description": "WSS ticket, grammar proxy, Hocuspocus snapshot callback."},
+    {"name": "Webhooks & callbacks", "description": "Label Studio, LoRA model-ready, internal secrets."},
+    {"name": "Bible", "description": "Local sovereign verse retrieval and bulk ingest."},
+]
+
 app = FastAPI(
     title="ZachAI Gateway",
     description="Lean API gateway: presigned URLs, JWT, Nature CRUD, Project CRUD, audio upload, Golden Set, Camunda 7",
-    version="2.10.0",
+    version="2.11.0",
     lifespan=lifespan,
+    openapi_tags=OPENAPI_TAGS,
 )
 
 @app.middleware("http")
@@ -2620,13 +2642,13 @@ async def call_ffmpeg_normalize(db: AsyncSession, audio: AudioFile) -> None:
 # ─── Routes — Presigned URLs (Story 1.3) ─────────────────────────────────────
 
 
-@app.get("/health")
+@app.get("/health", tags=["Health"])
 def health() -> dict:
     """Docker healthcheck endpoint — unauthenticated."""
     return {"status": "ok"}
 
 
-@app.post("/v1/upload/request-put")
+@app.post("/v1/upload/request-put", tags=["Presigned uploads"])
 def request_put(
     body: PutRequestBody,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -2661,7 +2683,7 @@ def request_put(
     }
 
 
-@app.get("/v1/upload/request-get")
+@app.get("/v1/upload/request-get", tags=["Presigned uploads"])
 def request_get(
     payload: Annotated[dict, Depends(get_current_user)],
     project_id: str = Query(..., description="Project identifier"),
@@ -2703,7 +2725,7 @@ def request_get(
 # ─── Routes — Nature CRUD (Story 2.1) ────────────────────────────────────────
 
 
-@app.post("/v1/natures", status_code=201)
+@app.post("/v1/natures", tags=["Natures"], status_code=201)
 async def create_nature(
     body: NatureCreateRequest,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -2750,7 +2772,7 @@ async def create_nature(
     return _nature_to_dict(nature)
 
 
-@app.get("/v1/natures")
+@app.get("/v1/natures", tags=["Natures"])
 async def list_natures(
     payload: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -2782,7 +2804,7 @@ async def list_natures(
     ]
 
 
-@app.get("/v1/natures/{nature_id}")
+@app.get("/v1/natures/{nature_id}", tags=["Natures"])
 async def get_nature(
     nature_id: int,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -2800,7 +2822,7 @@ async def get_nature(
     return _nature_to_dict(nature)
 
 
-@app.put("/v1/natures/{nature_id}/labels")
+@app.put("/v1/natures/{nature_id}/labels", tags=["Natures"])
 async def update_nature_labels(
     nature_id: int,
     body: LabelsUpdateRequest,
@@ -2847,7 +2869,7 @@ async def update_nature_labels(
 # ─── Routes — Project CRUD (Story 2.2) ─────────────────────────────────────
 
 
-@app.post("/v1/projects", status_code=201)
+@app.post("/v1/projects", tags=["Projects"], status_code=201)
 async def create_project(
     body: ProjectCreateRequest,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -2947,7 +2969,7 @@ async def create_project(
         )
 
 
-@app.get("/v1/projects")
+@app.get("/v1/projects", tags=["Projects"])
 async def list_projects(
     payload: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -3034,7 +3056,7 @@ async def list_projects(
     return out
 
 
-@app.get("/v1/projects/{project_id}")
+@app.get("/v1/projects/{project_id}", tags=["Projects"])
 async def get_project(
     project_id: int,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -3052,7 +3074,7 @@ async def get_project(
     return _project_to_dict(project)
 
 
-@app.put("/v1/projects/{project_id}/status")
+@app.put("/v1/projects/{project_id}/status", tags=["Projects"])
 async def update_project_status(
     project_id: int,
     body: StatusUpdateRequest,
@@ -3094,7 +3116,7 @@ async def update_project_status(
     return _project_to_dict(project)
 
 
-@app.post("/v1/projects/{project_id}/close")
+@app.post("/v1/projects/{project_id}/close", tags=["Projects"])
 async def close_project(
     project_id: int,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -3230,7 +3252,7 @@ async def close_project(
 # ─── Routes — Assignment dashboard (Story 2.4) ───────────────────────────────
 
 
-@app.get("/v1/projects/{project_id}/audit-trail")
+@app.get("/v1/projects/{project_id}/audit-trail", tags=["Projects"])
 async def get_project_audit_trail(
     project_id: int,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -3268,7 +3290,7 @@ async def get_project_audit_trail(
     ]
 
 
-@app.get("/v1/projects/{project_id}/status")
+@app.get("/v1/projects/{project_id}/status", tags=["Projects"])
 async def get_project_dashboard_status(
     project_id: int,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -3294,7 +3316,7 @@ async def get_project_dashboard_status(
     }
 
 
-@app.post("/v1/projects/{project_id}/assign")
+@app.post("/v1/projects/{project_id}/assign", tags=["Projects"])
 async def assign_audio_to_transcripteur(
     project_id: int,
     body: AssignAudioRequest,
@@ -3366,7 +3388,7 @@ async def assign_audio_to_transcripteur(
     return _audio_row_for_project_status(audio)
 
 
-@app.get("/v1/me/profile", response_model=UserProfileResponse)
+@app.get("/v1/me/profile", tags=["Profile & GDPR"], response_model=UserProfileResponse)
 async def get_my_profile(
     payload: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -3399,7 +3421,7 @@ async def get_my_profile(
     }
 
 
-@app.put("/v1/me/consents", response_model=UserConsentStatus)
+@app.put("/v1/me/consents", tags=["Profile & GDPR"], response_model=UserConsentStatus)
 async def update_my_consents(
     body: UserConsentUpdate,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -3442,7 +3464,7 @@ async def update_my_consents(
     }
 
 
-@app.delete("/v1/me/account", response_model=UserConsentStatus)
+@app.delete("/v1/me/account", tags=["Profile & GDPR"], response_model=UserConsentStatus)
 async def request_account_deletion(
     payload: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -3470,7 +3492,7 @@ async def request_account_deletion(
     }
 
 
-@app.post("/v1/me/delete-cancel", response_model=UserConsentStatus)
+@app.post("/v1/me/delete-cancel", tags=["Profile & GDPR"], response_model=UserConsentStatus)
 async def cancel_account_deletion(
     payload: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -3497,7 +3519,7 @@ async def cancel_account_deletion(
     }
 
 
-@app.delete("/v1/admin/purge-user/{user_id}")
+@app.delete("/v1/admin/purge-user/{user_id}", tags=["Admin"])
 async def admin_purge_user(
     user_id: str,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -3514,7 +3536,7 @@ async def admin_purge_user(
     return {"status": "purged", "user_id": user_id}
 
 
-@app.get("/v1/me/export-data")
+@app.get("/v1/me/export-data", tags=["Profile & GDPR"])
 async def export_my_data(
     payload: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -3621,7 +3643,7 @@ async def export_my_data(
 
 
 
-@app.get("/v1/audio-files/{audio_id}/snapshots")
+@app.get("/v1/audio-files/{audio_id}/snapshots", tags=["Snapshots & history"])
 async def list_audio_snapshots(
     audio_id: int,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -3668,7 +3690,7 @@ async def list_audio_snapshots(
     ]
 
 
-@app.get("/v1/snapshots/{snapshot_id}/yjs")
+@app.get("/v1/snapshots/{snapshot_id}/yjs", tags=["Snapshots & history"])
 async def get_snapshot_yjs(
     snapshot_id: str,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -3907,7 +3929,7 @@ async def _authorize_restore_collaborator_access(
     )
 
 
-@app.post("/v1/snapshots/{snapshot_id}/restore")
+@app.post("/v1/snapshots/{snapshot_id}/restore", tags=["Snapshots & history"])
 async def restore_snapshot_by_id(
     snapshot_id: str,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -3949,7 +3971,7 @@ async def restore_snapshot_by_id(
     )
 
 
-@app.post("/v1/editor/restore/{audio_id}")
+@app.post("/v1/editor/restore/{audio_id}", tags=["Snapshots & history"])
 async def restore_document_from_snapshot(
     audio_id: int,
     body: DocumentRestoreRequest,
@@ -3985,7 +4007,7 @@ async def restore_document_from_snapshot(
 
 
 
-@app.get("/v1/me/audio-tasks")
+@app.get("/v1/me/audio-tasks", tags=["Tasks"])
 async def list_my_audio_tasks(
     payload: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -4028,7 +4050,7 @@ async def list_my_audio_tasks(
     ]
 
 
-@app.get("/v1/expert/tasks", response_model=list[ExpertTaskResponse])
+@app.get("/v1/expert/tasks", tags=["Tasks"], response_model=list[ExpertTaskResponse])
 async def list_expert_tasks(
     payload: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -4090,7 +4112,7 @@ async def list_expert_tasks(
 # ─── Routes — Audio upload & FFmpeg (Story 2.3) ─────────────────────────────
 
 
-@app.post("/v1/projects/{project_id}/audio-files/upload")
+@app.post("/v1/projects/{project_id}/audio-files/upload", tags=["Project audio"])
 async def request_project_audio_upload(
     project_id: int,
     body: AudioUploadRequest,
@@ -4139,7 +4161,7 @@ async def request_project_audio_upload(
     }
 
 
-@app.post("/v1/projects/{project_id}/audio-files/register", status_code=201)
+@app.post("/v1/projects/{project_id}/audio-files/register", tags=["Project audio"], status_code=201)
 async def register_project_audio_file(
     project_id: int,
     body: AudioRegisterRequest,
@@ -4212,7 +4234,7 @@ async def register_project_audio_file(
     return _audio_file_to_dict(audio)
 
 
-@app.post("/v1/projects/{project_id}/audio-files/{audio_file_id}/normalize")
+@app.post("/v1/projects/{project_id}/audio-files/{audio_file_id}/normalize", tags=["Project audio"])
 async def normalize_project_audio_on_demand(
     project_id: int,
     audio_file_id: int,
@@ -4251,7 +4273,7 @@ async def normalize_project_audio_on_demand(
 # ─── Routes — Golden Set (Story 4.1) ─────────────────────────────────────────
 
 
-@app.post("/v1/golden-set/entry")
+@app.post("/v1/golden-set/entry", tags=["Golden Set"])
 async def post_golden_set_entry(
     request: Request,
     body: GoldenSetEntryRequest,
@@ -4262,7 +4284,7 @@ async def post_golden_set_entry(
     return await persist_golden_set_entry(db, body)
 
 
-@app.get("/v1/golden-set/status", response_model=GoldenSetStatusResponse)
+@app.get("/v1/golden-set/status", tags=["Golden Set"], response_model=GoldenSetStatusResponse)
 async def get_golden_set_status(
     payload: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -4290,7 +4312,7 @@ async def get_golden_set_status(
     )
 
 
-@app.post("/v1/golden-set/frontend-correction")
+@app.post("/v1/golden-set/frontend-correction", tags=["Golden Set"])
 async def post_golden_set_frontend_correction(
     body: FrontendCorrectionRequest,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -4364,7 +4386,7 @@ async def post_golden_set_frontend_correction(
 # ─── Routes — Transcription read (Story 4.2) ─────────────────────────────────
 
 
-@app.post("/v1/transcriptions/{audio_id}/submit")
+@app.post("/v1/transcriptions/{audio_id}/submit", tags=["Transcription workflow"])
 async def submit_transcription(
     audio_id: int,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -4426,7 +4448,7 @@ async def submit_transcription(
     }
 
 
-@app.post("/v1/transcriptions/{audio_id}/validate")
+@app.post("/v1/transcriptions/{audio_id}/validate", tags=["Transcription workflow"])
 async def validate_transcription(
     audio_id: int,
     body: TranscriptionValidationRequest,
@@ -4524,7 +4546,7 @@ async def validate_transcription(
     }
 
 
-@app.get("/v1/audio-files/{audio_file_id}/transcription")
+@app.get("/v1/audio-files/{audio_file_id}/transcription", tags=["Transcription workflow"])
 async def get_audio_transcription(
     audio_file_id: int,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -4558,7 +4580,7 @@ async def get_audio_transcription(
 # ─── Routes — Export transcript/subtitle (Story 7.1) ─────────────────────────
 
 
-@app.get("/v1/export/subtitle/{audio_id}")
+@app.get("/v1/export/subtitle/{audio_id}", tags=["Export"])
 async def export_subtitle(
     audio_id: int,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -4595,7 +4617,7 @@ async def export_subtitle(
     )
 
 
-@app.get("/v1/export/transcript/{audio_id}")
+@app.get("/v1/export/transcript/{audio_id}", tags=["Export"])
 async def export_transcript(
     audio_id: int,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -4647,7 +4669,7 @@ async def export_transcript(
     )
 
 
-@app.post("/v1/whisper/transcribe")
+@app.post("/v1/whisper/transcribe", tags=["Open APIs"])
 async def post_whisper_transcribe(
     body: WhisperOpenApiRequest,
     request: Request,
@@ -4678,7 +4700,7 @@ async def post_whisper_transcribe(
     return out
 
 
-@app.post("/v1/nlp/detect-citations")
+@app.post("/v1/nlp/detect-citations", tags=["Open APIs"])
 async def post_detect_citations(
     body: CitationDetectRequest,
     request: Request,
@@ -4691,7 +4713,7 @@ async def post_detect_citations(
 # ─── Routes — Audio media URL (Story 5.3) ─────────────────────────────────────
 
 
-@app.get("/v1/audio-files/{audio_file_id}/media")
+@app.get("/v1/audio-files/{audio_file_id}/media", tags=["Media"])
 async def get_audio_media(
     audio_file_id: int,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -4761,7 +4783,7 @@ async def get_audio_media(
     return {"presigned_url": presigned_url, "expires_in": 3600}
 
 
-@app.post("/v1/proxy/grammar")
+@app.post("/v1/proxy/grammar", tags=["Editor & collaboration"])
 async def post_proxy_grammar(
     body: GrammarProxyRequest,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -4986,7 +5008,7 @@ async def post_proxy_grammar(
         await _grammar_release_lock()
 
 
-@app.post("/v1/editor/ticket")
+@app.post("/v1/editor/ticket", tags=["Editor & collaboration"])
 async def post_editor_ticket(
     body: EditorTicketRequest,
     payload: Annotated[dict, Depends(get_current_user)],
@@ -5075,7 +5097,7 @@ async def post_editor_ticket(
     return EditorTicketResponse(ticket_id=ticket_id, ttl=editor_ticket.WSS_TICKET_TTL_SEC)
 
 
-@app.post("/v1/editor/callback/snapshot")
+@app.post("/v1/editor/callback/snapshot", tags=["Editor & collaboration"])
 async def post_editor_snapshot_callback(
     request: Request,
     body: EditorSnapshotCallbackRequest,
@@ -5131,7 +5153,7 @@ async def post_editor_snapshot_callback(
     return {"status": "ok", "snapshot_id": snapshot_id}
 
 
-@app.post("/v1/callback/expert-validation")
+@app.post("/v1/callback/expert-validation", tags=["Webhooks & callbacks"])
 async def post_expert_validation_callback(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -5231,7 +5253,7 @@ async def post_expert_validation_callback(
     }
 
 
-@app.post("/v1/callback/model-ready")
+@app.post("/v1/callback/model-ready", tags=["Webhooks & callbacks"])
 async def post_model_ready_callback(
     request: Request,
     body: ModelReadyCallbackRequest,
@@ -5284,7 +5306,7 @@ async def post_model_ready_callback(
 # ─── Routes — Bible Engine (Story 11.5) ──────────────────────────────────────
 
 
-@app.get("/v1/bible/verses", response_model=BibleRetrievalResponse)
+@app.get("/v1/bible/verses", tags=["Bible"], response_model=BibleRetrievalResponse)
 async def get_bible_verses(
     ref: str = Query(..., description="Bible reference, e.g. 'Jean 3:16' or 'Gen 1:1-5'"),
     translation: str = Query("LSG", description="Translation code (LSG, KJV, etc.)"),
@@ -5345,7 +5367,7 @@ async def get_bible_verses(
     }
 
 
-@app.post("/v1/bible/ingest", status_code=201)
+@app.post("/v1/bible/ingest", tags=["Bible"], status_code=201)
 async def post_bible_ingest(
     body: BibleIngestRequest,
     db: Annotated[AsyncSession, Depends(get_db)],

@@ -282,6 +282,48 @@ So that restoring a previous version is atomic and error-free.
 - **And** le serveur rejette tout `Yjs Update` entrant jusqu'à ce que le snapshot MinIO soit pleinement appliqué en DB
 - **And** une procédure de "Dry-run" vérifie l'intégrité du binaire en mémoire avant l'écriture finale en base
 
+### Epic 13: L6 — Robustesse Collaboration, Performance Bible & Clarté API
+Durcir les flux multi-utilisateurs après l’Epic 12, traiter la dette perf/UX identifiée aux rétros 11–12, et aligner la documentation d’intégration sur la surface API réelle.
+**Outcome:** Échec de restauration **visible par tous les clients** (pas seulement déverrouillage ambigu) ; **cache Redis optionnel** pour les versets les plus sollicités ; **catalogue API** cohérent (OpenAPI `/docs` + `docs/api-mapping.md`).
+**FRs covered:** FR21 (complément fiabilité versioning), FR26 (perf preview), NFR3/NFR9 (latence / charge), gouvernance DX pour intégrateurs.
+**Shield Task:** Feature flag ou métrique avant d’activer le cache Bible en production.
+
+#### Story 13.1: Signal d'échec de restauration (collaborateurs)
+As a Collaborator,
+I want the system to broadcast an explicit **restore failure** to every connected client when a snapshot restore aborts after locking,
+So that no one confuses an unlock message with a successful restore.
+
+**Acceptance Criteria:**
+- **Given** une restauration qui échoue après acquisition du verrou Redis / signal `document_locked`
+- **When** le serveur nettoie le verrou et notifie les clients
+- **Then** un message dédié (ex. `document_restore_failed` ou équivalent) est émis sur le canal Hocuspocus / Redis utilisé aujourd’hui, avec un **code / payload** stable documenté
+- **And** l’UI affiche un état d’erreur explicite (pas un simple retour à l’édition comme après succès)
+- **And** tests couvrent au minimum le chemin API + fan-out (alignés sur `test_story_12_3.py`)
+
+#### Story 13.2: Cache Redis pour versets bibliques (opt-in)
+As a Worker,
+I want hot Bible verse lookups to be optionally served from Redis,
+So that verse previews stay fast when the same references are requested repeatedly.
+
+**Acceptance Criteria:**
+- **Given** `GET /v1/bible/verses` avec une référence déjà consultée récemment
+- **When** le cache (Redis) est activé via configuration
+- **Then** la latence p95 pour ces hits est réduite par rapport au seul PostgreSQL (mesurable en tests ou bench léger)
+- **And** invalidation ou TTL est définie pour éviter données obsolètes après ré-ingestion
+- **And** désactivation par flag : comportement identique à l’existant sans Redis cache
+
+#### Story 13.3: Alignement documentation API (mapping ↔ OpenAPI)
+As a Developer,
+I want `docs/api-mapping.md` to reflect the same logical grouping as the gateway OpenAPI (`/docs`, `/openapi.json`),
+So that integrators and reviewers are not misled by an outdated flat list of routes.
+
+**Acceptance Criteria:**
+- **Given** les domaines fonctionnels du gateway (ex. Presigned uploads, Projects, Profile & GDPR, Snapshots & history, Editor & collaboration, Webhooks, Bible, etc.)
+- **When** je lis `docs/api-mapping.md`
+- **Then** les sections suivent ces domaines (ou renvoient explicitement à l’OpenAPI pour le détail exhaustif)
+- **And** les routes obsolètes ou non implémentées sont marquées **deprecated** ou retirées du doc
+- **And** une ligne indique la version OpenAPI / gateway alignée (ex. champ `version` dans FastAPI)
+
 ## 3. Requirements Coverage Map
 
 ### FR Coverage Map
@@ -306,9 +348,9 @@ FR17: Epic 4 - (Terminé) Auto-trigger LoRA.
 FR18: Epic 3 - (Terminé) Model Hot-reload.
 FR19: Epic 5 - (Terminé) Moteur Sync Yjs.
 FR20: Epic 12 - Snapshot persistence UI/Gouvernance.
-FR21: Epic 12 - Version history and Ghost Mode diffs.
+FR21: Epic 12 - Version history and Ghost Mode diffs; Epic 13 - Restore failure semantics multi-clients.
 FR22: Epic 11 - Real-time Grammar Check (UI integration).
 FR23: Epic 7 - (Terminé) Export formats.
 FR24: Epic 7 - (Terminé) API Whisper ouverte.
 FR25: Epic 11 - Biblical Citation Detection (UI highlighting).
-FR26: Epic 11 - Local Bible Database Engine.
+FR26: Epic 11 - Local Bible Database Engine; Epic 13 - Optional Redis cache for verse retrieval.
