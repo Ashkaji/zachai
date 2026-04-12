@@ -4,6 +4,7 @@ export interface WhisperSegmentAttrs {
   audioStart: number;
   audioEnd: number;
   sourceText: string;
+  status?: "pending" | "validated";
 }
 
 /**
@@ -27,6 +28,7 @@ export const WhisperSegment = Mark.create({
       audioStart: { default: 0 },
       audioEnd: { default: 0 },
       sourceText: { default: "" },
+      status: { default: "pending" },
     };
   },
 
@@ -36,14 +38,15 @@ export const WhisperSegment = Mark.create({
 
   renderHTML({ HTMLAttributes }) {
     const attrs = HTMLAttributes as WhisperSegmentAttrs & { [key: string]: unknown };
-    const { audioStart, audioEnd, sourceText: _sourceText, ...rest } = attrs;
+    const { audioStart, audioEnd, sourceText: _sourceText, status, ...rest } = attrs;
     return [
       "span",
       mergeAttributes(rest, {
         "data-whisper-segment": "",
         "data-audio-start": audioStart,
         "data-audio-end": audioEnd,
-        class: "zachai-whisper-segment",
+        "data-status": status,
+        class: `zachai-whisper-segment ${status === "validated" ? "is-validated" : ""}`,
       }),
       0,
     ];

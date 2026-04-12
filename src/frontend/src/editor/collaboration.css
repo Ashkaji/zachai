@@ -1,6 +1,6 @@
 /* Story 5.1 — awareness carets (docs/ux-design.md collaboration accents) */
 .collaboration-cursor__caret {
-  border-left: 2px solid #1976d2;
+  border-left: 2px solid var(--color-primary);
   border-right: none;
   margin-left: -1px;
   margin-right: -1px;
@@ -10,8 +10,9 @@
 }
 
 .collaboration-cursor__label {
-  background: #e3f2fd;
-  color: #1565c0;
+  background: var(--color-primary-soft);
+  color: var(--color-text);
+  backdrop-filter: blur(4px);
   border-radius: 4px 4px 4px 0;
   font-size: 0.75rem;
   font-weight: 500;
@@ -24,35 +25,123 @@
   white-space: nowrap;
 }
 
-/* Story 5.3 — whisper segment + karaoke active highlight */
+/* Story 11.1 — Azure Flow Workspace */
+.za-workspace-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  background: var(--color-bg);
+  padding: var(--spacing-8) 5%;
+}
+
+@media (min-width: 1024px) {
+  .za-workspace-container {
+    padding: var(--spacing-8) 15%;
+  }
+}
+
+.za-editor-canvas {
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--color-text);
+  outline: none;
+  min-height: 60vh;
+}
+
+.ProseMirror {
+  outline: none;
+}
+
+/* Story 11.1 — Karaoke High-Fidelity & Eco-Mode */
 .zachai-whisper-segment {
-  background: rgba(59, 130, 246, 0.08);
-  border-bottom: 2px solid rgba(59, 130, 246, 0.3);
+  background: transparent;
+  transition: all 0.2s ease;
 }
 
+.zachai-whisper-segment.is-validated {
+  border-bottom: 2px solid var(--color-success);
+  background: rgba(47, 138, 99, 0.05);
+}
+
+/* Active Highlight (Standard Mode) */
 .zachai-karaoke-active {
-  background: rgba(59, 130, 246, 0.18);
-  border-bottom-color: rgba(59, 130, 246, 0.85);
-  box-shadow: 0 0 12px rgba(59, 130, 246, 0.65);
-  animation: zachai-karaoke-pulse 900ms ease-in-out infinite alternate;
+  position: relative;
+  background: var(--color-primary-soft);
+  color: var(--color-text);
+  border-radius: 4px;
+  box-shadow: 0 0 10px var(--color-primary-soft);
 }
 
-@keyframes zachai-karaoke-pulse {
+/* Neon Halo & Animated Underline (Only in Standard Mode) */
+:root:not(.za-eco-mode) .zachai-karaoke-active {
+  box-shadow: 0 0 15px var(--color-primary-soft), 0 0 5px var(--color-primary);
+  animation: zachai-neon-pulse 1.2s ease-in-out infinite alternate;
+}
+
+:root:not(.za-eco-mode) .zachai-karaoke-active::after {
+  content: "";
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--color-primary);
+  box-shadow: 0 0 8px var(--color-primary);
+  border-radius: 2px;
+  animation: zachai-underline-morph 0.4s ease-out;
+}
+
+@keyframes zachai-neon-pulse {
   from {
-    box-shadow: 0 0 8px rgba(59, 130, 246, 0.45);
+    box-shadow: 0 0 10px var(--color-primary-soft), 0 0 2px var(--color-primary);
   }
   to {
-    box-shadow: 0 0 16px rgba(59, 130, 246, 0.85);
+    box-shadow: 0 0 20px var(--color-primary-soft), 0 0 8px var(--color-primary);
   }
+}
+
+@keyframes zachai-underline-morph {
+  from {
+    width: 0;
+    left: 50%;
+  }
+  to {
+    width: 100%;
+    left: 0;
+  }
+}
+
+/* Eco Mode overrides (Task 2) */
+.za-eco-mode .zachai-karaoke-active {
+  box-shadow: none !important;
+  animation: none !important;
+  background: var(--color-primary-soft) !important;
+}
+
+.za-eco-mode .zachai-karaoke-active::after {
+  display: none !important;
 }
 
 /* Story 5.5 — LanguageTool grammar (docs/ux-design.md §5.D) */
 .zachai-grammar-spelling {
-  text-decoration: underline wavy #dc3545;
-  text-underline-offset: 2px;
+  text-decoration: underline wavy var(--color-error);
+  text-underline-offset: 4px;
 }
 
 .zachai-grammar-style {
-  text-decoration: underline wavy #fd7e14;
-  text-underline-offset: 2px;
+  text-decoration: underline wavy var(--color-secondary);
+  text-underline-offset: 4px;
+}
+
+/* Biblical Citations (Story 11.1) */
+.za-biblical-citation {
+  color: var(--color-primary);
+  font-weight: 600;
+  border-bottom: 1px solid var(--color-primary-soft);
+  cursor: pointer;
+}
+
+.za-biblical-citation:hover {
+  background: var(--color-primary-soft);
 }

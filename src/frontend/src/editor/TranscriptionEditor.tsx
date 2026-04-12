@@ -1,7 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "react-oidc-context";
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, EditorContent, BubbleMenu, FloatingMenu } from "@tiptap/react";
 import { Decoration, DecorationSet } from "prosemirror-view";
+import { 
+  Play, 
+  Pause, 
+  CheckCircle2, 
+  BookOpen, 
+  Bold, 
+  Italic, 
+  Type, 
+  Zap, 
+  ZapOff,
+  SkipForward,
+  SkipBack,
+  Gauge
+} from "lucide-react";
 import Document from "@tiptap/extension-document";
 import Paragraph from "@tiptap/extension-paragraph";
 import Text from "@tiptap/extension-text";
@@ -10,6 +24,7 @@ import CollaborationCursor from "@tiptap/extension-collaboration-cursor";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
 import { WhisperSegment, type WhisperSegmentAttrs } from "./WhisperSegmentMark";
+import { BiblicalCitation } from "./BiblicalCitationMark";
 import {
   MAX_RECONNECT_ATTEMPTS,
   computeReconnectDelayMs,
@@ -159,6 +174,8 @@ export function TranscriptionEditor() {
 
   const [audioLoadStatus, setAudioLoadStatus] = useState<AudioLoadStatus>("idle");
   const [audioError, setAudioError] = useState<string>("");
+  const [audioPlaybackSpeed, setAudioPlaybackSpeed] = useState(1);
+  const [isPlaying, setIsPlaying] = useState(false);
   const recoverAudioFromCacheRef = useRef<(() => void) | null>(null);
 
   const audioUrlCacheRef = useRef<
@@ -183,6 +200,7 @@ export function TranscriptionEditor() {
   const grammarEnabledRef = useRef(true);
   const [grammarNote, setGrammarNote] = useState("");
   const [grammarEnabled, setGrammarEnabled] = useState(true);
+  const [ecoMode, setEcoMode] = useState(false);
   const [grammarPopup, setGrammarPopup] = useState<{
     x: number;
     y: number;
@@ -190,6 +208,15 @@ export function TranscriptionEditor() {
     /** Substring from grammar index at popup open; apply recomputes range and must match this. */
     expectedSlice: string;
   } | null>(null);
+
+  // Task 2: Sync ecoMode to root class for CSS conditional styling
+  useEffect(() => {
+    if (ecoMode) {
+      document.documentElement.classList.add("za-eco-mode");
+    } else {
+      document.documentElement.classList.remove("za-eco-mode");
+    }
+  }, [ecoMode]);
 
   const grammarMessageFromResponse = useCallback(
     (
@@ -339,6 +366,7 @@ export function TranscriptionEditor() {
         Paragraph,
         Text,
         WhisperSegment,
+        BiblicalCitation,
         Collaboration.configure({
           document: ydoc,
         }),
@@ -625,10 +653,12 @@ export function TranscriptionEditor() {
 
     audio.onplaying = () => {
       setAudioLoadStatus((s) => (s === "idle" ? "ready" : s));
+      setIsPlaying(true);
       startKaraokeLoop();
     };
 
     audio.onpause = () => {
+      setIsPlaying(false);
       stopKaraokeLoop();
       // Keep the highlight at the last computed timestamp (no doc mutation).
       if (audio && !Number.isNaN(audio.currentTime)) {
@@ -637,6 +667,7 @@ export function TranscriptionEditor() {
     };
 
     audio.onended = () => {
+      setIsPlaying(false);
       stopKaraokeLoop();
       applyKaraokeDecoration(null);
     };
@@ -1063,6 +1094,19 @@ export function TranscriptionEditor() {
     [grammarPopup, paintAllDecorations],
   );
 
+  const togglePlay = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) audio.play();
+    else audio.pause();
+  };
+
+  const seekRelative = (seconds: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = Math.max(0, Math.min(audio.duration, audio.currentTime + seconds));
+  };
+
   const audioStatusLine =
     audioLoadStatus === "loading"
       ? "Audio: loading…"
@@ -1084,77 +1128,161 @@ export function TranscriptionEditor() {
   }
 
   return (
-    <div>
+    <div className="za-workspace-container">
+      {/* Header / Toolbar Section */}
       <div
         style={{
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          marginBottom: "0.5rem",
-          fontSize: "0.875rem",
-          color: "#666",
+          marginBottom: "var(--spacing-6)",
+          padding: "var(--spacing-4)",
+          borderRadius: "var(--radius-md)",
         }}
+        className="za-glass za-card-glow"
       >
-        <span>Audio #{audioId}</span>
-        <span style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-4)" }}>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span style={{ fontWeight: 700, fontSize: "1.1rem" }}>Audio #{audioId}</span>
+            <span style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
+              {status || "Syncing..."}
+            </span>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-2)" }}>
           <button
             type="button"
-            title="Toggle grammar highlights (LanguageTool)"
-            onClick={() => setGrammarEnabled((v) => !v)}
-            style={{
-              fontSize: "0.75rem",
-              padding: "0.15rem 0.4rem",
-              cursor: "pointer",
-              borderRadius: "4px",
-              border: "1px solid #ccc",
-              background: grammarEnabled ? "#e7f1ff" : "#f0f0f0",
-            }}
+            className="za-btn za-btn--ghost"
+            title={ecoMode ? "Disable Eco-Mode" : "Enable Eco-Mode (Better Performance)"}
+            onClick={() => setEcoMode(!ecoMode)}
+            style={{ color: ecoMode ? "var(--color-primary)" : "inherit" }}
           >
-            L
+            {ecoMode ? <ZapOff size={18} /> : <Zap size={18} />}
           </button>
-          <span>
-            {status}
-            {audioStatusLine ? ` · ${audioStatusLine}` : ""}
-            {collabLine ? ` · ${collabLine}` : ""}
-            {grammarNote ? ` · ${grammarNote}` : ""}
-          </span>
-        </span>
+          
+          <button
+            type="button"
+            className={`za-btn ${grammarEnabled ? "za-btn--primary" : "za-btn--ghost"}`}
+            title="Toggle grammar highlights"
+            onClick={() => setGrammarEnabled((v) => !v)}
+          >
+            <Type size={18} />
+          </button>
+        </div>
       </div>
+
+      {/* Main Editor Canvas */}
       <div
         style={{
-          border: "1px solid #ddd",
-          borderRadius: "6px",
-          padding: "1rem",
-          minHeight: "200px",
-          lineHeight: "1.8",
-          fontSize: "1rem",
           position: "relative",
+          flex: 1,
         }}
         ref={editorContainerRef}
       >
-        <EditorContent editor={editor} />
-        {grammarPopup ? (
+        {editor && (
+          <>
+            <BubbleMenu editor={editor} tippyOptions={{ duration: 300 }}>
+              <div className="za-glass za-card-glow" style={{ 
+                display: "flex", 
+                gap: "var(--spacing-1)", 
+                padding: "var(--spacing-1)",
+                borderRadius: "var(--radius-sm)",
+                border: "none"
+              }}>
+                <button
+                  onClick={() => {
+                    const { from } = editor.state.selection;
+                    const node = editor.state.doc.nodeAt(from);
+                    if (node?.marks) {
+                      const whisperMark = node.marks.find(m => m.type.name === "whisperSegment");
+                      if (whisperMark) {
+                        const audio = audioRef.current;
+                        if (audio) {
+                          audio.currentTime = whisperMark.attrs.audioStart;
+                          audio.play();
+                        }
+                      }
+                    }
+                  }}
+                  className="za-btn za-btn--ghost"
+                  style={{ padding: "6px" }}
+                  title="Play Selection"
+                >
+                  <Play size={16} />
+                </button>
+                <button
+                  onClick={() => {
+                    editor.chain().focus().extendMarkRange("whisperSegment").updateAttributes("whisperSegment", { status: "validated" }).run();
+                  }}
+                  className="za-btn za-btn--ghost"
+                  style={{ padding: "6px" }}
+                  title="Validate Segment"
+                >
+                  <CheckCircle2 size={16} />
+                </button>
+                <button
+                  onClick={() => {
+                    editor.chain().focus().toggleMark("biblicalCitation").run();
+                  }}
+                  className={`za-btn za-btn--ghost ${editor.isActive("biblicalCitation") ? "za-btn--active" : ""}`}
+                  style={{ padding: "6px" }}
+                  title="Verse Style"
+                >
+                  <BookOpen size={16} />
+                </button>
+              </div>
+            </BubbleMenu>
+
+            <FloatingMenu editor={editor} tippyOptions={{ duration: 300 }}>
+              <div className="za-glass za-card-glow" style={{ 
+                display: "flex", 
+                gap: "var(--spacing-1)", 
+                padding: "var(--spacing-1)",
+                borderRadius: "var(--radius-sm)" 
+              }}>
+                <button
+                  onClick={() => editor.chain().focus().toggleBold().run()}
+                  className={`za-btn za-btn--ghost ${editor.isActive("bold") ? "za-btn--active" : ""}`}
+                  style={{ padding: "6px" }}
+                >
+                  <Bold size={16} />
+                </button>
+                <button
+                  onClick={() => editor.chain().focus().toggleItalic().run()}
+                  className={`za-btn za-btn--ghost ${editor.isActive("italic") ? "za-btn--active" : ""}`}
+                  style={{ padding: "6px" }}
+                >
+                  <Italic size={16} />
+                </button>
+              </div>
+            </FloatingMenu>
+          </>
+        )}
+
+        <EditorContent editor={editor} className="za-editor-canvas" />
+
+        {/* Grammar Popup (from Story 5.5) */}
+        {grammarPopup && (
           <div
             id="zachai-grammar-popup"
             role="dialog"
+            className="za-glass za-card-glow"
             style={{
               position: "fixed",
               left: Math.min(grammarPopup.x, typeof window !== "undefined" ? window.innerWidth - 260 : grammarPopup.x),
               top: grammarPopup.y + 8,
               zIndex: 50,
               maxWidth: 260,
-              padding: "0.5rem 0.65rem",
-              background: "#fff",
-              border: "1px solid #ccc",
-              borderRadius: "6px",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+              padding: "var(--spacing-3)",
+              borderRadius: "var(--radius-md)",
               fontSize: "0.8125rem",
             }}
           >
-            <div style={{ marginBottom: "0.35rem", color: "#444" }}>
+            <div style={{ marginBottom: "var(--spacing-2)", fontWeight: 600 }}>
               {grammarPopup.match.shortMessage || grammarPopup.match.message || "Suggestion"}
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-1)" }}>
               {(grammarPopup.match.replacements?.length
                 ? grammarPopup.match.replacements
                 : []
@@ -1163,37 +1291,96 @@ export function TranscriptionEditor() {
                   key={`${rep}-${idx}`}
                   type="button"
                   onClick={() => applyGrammarReplacement(rep)}
-                  style={{
-                    textAlign: "left",
-                    padding: "0.25rem 0.4rem",
-                    cursor: "pointer",
-                    borderRadius: "4px",
-                    border: "1px solid #ddd",
-                    background: "#f8f9fa",
-                  }}
+                  className="za-btn za-btn--ghost"
+                  style={{ textAlign: "left", fontSize: "0.8rem" }}
                 >
                   {rep}
                 </button>
               ))}
-              {(!grammarPopup.match.replacements ||
-                grammarPopup.match.replacements.length === 0) && (
-                <span style={{ color: "#888" }}>No automatic replacement</span>
-              )}
             </div>
           </div>
-        ) : null}
+        )}
       </div>
-      <p
+
+      {/* Audio Bottom Dock (Task 5) */}
+      <div
         style={{
-          marginTop: "0.5rem",
-          fontSize: "0.75rem",
-          color: "#999",
+          position: "fixed",
+          bottom: "var(--spacing-6)",
+          left: "50%",
+          transform: "translateX(-50%)",
+          width: "90%",
+          maxWidth: "800px",
+          display: "flex",
+          alignItems: "center",
+          gap: "var(--spacing-4)",
+          padding: "var(--spacing-3) var(--spacing-6)",
+          borderRadius: "999px",
+          zIndex: 100,
         }}
+        className="za-glass za-card-glow"
       >
-        Corrections are auto-saved {DEBOUNCE_MS}ms after you stop typing. Real-time sync targets
-        &lt;50ms on LAN; manual check: two browsers, same <code>?audio_id=</code>, both signed in,
-        edit and verify cursors.
-      </p>
+        <div style={{ display: "flex", gap: "var(--spacing-2)" }}>
+          <button onClick={() => seekRelative(-5)} className="za-btn za-btn--ghost">
+            <SkipBack size={20} />
+          </button>
+          <button onClick={togglePlay} className="za-btn za-btn--primary" style={{ borderRadius: "50%", width: "44px", height: "44px", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>
+            {isPlaying ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" style={{ marginLeft: "2px" }} />}
+          </button>
+          <button onClick={() => seekRelative(5)} className="za-btn za-btn--ghost">
+            <SkipForward size={20} />
+          </button>
+        </div>
+
+        {/* Stylized Waveform Placeholder */}
+        <div style={{ flex: 1, height: "32px", display: "flex", alignItems: "center", gap: "2px" }}>
+          {Array.from({ length: 40 }).map((_, i) => (
+            <div 
+              key={i} 
+              style={{ 
+                flex: 1, 
+                height: `${20 + Math.sin(i * 0.5) * 15}%`, 
+                background: "var(--color-primary)",
+                opacity: 0.3 + (i % 5) * 0.1,
+                borderRadius: "1px"
+              }} 
+            />
+          ))}
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-2)" }}>
+          <Gauge size={18} className="color-text-muted" />
+          <select 
+            value={audioPlaybackSpeed} 
+            onChange={(e) => {
+              const val = parseFloat(e.target.value);
+              setAudioPlaybackSpeed(val);
+              if (audioRef.current) audioRef.current.playbackRate = val;
+            }}
+            className="za-select"
+            style={{ width: "auto", padding: "4px 8px" }}
+          >
+            <option value="0.5">0.5x</option>
+            <option value="1">1.0x</option>
+            <option value="1.25">1.25x</option>
+            <option value="1.5">1.5x</option>
+            <option value="2">2.0x</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Footer Info */}
+      <div style={{ 
+        marginTop: "var(--spacing-8)", 
+        fontSize: "0.75rem", 
+        color: "var(--color-text-muted)",
+        textAlign: "center",
+        paddingBottom: "80px" // Space for the dock
+      }}>
+        <span>{audioStatusLine}</span>
+        {collabLine && <span style={{ marginLeft: "1rem" }}>{collabLine}</span>}
+        {grammarNote && <span style={{ marginLeft: "1rem", color: "var(--color-secondary)" }}>{grammarNote}</span>}
+      </div>
     </div>
   );
 }
