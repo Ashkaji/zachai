@@ -119,9 +119,10 @@ development_status:
   11-1-workspace-karaoke-surlignage-neon-eco-mode: done
   11-2-menu-contextuel-azure-accessibilite-clavier: done
   11-3-interface-reconciliation-side-by-side-resizable: done
-  11-4-intelligence-linguistique-bible-preview-async: ready-for-dev
-  11-5-moteur-biblique-local-ingestion-donnees-souverainete: backlog
+  11-4-intelligence-linguistique-bible-preview-async: done
+  11-5-moteur-biblique-local-ingestion-donnees-souverainete: done
   epic-11-retrospective: optional
+
 
   # ─── EPIC 12 — L5 - Profil RGPD & Historique "Ghost Mode" ────────────────
   epic-12: backlog

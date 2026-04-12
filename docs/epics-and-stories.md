@@ -1,6 +1,6 @@
 # ZachAI: Epics et User Stories
 
-**Dernière mise à jour :** 2026-04-09
+**Dernière mise à jour :** 2026-04-12
 **Sprint plan :** `.bmad-outputs/implementation-artifacts/sprint-status.yaml`
 
 ---
@@ -161,28 +161,32 @@
 
 ## Epic 10 — L2 : Centre d'Action Manager & Audit Trail
 **Goal :** Développer les pages de détail et les modals de gestion avec une traçabilité totale.
-**Statut :** En attente
+**Statut :** Terminé
 
 - **Story 10.1 : Vue Détail Projet (Manager)**
   - *As a Manager, I can view an exhaustive list of audio files within a project, featuring status tracking, filtering, and deep-dive analytics.*
 - **Story 10.2 : Modals "Glass" de Gestion (Assignation/Nature)**
   - *As a Manager, I can manage project settings and assignments via high-fidelity glassmorphism modals.*
-- **Story 10.3 : Audit Trail de Projet**
+- **Story 10.3 : Validation One-Click & Rejet Structure**
+  - *As a Manager, I can approve translations with a single click or reject them with mandatory structured feedback comments.*
+- **Story 10.4 : Audit Trail de Projet**
   - *As a Manager, I can view a chronological log of all major actions (assignments, submissions, validations) within a project for full accountability.*
 
 ---
 
 ## Epic 11 — L3/L4 : Workspace "Karaoke" & Réconciliation Experte
 **Goal :** Redessiner l'espace de production pour une synchronisation audio-texte parfaite.
-**Statut :** En attente
+**Statut :** En cours
 
 - **Story 11.1 : Workspace Transcripteur "Azure Flow"**
   - *As a Transcripteur, I have a specialized workspace with Karaoke-style highlighting (halo néon) and floating context menus for high-speed correction.*
-- **Story 11.2 : Dashboard de Réconciliation Expert**
-  - *As an Expert, I can reconcile Whisper pre-annotations with manual corrections using a conflict-resolution interface built on AzureTable.*
-- **Story 11.3 : Intelligence Linguistique & Citations Bibliques UI**
-  - *As a Worker, I can see real-time grammar suggestions and biblical citation highlights integrated directly into the collaborative editor.*
-- **Story 11.4 : Moteur Biblique Local & Ingestion de Données (Souveraineté)**
+- **Story 11.2 : Menu Contextuel Azure & Accessibilité**
+  - *As a User, I can use keyboard shortcuts (Arrows, Enter, Esc) to navigate the workspace and context menus following W3C standards.*
+- **Story 11.3 : Interface de Réconciliation Side-by-Side**
+  - *As an Expert, I can reconcile Whisper pre-annotations with manual corrections using a resizable side-by-side interface.*
+- **Story 11.4 : Intelligence Linguistique & Bible Preview Async**
+  - *As a Worker, I can see real-time grammar suggestions and biblical citation previews generated asynchronously into the collaborative editor.*
+- **Story 11.5 : Moteur Biblique Local & Ingestion de Données (Souveraineté)**
   - *As a System, I can query a local database containing the full text of the Bible in multiple translations (LSG, KJV) so that verse previews are generated instantly without external API calls.*
 
 ---

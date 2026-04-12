@@ -3373,9 +3373,12 @@ def test_transcription_validate_log_hides_comment_text(mock_db):
         )
 
     assert response.status_code == 200
-    log_info.assert_called_once()
-    _, *args = log_info.call_args[0]
-    assert "Sensitive reviewer comment" not in [str(x) for x in args]
+    # log_info is called twice: once for audit log, once for handoff log.
+    assert log_info.call_count >= 1
+    # Check all log calls to ensure sensitive comment is not leaked in handoff log args.
+    for call in log_info.call_args_list:
+        _, *args = call[0]
+        assert "Sensitive reviewer comment" not in [str(x) for x in args]
 
 
 # ─── Story 4.2: GET /v1/audio-files/{id}/transcription ──────────────────────
@@ -5019,3 +5022,112 @@ def test_grammar_proxy_does_not_touch_db(mock_db):
         )
     assert r.status_code == 200
     mock_db.execute.assert_not_called()
+
+# ─── Story 11.5: Bible Engine ──────────────────────────────────────────────
+
+
+def test_get_bible_verses_exact_success(mock_db):
+    """GET /v1/bible/verses returns 200 for exact reference."""
+    v = MagicMock()
+    v.verse = 16
+    v.text = "Car Dieu a tant aimé le monde..."
+    
+    res = MagicMock()
+    res.scalars.return_value.all.return_value = [v]
+    mock_db.execute = AsyncMock(return_value=res)
+
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.get(
+            "/v1/bible/verses",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            params={"ref": "Jean 3:16", "translation": "LSG"}
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["reference"] == "Jean 3:16"
+    assert data["verses"][0]["verse"] == 16
+    assert "aimé le monde" in data["verses"][0]["text"]
+
+
+def test_get_bible_verses_range_success(mock_db):
+    """GET /v1/bible/verses returns 200 for range reference."""
+    v1 = MagicMock(); v1.verse = 1; v1.text = "Au commencement..."
+    v2 = MagicMock(); v2.verse = 2; v2.text = "La terre était informe..."
+    
+    res = MagicMock()
+    res.scalars.return_value.all.return_value = [v1, v2]
+    mock_db.execute = AsyncMock(return_value=res)
+
+    with patch.object(main, "decode_token", return_value=EXPERT_PAYLOAD):
+        response = client.get(
+            "/v1/bible/verses",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            params={"ref": "Genèse 1:1-2"}
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["verses"]) == 2
+    assert data["verses"][0]["verse"] == 1
+
+
+def test_get_bible_verses_invalid_format():
+    """GET /v1/bible/verses returns 400 for bad reference format."""
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.get(
+            "/v1/bible/verses",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            params={"ref": "Not A Reference"}
+        )
+    assert response.status_code == 400
+    assert "format" in response.json()["error"]
+
+
+def test_get_bible_verses_not_found(mock_db):
+    """GET /v1/bible/verses returns 404 when verse missing in DB."""
+    res = MagicMock()
+    res.scalars.return_value.all.return_value = []
+    mock_db.execute = AsyncMock(return_value=res)
+
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.get(
+            "/v1/bible/verses",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            params={"ref": "Jean 99:99"}
+        )
+    assert response.status_code == 404
+
+
+def test_post_bible_ingest_success(mock_db):
+    """POST /v1/bible/ingest returns 201 for valid batch."""
+    mock_db.execute = AsyncMock()
+    mock_db.commit = AsyncMock()
+
+    response = client.post(
+        "/v1/bible/ingest",
+        headers={"X-ZachAI-Golden-Set-Internal-Secret": "test-golden-set-internal-secret"},
+        json={
+            "verses": [
+                {"translation": "LSG", "book": "Jean", "chapter": 3, "verse": 16, "text": "Test text"}
+            ]
+        }
+    )
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "ok"
+    assert response.json()["count"] == 1
+
+
+def test_post_bible_ingest_forbidden():
+    """POST /v1/bible/ingest returns 403 for bad secret."""
+    response = client.post(
+        "/v1/bible/ingest",
+        headers={"X-ZachAI-Golden-Set-Internal-Secret": "wrong-secret"},
+        json={
+            "verses": [
+                {"translation": "LSG", "book": "Jean", "chapter": 3, "verse": 16, "text": "Test"}
+            ]
+        }
+    )
+    assert response.status_code == 403

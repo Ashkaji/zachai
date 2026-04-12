@@ -476,6 +476,22 @@ class ModelReadyIdempotency(Base):
     )
 
 
+class BibleVerse(Base):
+    """Local Bible engine storage (Story 11.5)."""
+
+    __tablename__ = "bible_verses"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    translation: Mapped[str] = mapped_column(String(32), nullable=False)  # LSG, KJV, etc.
+    book: Mapped[str] = mapped_column(String(255), nullable=False)
+    chapter: Mapped[int] = mapped_column(Integer, nullable=False)
+    verse: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("translation", "book", "chapter", "verse", name="uq_bible_lookup"),
+    )
+
+
 # ─── JWKS fetch ───────────────────────────────────────────────────────────────
 
 
@@ -1154,6 +1170,29 @@ class TranscriptionValidationRequest(BaseModel):
     comment: str | None = Field(
         None, max_length=5000, description="Required when approved=false; optional for approval."
     )
+
+
+class BibleVerseIn(BaseModel):
+    translation: str = Field(..., min_length=1, max_length=32)
+    book: str = Field(..., min_length=1, max_length=255)
+    chapter: int = Field(..., gt=0)
+    verse: int = Field(..., gt=0)
+    text: str = Field(..., min_length=1)
+
+
+class BibleIngestRequest(BaseModel):
+    verses: list[BibleVerseIn] = Field(..., min_length=1, max_length=1000)
+
+
+class BibleVerseOut(BaseModel):
+    verse: int
+    text: str
+
+
+class BibleRetrievalResponse(BaseModel):
+    reference: str
+    translation: str
+    verses: list[BibleVerseOut]
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1871,6 +1910,7 @@ def _normalize_openvino_segments(raw_segments: Any) -> list[dict[str, Any]]:
 
 
 _BIBLE_BOOK_ALIASES: dict[str, str] = {
+    # English
     "genesis": "Genesis",
     "gen": "Genesis",
     "exodus": "Exodus",
@@ -1990,6 +2030,71 @@ _BIBLE_BOOK_ALIASES: dict[str, str] = {
     "jude": "Jude",
     "revelation": "Revelation",
     "rev": "Revelation",
+    
+    # French (ZachAI Sovereign Engine)
+    "genèse": "Genesis",
+    "genese": "Genesis",
+    "exode": "Exodus",
+    "lévitique": "Leviticus",
+    "levitique": "Leviticus",
+    "nombres": "Numbers",
+    "deutéronome": "Deuteronomy",
+    "deuteronome": "Deuteronomy",
+    "josué": "Joshua",
+    "josue": "Joshua",
+    "juges": "Judges",
+    "1 samuel": "1 Samuel",
+    "2 samuel": "2 Samuel",
+    "1 rois": "1 Kings",
+    "2 rois": "2 Kings",
+    "1 chroniques": "1 Chronicles",
+    "2 chroniques": "2 Chronicles",
+    "esdras": "Ezra",
+    "néhémie": "Nehemiah",
+    "nehemie": "Nehemiah",
+    "cantique des cantiques": "Song of Solomon",
+    "cantique": "Song of Solomon",
+    "ésaïe": "Isaiah",
+    "esaie": "Isaiah",
+    "jérémie": "Jeremiah",
+    "jeremie": "Jeremiah",
+    "lamentations": "Lamentations",
+    "ézéchiel": "Ezekiel",
+    "ezechiel": "Ezekiel",
+    "osée": "Hosea",
+    "osee": "Hosea",
+    "sophonie": "Zephaniah",
+    "aggée": "Haggai",
+    "aggee": "Haggai",
+    "zacharie": "Zechariah",
+    "malachie": "Malachi",
+    "matthieu": "Matthew",
+    "marc": "Mark",
+    "luc": "Luke",
+    "jean": "John",
+    "actes": "Acts",
+    "romains": "Romans",
+    "1 corinthiens": "1 Corinthians",
+    "2 corinthiens": "2 Corinthians",
+    "galates": "Galatians",
+    "éphésiens": "Ephesians",
+    "ephesiens": "Ephesians",
+    "philippiens": "Philippians",
+    "colossiens": "Colossians",
+    "1 thessaloniciens": "1 Thessalonians",
+    "2 thessaloniciens": "2 Thessalonians",
+    "1 timothée": "1 Timothy",
+    "1 timothee": "1 Timothy",
+    "2 timothée": "2 Timothy",
+    "2 timothee": "2 Timothy",
+    "tite": "Titus",
+    "hébreux": "Hebrews",
+    "hebreux": "Hebrews",
+    "jacques": "James",
+    "1 pierre": "1 Peter",
+    "2 pierre": "2 Peter",
+    "apocalypse": "Revelation",
+    "apoc": "Revelation",
 }
 
 _BIBLE_BOOK_PATTERN = "|".join(
@@ -2719,6 +2824,12 @@ async def create_project(
         )
         await db.commit()
         return _project_to_dict(project)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "Project name already exists or data integrity violation"},
+        )
 
 
 @app.get("/v1/projects")
@@ -4425,3 +4536,123 @@ async def post_model_ready_callback(
         "idempotent": False,
         "last_training_at": completed_at.isoformat().replace("+00:00", "Z"),
     }
+
+
+# ─── Routes — Bible Engine (Story 11.5) ──────────────────────────────────────
+
+
+@app.get("/v1/bible/verses", response_model=BibleRetrievalResponse)
+async def get_bible_verses(
+    ref: str = Query(..., description="Bible reference, e.g. 'Jean 3:16' or 'Gen 1:1-5'"),
+    translation: str = Query("LSG", description="Translation code (LSG, KJV, etc.)"),
+    db: Annotated[AsyncSession, Depends(get_db)] = None,  # type: ignore
+    payload: Annotated[dict, Depends(get_current_user)] = None,  # type: ignore
+) -> dict:
+    """Retrieve biblical verses from the local sovereign database (Story 11.5 AC2)."""
+    if db is None or payload is None: # Should not happen with FastAPI Depends
+         raise HTTPException(status_code=500, detail="Dependency injection failed")
+    # Any authenticated user can query the Bible.
+    m = _BIBLE_CITATION_RE.search(ref)
+    if not m:
+        # Fallback to a very loose parse if the strict one fails, or just 404.
+        # Strict match ensures normalized lookups.
+        raise HTTPException(
+            status_code=400,
+            detail={"error": f"Could not parse reference format: '{ref}'. Use format 'Book Chapter:Verse'"}
+        )
+
+    book_raw = m.group("book")
+    chapter = int(m.group("chapter"))
+    verse_start = int(m.group("verse_start"))
+    verse_end_raw = m.group("verse_end")
+    
+    book_norm = _normalize_bible_book(book_raw)
+    
+    stmt = (
+        select(BibleVerse)
+        .where(
+            BibleVerse.translation == translation.upper(),
+            BibleVerse.book == book_norm,
+            BibleVerse.chapter == chapter
+        )
+    )
+    
+    if verse_end_raw:
+        verse_end = int(verse_end_raw)
+        # Handle ranges within the same chapter.
+        stmt = stmt.where(BibleVerse.verse.between(verse_start, verse_end))
+    else:
+        stmt = stmt.where(BibleVerse.verse == verse_start)
+        
+    stmt = stmt.order_by(BibleVerse.verse)
+    
+    result = await db.execute(stmt)
+    verses = result.scalars().all()
+    
+    if not verses:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": f"Reference '{ref}' not found in {translation} translation"}
+        )
+        
+    return {
+        "reference": ref,
+        "translation": translation.upper(),
+        "verses": [{"verse": v.verse, "text": v.text} for v in verses]
+    }
+
+
+@app.post("/v1/bible/ingest", status_code=201)
+async def post_bible_ingest(
+    body: BibleIngestRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    request: Request,
+) -> dict:
+    """
+    Bulk ingest biblical verses. Protected by internal secret (Story 11.5 AC3).
+    Used by CLI ingestion script.
+    """
+    verify_golden_set_internal_secret(request)
+    
+    t0 = time.perf_counter()
+    
+    # Batch UPSERT using PostgreSQL ON CONFLICT (idempotency).
+    # Unique constraint expected on (translation, book, chapter, verse).
+    # Note: BibleVerse model needs this constraint if not already present.
+    
+    written = 0
+    try:
+        # Normalize and prepare values
+        rows = []
+        for v in body.verses:
+            rows.append({
+                "translation": v.translation.upper(),
+                "book": _normalize_bible_book(v.book),
+                "chapter": v.chapter,
+                "verse": v.verse,
+                "text": v.text
+            })
+            
+        # SQLAlchemy Core for efficient bulk insert
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        
+        stmt = pg_insert(BibleVerse).values(rows)
+        # If record exists, update the text.
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["translation", "book", "chapter", "verse"],
+            set_={"text": stmt.excluded.text}
+        )
+        
+        res = await db.execute(stmt)
+        await db.commit()
+        written = len(body.verses)
+        
+    except Exception as exc:
+        await db.rollback()
+        logger.error("bible_ingest_failed error=%s", exc)
+        raise HTTPException(status_code=500, detail={"error": f"Ingestion failed: {str(exc)}"})
+
+    ms = (time.perf_counter() - t0) * 1000.0
+    logger.info("bible_ingest_ok count=%d duration_ms=%.0f", written, ms)
+    
+    return {"status": "ok", "count": written}
