@@ -16,6 +16,7 @@ export type AppRouteId =
   | "dashboard-expert"
   | "project-wizard"
   | "project-detail"
+  | "reconciliation-workspace"
   | "legacy-editor"
   | "playground";
 

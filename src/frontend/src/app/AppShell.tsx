@@ -14,6 +14,7 @@ import {
 import { NewProjectWizard } from "../features/project-wizard/NewProjectWizard";
 import { ProjectDetailManager } from "../features/projects/ProjectDetailManager";
 import { Playground } from "../dev/Playground";
+import { ReconciliationWorkspace } from "../features/reconciliation/ReconciliationWorkspace";
 
 function roleTitle(role: AppRole): string {
   if (role === "admin") return "Admin";
@@ -303,7 +304,21 @@ export function AppShell({
             />
           ) : null}
 
-          {activeRoute === "dashboard-expert" && role === "expert" ? <ExpertDashboard /> : null}
+          {activeRoute === "dashboard-expert" && role === "expert" ? (
+            <ExpertDashboard 
+              onReconcile={(audioId) => {
+                setSelectedProjectId(audioId); // Reusing as Audio ID for now
+                setActiveRoute("reconciliation-workspace");
+              }}
+            />
+          ) : null}
+
+          {activeRoute === "reconciliation-workspace" && (role === "expert" || role === "admin") ? (
+            <ReconciliationWorkspace
+              audioId={selectedProjectId!}
+              onBack={handleBackToDashboard}
+            />
+          ) : null}
           {activeRoute === "dashboard-transcriber" && role === "transcriber" ? <TranscriberDashboard /> : null}
 
           {activeRoute === "legacy-editor" ? legacyEditor : null}

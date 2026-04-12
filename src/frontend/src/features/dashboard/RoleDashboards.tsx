@@ -399,7 +399,7 @@ export function TranscriberDashboard() {
   );
 }
 
-export function ExpertDashboard() {
+export function ExpertDashboard({ onReconcile }: { onReconcile?: (audioId: number) => void }) {
   const auth = useAuth();
   const token = useMemo(() => bearerForApi(auth.user), [auth.user]);
   const [tasks, setTasks] = useState<ExpertTask[]>([]);
@@ -436,7 +436,39 @@ export function ExpertDashboard() {
 
       <div style={{ display: "grid", gridTemplateColumns: "2.5fr 1fr", gap: "var(--spacing-6)" }}>
         <Card title="Réconciliation Experte" subtitle="Segments en attente de décision">
-          {ExpertDashboardStateContent({ viewState, error, tasks })}
+          {viewState === "loading" ? (
+            <DashboardInfo text="Chargement dashboard expert..." />
+          ) : viewState === "error" ? (
+            <p style={{ color: "var(--color-error)", margin: 0 }}>{error}</p>
+          ) : viewState === "empty" ? (
+            <DashboardInfo text="Aucune tache experte pour le moment." />
+          ) : (
+            <DataTable
+              columns={["Audio", "Projet", "Statut", "Source", "Action"]}
+              rows={tasks.slice(0, 12).map((t) => [
+                <div style={{ fontWeight: 700 }}>{t.filename}</div>,
+                t.project_name,
+                <span style={{ 
+                  padding: "2px 6px", 
+                  borderRadius: "4px", 
+                  fontSize: "0.7rem", 
+                  fontWeight: 800,
+                  background: t.status === "validated" ? "var(--color-primary-soft)" : "var(--color-surface-hi)",
+                  color: t.status === "validated" ? "var(--color-primary)" : "var(--color-text-muted)"
+                }}>{t.status.toUpperCase()}</span>,
+                t.source,
+                onReconcile ? (
+                  <button 
+                    onClick={() => onReconcile(t.audio_id)}
+                    className="za-btn za-btn--ghost" 
+                    style={{ padding: "4px 8px", fontSize: "0.75rem", border: "none", background: "var(--color-surface-hi)" }}
+                  >
+                    Réconcilier →
+                  </button>
+                ) : "--"
+              ])}
+            />
+          )}
         </Card>
 
         <Card title="Typologie Conflits" subtitle="Analyse des erreurs récurrentes">
