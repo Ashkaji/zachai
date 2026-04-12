@@ -1,6 +1,8 @@
 """
 Unit tests for ZachAI FastAPI Gateway — Stories 1.3, 2.1 & 2.2
 Tests use mocked Keycloak JWT verification, mocked MinIO client, and mocked AsyncSession.
+get_current_user is overridden to skip the Story 12.1 UserConsent deletion guard (incompatible
+with AsyncSession mocks); RGPD behavior is tested in test_rgpd.py.
 Run with: pytest test_main.py -v
 """
 import os
@@ -8,9 +10,12 @@ import pytest
 import httpx
 import fakeredis.aioredis
 from datetime import datetime, timezone
+from typing import Annotated
 from unittest.mock import patch, MagicMock, AsyncMock
+from fastapi import Depends, HTTPException, Request
 from fastapi.testclient import TestClient
-from fastapi import HTTPException
+from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # Set required environment variables before importing main
 os.environ.setdefault("KEYCLOAK_ISSUER", "http://keycloak:8080/realms/zachai")
@@ -46,7 +51,31 @@ with patch("httpx.AsyncClient") as mock_httpx:
     import main  # noqa: E402
     import editor_ticket as editor_ticket_mod  # noqa: E402
 
+
+async def get_current_user_test_override(
+    _request: Request,
+    db: Annotated[AsyncSession, Depends(main.get_db)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(main._bearer_scheme)],
+) -> dict:
+    """
+    Same JWT handling as production get_current_user, but skips UserConsent deletion guard.
+    Unit tests mock AsyncSession; the real guard's scalar_one_or_none() then breaks (coroutine / 403).
+    RGPD deletion blocking is covered in test_rgpd.py.
+    """
+    if credentials is None:
+        raise HTTPException(status_code=401, detail={"error": "Unauthorized"})
+    payload = main.decode_token(credentials.credentials)
+    if not payload.get("sub"):
+        for alt in ("preferred_username", "username", "email", "upn"):
+            v = payload.get(alt)
+            if isinstance(v, str) and v.strip():
+                payload["sub"] = v
+                break
+    return payload
+
+
 client = TestClient(main.app)
+main.app.dependency_overrides[main.get_current_user] = get_current_user_test_override
 
 # Seed the JWKS cache with mock data so decode_token attempts RS256 decode (and fails on bad tokens)
 main._jwks_cache = MOCK_JWKS

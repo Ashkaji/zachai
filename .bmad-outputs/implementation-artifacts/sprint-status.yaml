@@ -128,5 +128,5 @@ development_status:
   epic-12: in-progress
   12-1-centre-profil-consentement-anonymisation-rgpd: done
   12-2-visual-diff-ghost-mode-worker-based-performance: done
-  12-3-restauration-securisee-verrouillage-websocket: ready-for-dev
+  12-3-restauration-securisee-verrouillage-websocket: done
   epic-12-retrospective: optional

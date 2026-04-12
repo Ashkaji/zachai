@@ -1,3 +1,7 @@
+## Deferred from: code review of 12-3-restauration-securisee-verrouillage-websocket.md (2026-04-12)
+
+- **Remote restore failure visibility**: After a failed restore, `finally` still publishes `document_unlocked`; collaborators who saw `document_locked` may think the restore completed. Only the initiating client gets the HTTP error. Optional follow-up: broadcast a failure stateless message (e.g. `zachai:document_restore_failed`). [`src/api/fastapi/main.py`]
+
 ## Deferred from: code review of 1-2-keycloak-multi-roles.md (2026-03-28)
 
 - **Overprivileged Database Access (Shared Superuser)**: Keycloak and the future ZachAI service share a single superuser (`POSTGRES_USER`). This violates the principle of least privilege; each service should ideally have its own user and scoped permissions. [src/compose.yml:101]

@@ -1217,6 +1217,7 @@ class TranscriptionValidationRequest(BaseModel):
 
 class DocumentRestoreRequest(BaseModel):
     """POST /v1/editor/restore/{audio_id} — Story 12.3."""
+
     snapshot_id: str
 
 
@@ -3743,18 +3744,187 @@ async def _signal_hocuspocus_reload(audio_id: int):
             logger.error("failed_to_signal_hocuspocus audio_id=%s error=%s", audio_id, exc)
 
 
-@app.post("/v1/editor/restore/{audio_id}")
-async def restore_document_from_snapshot(
+def _jwt_display_name(payload: dict) -> str:
+    """Human-readable label for collaboration overlays (Story 12.3)."""
+    name = (payload.get("name") or "").strip()
+    if name:
+        return name
+    pref = (payload.get("preferred_username") or "").strip()
+    if pref:
+        return pref
+    sub = str(payload.get("sub") or "").strip()
+    return sub[:16] if sub else "Collaborator"
+
+
+async def _publish_hocuspocus_signal(message: dict) -> None:
+    """Redis pub/sub on ``hocuspocus:signals`` for Hocuspocus and stateless fan-out (Story 12.3)."""
+    if _redis_client is None:
+        return
+    try:
+        await _redis_client.publish("hocuspocus:signals", json.dumps(message))
+    except Exception as exc:
+        logger.error("hocuspocus_signal_publish_failed msg=%s error=%s", message.get("type"), exc)
+
+
+async def _restore_document_from_snapshot_core(
+    *,
     audio_id: int,
-    body: DocumentRestoreRequest,
+    snapshot_id: str,
+    payload: dict,
+    db: AsyncSession,
+) -> dict:
+    """
+    Story 12.3: shared restore — lock, collaboration signal, MinIO fetch + integrity check, PG swap, reload, unlock.
+    Caller must have already authorized write access to the document.
+    """
+    sub = payload.get("sub")
+    display_name = _jwt_display_name(payload)
+
+    if _redis_client is None:
+        raise HTTPException(status_code=503, detail={"error": "Redis unavailable"})
+
+    lock_key = f"lock:document:{audio_id}:restoring"
+    locked = await _redis_client.set(lock_key, sub or "unknown", nx=True, ex=60)
+    if not locked:
+        raise HTTPException(
+            status_code=423,
+            detail={"error": "Restoration already in progress; document is locked."},
+        )
+
+    try:
+        await _publish_hocuspocus_signal(
+            {
+                "type": "document_locked",
+                "document_id": audio_id,
+                "user_name": display_name,
+            }
+        )
+
+        stmt = select(SnapshotArtifact).where(
+            SnapshotArtifact.document_id == audio_id,
+            SnapshotArtifact.snapshot_id == snapshot_id,
+        )
+        r_snap = await db.execute(stmt)
+        snap = r_snap.scalar_one_or_none()
+        if not snap:
+            raise HTTPException(status_code=404, detail={"error": "Snapshot not found"})
+
+        bucket = "snapshots"
+        object_key = snap.json_object_key
+        if object_key.startswith(f"{bucket}/"):
+            object_key = object_key[len(bucket) + 1 :]
+
+        try:
+            resp = internal_client.get_object(bucket, object_key)
+            data = json.loads(resp.read().decode("utf-8"))
+            yjs_b64 = data.get("yjs_state_binary")
+            if not yjs_b64:
+                raise HTTPException(status_code=502, detail={"error": "Snapshot JSON missing yjs_state_binary"})
+            yjs_raw = base64.b64decode(yjs_b64.encode("ascii"), validate=True)
+        except S3Error as exc:
+            logger.error("minio_error snapshot_id=%s error=%s", snapshot_id, exc)
+            raise HTTPException(status_code=502, detail={"error": "Failed to fetch snapshot from storage"})
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("snapshot_yjs_error snapshot_id=%s error=%s", snapshot_id, exc)
+            raise HTTPException(status_code=502, detail={"error": str(exc)})
+
+        digest = hashlib.sha256(yjs_raw).hexdigest()
+        if digest != snap.yjs_sha256:
+            logger.error(
+                "snapshot_integrity_mismatch snapshot_id=%s expected=%s got=%s",
+                snapshot_id,
+                snap.yjs_sha256,
+                digest,
+            )
+            raise HTTPException(
+                status_code=502,
+                detail={"error": "Snapshot Yjs payload does not match stored integrity hash"},
+            )
+
+        result_af = await db.execute(
+            select(AudioFile).where(AudioFile.id == audio_id).options(selectinload(AudioFile.assignment))
+        )
+        af = result_af.scalar_one_or_none()
+        if not af:
+            raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
+
+        async with db.begin_nested():
+            await db.execute(select(AudioFile).where(AudioFile.id == audio_id).with_for_update())
+            await db.execute(delete(YjsLog).where(YjsLog.document_id == audio_id))
+            db.add(YjsLog(document_id=audio_id, update_binary=yjs_raw))
+
+        await log_audit_action(
+            db,
+            af.project_id,
+            sub,
+            "DOCUMENT_RESTORED",
+            {"audio_id": audio_id, "snapshot_id": snapshot_id},
+        )
+        await db.commit()
+
+        await _signal_hocuspocus_reload(audio_id)
+
+        logger.info("document_restored audio_id=%s snapshot_id=%s user_id=%s", audio_id, snapshot_id, sub)
+
+        return {
+            "status": "ok",
+            "message": "Document restoration successful. Collaborators will be re-synced.",
+            "snapshot_id": snapshot_id,
+        }
+    finally:
+        await _publish_hocuspocus_signal({"type": "document_unlocked", "document_id": audio_id})
+        await _redis_client.delete(lock_key)
+
+
+async def _authorize_restore_collaborator_access(
+    db: AsyncSession,
+    af: AudioFile,
+    roles: list[str],
+    sub: str | None,
+) -> None:
+    """Same scope as POST /v1/editor/ticket for Transcripteur / Expert (Story 12.3)."""
+    if "Expert" in roles:
+        proj_r = await db.execute(select(Project).where(Project.id == af.project_id))
+        proj = proj_r.scalar_one_or_none()
+        if proj is None or proj.status != ProjectStatus.ACTIVE:
+            raise HTTPException(status_code=403, detail={"error": "Project is not active"})
+        return
+    if "Transcripteur" in roles:
+        asg = af.assignment
+        if not asg or asg.transcripteur_id != sub:
+            raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
+        if af.status not in (AudioFileStatus.ASSIGNED, AudioFileStatus.IN_PROGRESS):
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "Audio file status does not allow editor access"},
+            )
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={"error": "Transcripteur, Expert, Admin, or Manager role required"},
+    )
+
+
+@app.post("/v1/snapshots/{snapshot_id}/restore")
+async def restore_snapshot_by_id(
+    snapshot_id: str,
     payload: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
-    """Restore document state from a snapshot with Redis lock (Story 12.3 AC 2)."""
+    """POST /v1/snapshots/{snapshot_id}/restore — Story 12.3 AC 1 (canonical REST path)."""
     roles = get_roles(payload)
     sub = payload.get("sub")
-    
-    # 1. Access Control
+
+    stmt = select(SnapshotArtifact).where(SnapshotArtifact.snapshot_id == snapshot_id)
+    r_snap = await db.execute(stmt)
+    snap = r_snap.scalar_one_or_none()
+    if not snap:
+        raise HTTPException(status_code=404, detail={"error": "Snapshot not found"})
+
+    audio_id = snap.document_id
+
     result = await db.execute(
         select(AudioFile).where(AudioFile.id == audio_id).options(selectinload(AudioFile.assignment))
     )
@@ -3769,84 +3939,49 @@ async def restore_document_from_snapshot(
             if not proj or proj.manager_id != sub:
                 raise HTTPException(status_code=403, detail={"error": "Not the project owner"})
         else:
-            asg = af.assignment
-            if not asg or asg.transcripteur_id != sub:
-                raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
+            await _authorize_restore_collaborator_access(db, af, roles, sub)
 
-    # 2. Redis Locking (AC 2)
-    if _redis_client is None:
-        raise HTTPException(status_code=503, detail={"error": "Redis unavailable"})
-    
-    lock_key = f"lock:document:{audio_id}:restoring"
-    # Try to acquire lock for 120s (Story 12.3 Adjusted TTL for large Yjs states)
-    locked = await _redis_client.set(lock_key, sub, nx=True, ex=120)
-    if not locked:
-        raise HTTPException(status_code=409, detail={"error": "Restoration already in progress by another user"})
+    return await _restore_document_from_snapshot_core(
+        audio_id=audio_id,
+        snapshot_id=snapshot_id,
+        payload=payload,
+        db=db,
+    )
 
-    try:
-        # 3. Fetch Snapshot
-        stmt = select(SnapshotArtifact).where(
-            SnapshotArtifact.document_id == audio_id,
-            SnapshotArtifact.snapshot_id == body.snapshot_id
-        )
-        r_snap = await db.execute(stmt)
-        snap = r_snap.scalar_one_or_none()
-        if not snap:
-            raise HTTPException(status_code=404, detail={"error": "Snapshot not found"})
 
-        # 4. Fetch Yjs binary from MinIO
-        bucket = "snapshots"
-        object_key = snap.json_object_key
-        if object_key.startswith(f"{bucket}/"):
-            object_key = object_key[len(bucket)+1:]
+@app.post("/v1/editor/restore/{audio_id}")
+async def restore_document_from_snapshot(
+    audio_id: int,
+    body: DocumentRestoreRequest,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Restore document state from a snapshot with Redis lock (Story 12.3)."""
+    roles = get_roles(payload)
+    sub = payload.get("sub")
 
-        try:
-            resp = internal_client.get_object(bucket, object_key)
-            data = json.loads(resp.read().decode("utf-8"))
-            yjs_b64 = data.get("yjs_state_binary")
-            if not yjs_b64:
-                raise HTTPException(status_code=502, detail={"error": "Snapshot JSON missing yjs_state_binary"})
-            yjs_raw = base64.b64decode(yjs_b64.encode("ascii"), validate=True)
-        except S3Error as exc:
-            logger.error("minio_error snapshot_id=%s error=%s", body.snapshot_id, exc)
-            raise HTTPException(status_code=502, detail={"error": "Failed to fetch snapshot from storage"})
-        except Exception as exc:
-            logger.error("snapshot_yjs_error snapshot_id=%s error=%s", body.snapshot_id, exc)
-            raise HTTPException(status_code=502, detail={"error": str(exc)})
+    result = await db.execute(
+        select(AudioFile).where(AudioFile.id == audio_id).options(selectinload(AudioFile.assignment))
+    )
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
 
-        # 5. Swap Yjs State in DB
-        async with db.begin_nested():
-            # Story 12.3 Adjusted: Serialize document access to prevent race with concurrent Hocuspocus stores
-            await db.execute(select(AudioFile).where(AudioFile.id == audio_id).with_for_update())
-            
-            # Delete all logs for this document
-            await db.execute(delete(YjsLog).where(YjsLog.document_id == audio_id))
-            # Insert the snapshot state as the new authoritative start
-            new_log = YjsLog(document_id=audio_id, update_binary=yjs_raw)
-            db.add(new_log)
-        
-        await log_audit_action(
-            db,
-            af.project_id,
-            sub,
-            "DOCUMENT_RESTORED",
-            {"audio_id": audio_id, "snapshot_id": body.snapshot_id}
-        )
-        await db.commit()
+    if "Admin" not in roles:
+        if "Manager" in roles:
+            pr = await db.execute(select(Project).where(Project.id == af.project_id))
+            proj = pr.scalar_one_or_none()
+            if not proj or proj.manager_id != sub:
+                raise HTTPException(status_code=403, detail={"error": "Not the project owner"})
+        else:
+            await _authorize_restore_collaborator_access(db, af, roles, sub)
 
-        # 6. Flush Hocuspocus Cache
-        await _signal_hocuspocus_reload(audio_id)
-        
-        logger.info("document_restored audio_id=%s snapshot_id=%s user_id=%s", audio_id, body.snapshot_id, sub)
-        
-        return {
-            "status": "ok",
-            "message": "Document restoration successful. Collaborators will be re-synced.",
-            "snapshot_id": body.snapshot_id
-        }
-    finally:
-        # Release lock
-        await _redis_client.delete(lock_key)
+    return await _restore_document_from_snapshot_core(
+        audio_id=audio_id,
+        snapshot_id=body.snapshot_id,
+        payload=payload,
+        db=db,
+    )
 
 
 

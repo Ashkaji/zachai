@@ -249,6 +249,8 @@ export function TranscriptionEditor() {
   const [isRestoring, setIsRestoring] = useState(false);
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [snapshotToRestore, setSnapshotToRestore] = useState<string | null>(null);
+  /** Set when another collaborator triggers restoration (Hocuspocus stateless). */
+  const [remoteRestoringBy, setRemoteRestoringBy] = useState<string | null>(null);
 
   const handleRestoreSnapshot = async (snapId: string) => {
     if (!audioId || !token) return;
@@ -257,14 +259,26 @@ export function TranscriptionEditor() {
     setShowRestoreConfirm(false);
     
     try {
-      const resp = await apiFetch(`/v1/editor/restore/${audioId}`, token, {
+      const resp = await apiFetch(`/v1/snapshots/${encodeURIComponent(snapId)}/restore`, token, {
         method: "POST",
-        body: JSON.stringify({ snapshot_id: snapId }),
       });
       
       if (!resp.ok) {
-        const err = await resp.json();
-        throw new Error(err.error || "Restoration failed");
+        let msg = "Restoration failed";
+        try {
+          const err = (await resp.json()) as { detail?: unknown; error?: string };
+          const d = err.detail;
+          if (typeof d === "object" && d !== null && "error" in d) {
+            msg = String((d as { error: string }).error);
+          } else if (typeof d === "string") {
+            msg = d;
+          } else if (err.error) {
+            msg = String(err.error);
+          }
+        } catch {
+          /* ignore */
+        }
+        throw new Error(msg);
       }
       
       // Force reconnect to get new state from Hocuspocus
@@ -302,6 +316,10 @@ export function TranscriptionEditor() {
   useEffect(() => {
     fetchSnapshots();
   }, [fetchSnapshots]);
+
+  useEffect(() => {
+    setRemoteRestoringBy(null);
+  }, [audioId]);
 
   const handleSelectSnapshot = async (snapId: string) => {
     if (!token) return;
@@ -515,6 +533,26 @@ export function TranscriptionEditor() {
           const code = ev?.event?.code;
           cleanupProvider();
           scheduleReconnect(code ? `Disconnected (code ${code})` : "Disconnected");
+        });
+
+        hp.on("stateless", ({ payload }: { payload: string }) => {
+          try {
+            const data = JSON.parse(payload) as {
+              type?: string;
+              user_name?: string | null;
+            };
+            if (data.type === "zachai:document_restoring") {
+              setRemoteRestoringBy(
+                typeof data.user_name === "string" && data.user_name.trim()
+                  ? data.user_name.trim()
+                  : "Another collaborator",
+              );
+            } else if (data.type === "zachai:document_restored") {
+              setRemoteRestoringBy(null);
+            }
+          } catch {
+            /* ignore */
+          }
         });
 
         if (!cancelled) {
@@ -1359,8 +1397,8 @@ export function TranscriptionEditor() {
 
   return (
     <div className="za-workspace-container" style={{ display: "flex", flexDirection: "row", padding: 0 }}>
-      {/* Restoration Overlay (Story 12.3 AC 4) */}
-      {isRestoring && (
+      {/* Restoration Overlay (Story 12.3 — collaborators + local) */}
+      {(isRestoring || remoteRestoringBy) && (
         <div 
           className="za-glass"
           style={{
@@ -1377,8 +1415,12 @@ export function TranscriptionEditor() {
           }}
         >
           <div className="za-spinner" style={{ width: '48px', height: '48px', marginBottom: '1.5rem' }} />
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: '0.5rem' }}>Restoring Document</h2>
-          <p style={{ opacity: 0.8 }}>Please wait while we recover the selected version...</p>
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: '0.5rem' }}>Document restoration</h2>
+          <p style={{ opacity: 0.9, maxWidth: 420, textAlign: "center", padding: "0 1rem" }}>
+            Document being restored by{" "}
+            <strong>{isRestoring ? displayName : remoteRestoringBy}</strong>
+            … Please wait — editing is temporarily disabled.
+          </p>
         </div>
       )}
 
@@ -1408,8 +1450,8 @@ export function TranscriptionEditor() {
               <Zap size={20} /> Danger Zone
             </h3>
             <p style={{ fontSize: '0.9rem', lineHeight: 1.5, marginBottom: 'var(--spacing-6)' }}>
-              You are about to restore a previous version of this document. 
-              <strong> All changes made since this version will be permanently lost.</strong>
+              This will overwrite all current changes. This action cannot be undone (except by another
+              restore).
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--spacing-3)' }}>
               <button 

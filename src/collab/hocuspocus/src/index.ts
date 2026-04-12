@@ -303,18 +303,38 @@ redisSignals.subscribe("hocuspocus:signals", (err) => {
 redisSignals.on("message", async (channel, message) => {
   if (channel === "hocuspocus:signals") {
     try {
-      const data = JSON.parse(message);
-      if (data.type === "reload") {
-        const documentId = data.document_id;
-        const documentName = String(documentId);
+      const data = JSON.parse(message) as {
+        type?: string;
+        document_id?: number;
+        user_name?: string;
+      };
+      const documentId = data.document_id;
+      const documentName =
+        typeof documentId === "number" && Number.isFinite(documentId) ? String(documentId) : null;
+
+      if (data.type === "reload" && documentName) {
         log("info", "received reload signal", { document_id: documentId });
-        
-        // Story 12.3 AC 1.1 Step 5: Flush cache
-        const document = server.documents.get(documentName);
-        if (document) {
+        const doc = server.documents.get(documentName);
+        if (doc) {
           log("info", "flushing document cache for reload", { document_id: documentId });
-          // Destroying the document instance forces a reload from persistent storage on next sync
-          await document.destroy();
+          doc.destroy();
+        }
+      } else if ((data.type === "document_locked" || data.type === "document_unlocked") && documentName) {
+        const doc = server.documents.get(documentName);
+        if (doc && !doc.isDestroyed) {
+          const payload =
+            data.type === "document_locked"
+              ? {
+                  type: "zachai:document_restoring",
+                  document_id: documentId,
+                  user_name:
+                    typeof data.user_name === "string" && data.user_name.trim()
+                      ? data.user_name.trim()
+                      : null,
+                }
+              : { type: "zachai:document_restored", document_id: documentId };
+          doc.broadcastStateless(JSON.stringify(payload));
+          log("info", "broadcast restoration state", { document_id: documentId, signal: data.type });
         }
       }
     } catch (e) {
