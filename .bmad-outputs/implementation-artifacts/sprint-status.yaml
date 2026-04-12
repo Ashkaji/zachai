@@ -1,5 +1,5 @@
 # generated: 2026-03-19
-# last_updated: 2026-04-10
+# last_updated: 2026-04-11
 # project: zachai
 # project_key: NOKEY
 # tracking_system: file-system
@@ -28,7 +28,7 @@
 #   - done: Retrospective has been completed
 
 generated: 2026-03-19
-last_updated: 2026-04-10
+last_updated: 2026-04-11
 project: zachai
 project_key: NOKEY
 tracking_system: file-system
@@ -107,16 +107,16 @@ development_status:
   epic-9-retrospective: done
 
   # ─── EPIC 10 — L2 - Centre d'Action Manager & Audit Trail ────────────────
-  epic-10: backlog
-  10-1-vue-detail-projet-actions-groupees: backlog
-  10-2-modals-glass-natures-labels-assignations: backlog
-  10-3-validation-one-click-modal-rejet-structure: backlog
-  10-4-audit-trail-projet-visibilite-partagee: backlog
-  epic-10-retrospective: optional
+  epic-10: done
+  10-1-vue-detail-projet-actions-groupees: done
+  10-2-modals-glass-natures-labels-assignations: done
+  10-3-validation-one-click-modal-rejet-structure: done
+  10-4-audit-trail-projet-visibilite-partagee: done
+  epic-10-retrospective: done
 
   # ─── EPIC 11 — L3/L4 - Workspace "Karaoke" & Réconciliation Experte ──────
-  epic-11: backlog
-  11-1-workspace-karaoke-surlignage-neon-eco-mode: backlog
+  epic-11: in-progress
+  11-1-workspace-karaoke-surlignage-neon-eco-mode: ready-for-dev
   11-2-menu-contextuel-azure-accessibilite-clavier: backlog
   11-3-interface-reconciliation-side-by-side-resizable: backlog
   11-4-intelligence-linguistique-bible-preview-async: backlog

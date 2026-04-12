@@ -68,21 +68,28 @@ export function Metric({
 export function Badge({
   children,
   tone = "default",
+  glow = false,
+  pulse = false,
+  style,
 }: {
   children: ReactNode;
   tone?: "default" | "primary" | "success" | "error";
+  glow?: boolean;
+  pulse?: boolean;
+  style?: React.CSSProperties;
 }) {
   const styles = {
-    default: { bg: "var(--color-surface-vhi)", text: "var(--color-text-muted)" },
-    primary: { bg: "var(--color-primary-soft)", text: "var(--color-primary)" },
-    success: { bg: "rgba(47, 138, 99, 0.15)", text: "var(--color-success)" },
-    error: { bg: "rgba(255, 113, 108, 0.15)", text: "var(--color-error)" },
+    default: { bg: "var(--color-surface-vhi)", text: "var(--color-text-muted)", glow: "0 0 8px rgba(128, 128, 128, 0.2)" },
+    primary: { bg: "var(--color-primary-soft)", text: "var(--color-primary)", glow: "0 0 12px var(--color-glow-blue)" },
+    success: { bg: "rgba(47, 138, 99, 0.15)", text: "var(--color-success)", glow: "0 0 12px var(--color-success)" },
+    error: { bg: "rgba(255, 113, 108, 0.15)", text: "var(--color-error)", glow: "0 0 12px var(--color-error)" },
   };
 
   const current = styles[tone];
 
   return (
     <span
+      className={pulse ? "za-pulse" : ""}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -94,9 +101,21 @@ export function Badge({
         color: current.text,
         textTransform: "uppercase",
         letterSpacing: "0.02em",
+        boxShadow: glow ? current.glow : undefined,
+        ...style,
       }}
     >
       {children}
+      <style>{`
+        @keyframes za-pulse {
+          0% { opacity: 0.8; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.02); }
+          100% { opacity: 0.8; transform: scale(1); }
+        }
+        .za-pulse {
+          animation: za-pulse 2s infinite ease-in-out;
+        }
+      `}</style>
     </span>
   );
 }
@@ -104,15 +123,44 @@ export function Badge({
 export function DataTable({
   columns,
   rows,
+  selectable,
+  selectedIds,
+  onToggleAll,
+  onToggleRow,
+  allSelected,
+  rowIds,
 }: {
   columns: string[];
   rows: ReactNode[][];
+  selectable?: boolean;
+  selectedIds?: Set<number | string>;
+  onToggleAll?: () => void;
+  onToggleRow?: (id: number | string) => void;
+  allSelected?: boolean;
+  rowIds?: (number | string)[];
 }) {
   return (
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
         <thead>
           <tr>
+            {selectable && (
+              <th
+                style={{
+                  width: "48px",
+                  padding: "12px 16px",
+                  background: "var(--color-surface-hi)",
+                  borderBottom: "2px solid var(--color-bg)",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={() => onToggleAll?.()}
+                  style={{ cursor: "pointer" }}
+                />
+              </th>
+            )}
             {columns.map((column) => (
               <th
                 key={column}
@@ -125,8 +173,7 @@ export function DataTable({
                   fontWeight: 700,
                   textTransform: "uppercase",
                   letterSpacing: "0.05em",
-                  // No-Line Rule: borderBottom removed or made very subtle tonal difference
-                  borderBottom: "2px solid var(--color-bg)", 
+                  borderBottom: "2px solid var(--color-bg)",
                 }}
               >
                 {column}
@@ -135,26 +182,49 @@ export function DataTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, rowIndex) => (
-            <tr 
-              key={`row-${rowIndex}`} 
-              className="za-row-hover"
-              style={{ transition: "background 0.2s ease" }}
+          {rows.map((row, rowIndex) => {
+          const rowId = (rowIds ? rowIds[rowIndex] : rowIndex) ?? rowIndex;
+          const isSelected = selectedIds?.has(rowId);
+          return (
+          <tr
+          key={`row-${rowIndex}`}
+          className="za-row-hover"
+          style={{
+            transition: "background 0.2s ease",
+            background: isSelected ? "var(--color-primary-soft)" : undefined,
+          }}
+          >
+          {selectable && (
+            <td
+              style={{
+                padding: "16px",
+                borderBottom: "1px solid var(--color-surface-low)",
+              }}
             >
-              {row.map((cell, cellIndex) => (
-                <td 
-                  key={`cell-${rowIndex}-${cellIndex}`} 
-                  style={{ 
-                    padding: "16px", 
-                    fontSize: "0.9rem",
-                    borderBottom: "1px solid var(--color-surface-low)",
-                  }}
-                >
-                  {cell}
-                </td>
-              ))}
-            </tr>
-          ))}
+              <input
+                type="checkbox"
+                checked={isSelected}
+                onChange={() => onToggleRow?.(rowId)}
+                style={{ cursor: "pointer" }}
+              />
+            </td>
+          )}
+
+                {row.map((cell, cellIndex) => (
+                  <td
+                    key={`cell-${rowIndex}-${cellIndex}`}
+                    style={{
+                      padding: "16px",
+                      fontSize: "0.9rem",
+                      borderBottom: "1px solid var(--color-surface-low)",
+                    }}
+                  >
+                    {cell}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
       <style>{`

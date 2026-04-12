@@ -448,6 +448,24 @@ class SnapshotArtifact(Base):
     __table_args__ = (Index("ix_snapshot_artifacts_document_created", "document_id", "created_at"),)
 
 
+class AuditLog(Base):
+    """Chronological log of major actions within a project (Story 10.4)."""
+
+    __tablename__ = "audit_logs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)  # sub from JWT
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    details: Mapped[dict] = mapped_column(LargeBinary, nullable=False)  # Store as JSON binary for flexibility
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (Index("ix_audit_logs_project_id", "project_id"),)
+
+
 class ModelReadyIdempotency(Base):
     """One row per successful model-ready callback (Story 4.4) — dedupes worker retries."""
 
@@ -571,9 +589,26 @@ async def lifespan(app: FastAPI):
                         "CREATE UNIQUE INDEX IF NOT EXISTS uq_audio_files_project_minio_path ON audio_files (project_id, minio_path)"
                     )
                 )
+
+                # Story 10.4: Audit logs
+                await conn.execute(
+                    text(
+                        "CREATE TABLE IF NOT EXISTS audit_logs ("
+                        "id SERIAL PRIMARY KEY, "
+                        "project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, "
+                        "user_id VARCHAR(255) NOT NULL, "
+                        "action VARCHAR(64) NOT NULL, "
+                        "details BYTEA NOT NULL, "
+                        "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+                        ")"
+                    )
+                )
+                await conn.execute(
+                    text("CREATE INDEX IF NOT EXISTS ix_audit_logs_project_id ON audit_logs (project_id)")
+                )
             except Exception as ddl_exc:
                 logger.warning(
-                    "Brownfield audio_files DDL skipped/failed (will likely break endpoints): %s",
+                    "Brownfield audio_files/audit_logs DDL skipped/failed (will likely break endpoints): %s",
                     ddl_exc,
                 )
         async with AsyncSessionLocal() as session:
@@ -2255,6 +2290,34 @@ async def persist_golden_set_entry(
     }
 
 
+async def log_audit_action(
+    db: AsyncSession,
+    project_id: int,
+    user_id: str,
+    action: str,
+    details: dict,
+) -> None:
+    """
+    Persist an audit log entry (Story 10.4).
+    Asynchronous; caller must commit the transaction (usually shared with the main action).
+    """
+    try:
+        # details is dict, AuditLog expects bytes (JSON)
+        details_bytes = json.dumps(details).encode("utf-8")
+        log = AuditLog(
+            project_id=project_id,
+            user_id=user_id,
+            action=action,
+            details=details_bytes,
+        )
+        db.add(log)
+        await db.flush()
+        logger.info("audit_log_persisted project_id=%s user_id=%s action=%s", project_id, user_id, action)
+    except Exception as exc:
+        # Audit logging should not crash the main business transaction
+        logger.error("audit_log_failed project_id=%s action=%s error=%s", project_id, action, exc)
+
+
 async def call_ffmpeg_normalize(db: AsyncSession, audio: AudioFile) -> None:
     """Drive FFmpeg worker /normalize; updates audio row. Raises HTTPException on transport failure."""
     global _ffmpeg_client
@@ -2646,12 +2709,16 @@ async def create_project(
             )
 
         await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail={"error": "Project name already exists"})
-
-    await db.refresh(project)
-    return _project_to_dict(project)
+        await db.refresh(project)
+        await log_audit_action(
+            db,
+            project.id,
+            creator_id,
+            "PROJECT_CREATED",
+            {"name": project.name, "nature": nature.name, "production_goal": project.production_goal},
+        )
+        await db.commit()
+        return _project_to_dict(project)
 
 
 @app.get("/v1/projects")
@@ -2935,6 +3002,40 @@ async def close_project(
 
 
 # ─── Routes — Assignment dashboard (Story 2.4) ───────────────────────────────
+
+
+@app.get("/v1/projects/{project_id}/audit-trail")
+async def get_project_audit_trail(
+    project_id: int,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list:
+    """Project audit log (chronological); Manager owner or Admin."""
+    roles = get_roles(payload)
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail={"error": "Project not found"})
+    _require_project_owner_or_admin(project, payload, roles)
+
+    stmt = (
+        select(AuditLog)
+        .where(AuditLog.project_id == project_id)
+        .order_by(AuditLog.created_at.desc())
+    )
+    res = await db.execute(stmt)
+    logs = res.scalars().all()
+
+    return [
+        {
+            "id": log.id,
+            "user_id": log.user_id,
+            "action": log.action,
+            "details": json.loads(log.details.decode("utf-8")) if log.details else {},
+            "created_at": log.created_at.isoformat(),
+        }
+        for log in logs
+    ]
 
 
 @app.get("/v1/projects/{project_id}/status")
@@ -3249,6 +3350,14 @@ async def register_project_audio_file(
         )
 
     await db.refresh(audio)
+    await log_audit_action(
+        db,
+        project_id,
+        payload.get("sub"),
+        "AUDIO_UPLOADED",
+        {"filename": filename, "audio_id": audio.id},
+    )
+    await db.commit()
     await call_ffmpeg_normalize(db, audio)
     await db.refresh(audio)
     return _audio_file_to_dict(audio)
@@ -3529,6 +3638,19 @@ async def validate_transcription(
         asg.submitted_at = None
         asg.manager_validated_at = None
 
+    await db.commit()
+
+    await log_audit_action(
+        db,
+        project.id,
+        sub,
+        "TRANSCRIPTION_VALIDATED" if body.approved else "TRANSCRIPTION_REJECTED",
+        {
+            "audio_id": af.id,
+            "filename": af.filename,
+            "motif": comment_clean if not body.approved else None,
+        },
+    )
     await db.commit()
 
     logger.info(
