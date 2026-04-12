@@ -1,7 +1,8 @@
 # ZachAI: Epics et User Stories
 
-**Dernière mise à jour :** 2026-04-12
-**Sprint plan :** `.bmad-outputs/implementation-artifacts/sprint-status.yaml`
+**Dernière mise à jour :** 2026-04-12  
+**Sprint plan :** `.bmad-outputs/implementation-artifacts/sprint-status.yaml`  
+**Détail PRD / critères :** `.bmad-outputs/planning-artifacts/epics.md` (même périmètre ; ce fichier reste la vue lisible « epics + stories »).
 
 ---
 
@@ -176,7 +177,7 @@
 
 ## Epic 11 — L3/L4 : Workspace "Karaoke" & Réconciliation Experte
 **Goal :** Redessiner l'espace de production pour une synchronisation audio-texte parfaite.
-**Statut :** En cours
+**Statut :** Terminé
 
 - **Story 11.1 : Workspace Transcripteur "Azure Flow"**
   - *As a Transcripteur, I have a specialized workspace with Karaoke-style highlighting (halo néon) and floating context menus for high-speed correction.*
@@ -193,7 +194,7 @@
 
 ## Epic 12 — L5 : Profil RGPD & Historique "Ghost Mode"
 **Goal :** Gérer la souveraineté des données et le versioning visuel.
-**Statut :** En attente
+**Statut :** Terminé
 
 - **Story 12.1 : Centre de Profil & Consentement RGPD**
   - *As a User, I can manage my account settings, data portability, and consent preferences in a centralized profile center.*
@@ -201,3 +202,18 @@
   - *As a User, I can view document changes in a "Ghost Mode" interface where deletions appear in spectral blue and additions are highlighted.*
 - **Story 12.3 : Restauration Sécurisée avec Verrou de Concurrence**
   - *As a User, I can restore a document snapshot safely, with the system preventing concurrent edits during the operation.*
+
+---
+
+## Epic 13 — L6 : Robustesse Collaboration, Performance Bible & Clarté API
+**Goal :** Durcir les flux multi-utilisateurs après l’Epic 12, traiter la perf/UX Bible identifiée aux rétros, et garder la doc d’intégration alignée sur l’OpenAPI.
+**Statut :** En cours *(story 13.3 livrée ; 13.1 et 13.2 au backlog — voir sprint-status)*
+
+- **Story 13.1 : Signal d’échec de restauration (collaborateurs)**
+  - *As a Collaborator, I receive an explicit restore-failure signal on all clients when a snapshot restore aborts after locking, so that unlock is never mistaken for success.*
+
+- **Story 13.2 : Cache Redis pour versets bibliques (opt-in)**
+  - *As a Worker, I can optionally serve hot Bible verse lookups from Redis when enabled by configuration, so repeated references stay fast without stale data after re-ingestion.*
+
+- **Story 13.3 : Alignement documentation API (mapping ↔ OpenAPI)**
+  - *As a Developer, I can read `docs/api-mapping.md` organized like the gateway OpenAPI tags so integrators are not misled by obsolete or flat route lists.*
