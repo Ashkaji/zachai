@@ -1,9 +1,16 @@
 # generated: 2026-03-19
-# last_updated: 2026-04-13 (Story 13-2 → review)
+# last_updated: 2026-04-13 (Epic 13 retrospective complete)
 # project: zachai
 # project_key: NOKEY
 # tracking_system: file-system
 # story_location: .bmad-outputs/implementation-artifacts
+#
+# DOCS SYNC — automation + manual:
+#   - Run:  python scripts/sync_epic_docs.py generate
+#     Refreshes the auto table + "Dernière mise à jour" in docs/epics-and-stories.md from this file.
+#   - Run:  python scripts/sync_epic_docs.py check
+#     Verifies sprint keys match epics.md for epics 9–14 (planning file). Exit 1 on drift.
+#   - Still manual: narrative "Goal / Story" prose in docs/epics-and-stories.md, and new ### Epic / #### Story in epics.md when scope changes.
 
 # STATUS DEFINITIONS:
 # ==================
@@ -132,8 +139,13 @@ development_status:
   epic-12-retrospective: done
 
   # ─── EPIC 13 — L6 - Robustesse Collaboration, Perf Bible & Clarté API ─────
-  epic-13: in-progress
+  epic-13: done
   13-1-restore-failure-broadcast-collaborators: done
   13-2-bible-verse-redis-cache-opt-in: done
   13-3-api-mapping-openapi-alignment: done
-  epic-13-retrospective: optional
+  epic-13-retrospective: done
+
+  # ─── EPIC 14 — L6 follow-up: Restore signal hardening (post-13.1 review) ───
+  epic-14: in-progress
+  14-1-restore-failure-signal-review-hardening: ready-for-dev
+  epic-14-retrospective: optional

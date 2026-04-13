@@ -324,6 +324,19 @@ So that integrators and reviewers are not misled by an outdated flat list of rou
 - **And** les routes obsolètes ou non implémentées sont marquées **deprecated** ou retirées du doc
 - **And** une ligne indique la version OpenAPI / gateway alignée (ex. champ `version` dans FastAPI)
 
+### Epic 14: L6 — Suivi — Durcissement chemin de restauration (revue 13.1)
+Renforcer l’implémentation livrée en Story 13.1 selon les **findings de revue** encore ouverts (exceptions, `finally`, mapping d’erreurs, UX/i18n), **sans** nouvelle fonctionnalité produit ni changement de contrat public non versionné.
+
+#### Story 14.1: Durcissement signaux d'échec de restauration (revue code)
+As a Maintainer,
+I want the restore-failure signal path hardened per unresolved 13.1 review items,
+So that backend publishing, error codes, and editor failure UX are robust and localizable while keeping the documented stateless contract stable.
+
+**Acceptance Criteria (summary):**
+- **Given** les notes de revue Story 13.1 (exception handling, `finally`, détail HTTP, mapping codes, alerte obsolète, i18n)
+- **When** les correctifs sont implémentés
+- **Then** les tests `test_story_12_3.py` (et tests UI si ajoutés) couvrent les branches critiques et le contrat **document_restore_failed** reste compatible (**schema_version** inchangé ou bump explicite)
+
 ## 3. Requirements Coverage Map
 
 ### FR Coverage Map

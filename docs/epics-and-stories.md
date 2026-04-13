@@ -1,8 +1,9 @@
 # ZachAI: Epics et User Stories
 
-**Dernière mise à jour :** 2026-04-12  
+**Dernière mise à jour :** 2026-04-13
 **Sprint plan :** `.bmad-outputs/implementation-artifacts/sprint-status.yaml`  
-**Détail PRD / critères :** `.bmad-outputs/planning-artifacts/epics.md` (même périmètre ; ce fichier reste la vue lisible « epics + stories »).
+**Détail PRD / critères :** `.bmad-outputs/planning-artifacts/epics.md` (même périmètre ; ce fichier reste la vue lisible « epics + stories »).  
+**Synchronisation :** après modification de `sprint-status.yaml`, exécuter `python scripts/sync_epic_docs.py generate` (tableau auto en bas de ce fichier + date d’en-tête). Vérifier avec `python scripts/sync_epic_docs.py check`. Le texte narratif (goals, stories) et les nouvelles sections dans `epics.md` restent manuels.
 
 ---
 
@@ -207,7 +208,7 @@
 
 ## Epic 13 — L6 : Robustesse Collaboration, Performance Bible & Clarté API
 **Goal :** Durcir les flux multi-utilisateurs après l’Epic 12, traiter la perf/UX Bible identifiée aux rétros, et garder la doc d’intégration alignée sur l’OpenAPI.
-**Statut :** En cours *(story 13.3 livrée ; 13.1 et 13.2 au backlog — voir sprint-status)*
+**Statut :** Terminé *(13.1–13.3 livrées ; rétrospective Epic 13 complétée — voir sprint-status)*
 
 - **Story 13.1 : Signal d’échec de restauration (collaborateurs)**
   - *As a Collaborator, I receive an explicit restore-failure signal on all clients when a snapshot restore aborts after locking, so that unlock is never mistaken for success.*
@@ -217,3 +218,39 @@
 
 - **Story 13.3 : Alignement documentation API (mapping ↔ OpenAPI)**
   - *As a Developer, I can read `docs/api-mapping.md` organized like the gateway OpenAPI tags so integrators are not misled by obsolete or flat route lists.*
+
+---
+
+## Epic 14 — L6 : Suivi — Durcissement chemin de restauration (revue 13.1)
+**Goal :** Renforcer l’implémentation Story 13.1 selon les findings de revue encore ouverts (exceptions, `finally`, mapping d’erreurs, UX/i18n), sans nouvelle fonctionnalité produit ni changement de contrat public non versionné.
+**Statut :** En cours *(Story 14.1 prête pour le dev — voir sprint-status)*
+
+- **Story 14.1 : Durcissement signaux d’échec de restauration (revue code)**
+  - *As a Maintainer, I want the restore-failure signal path hardened per unresolved 13.1 review items, so that backend publishing, error codes, and editor failure UX are robust and localizable while keeping the documented stateless contract stable.*
+
+---
+
+<!-- sync-epic-docs:begin -->
+
+### État des épiques et stories (généré automatiquement)
+
+Source : `.bmad-outputs/implementation-artifacts/sprint-status.yaml`.
+Régénérer avec : `python scripts/sync_epic_docs.py generate`
+
+| Épique | Statut | Rétro | Stories |
+|--------|--------|-------|---------|
+| 1 | terminé | terminé | `1-1-minio-bootstrap-bucket-structure` terminé<br>`1-2-keycloak-multi-roles` terminé<br>`1-3-presigned-url-engine-fastapi` terminé |
+| 2 | terminé | terminé | `2-1-crud-natures-label-schemas` terminé<br>`2-2-project-creation-label-studio-provisioning` terminé<br>`2-3-audio-upload-ffmpeg-normalization` terminé<br>`2-4-assignment-dashboard` terminé<br>`2-5-detail-projet-manager` terminé |
+| 3 | terminé | terminé | `3-1-ffmpeg-worker-normalization-batch` terminé<br>`3-2-openvino-whisper-inference-preannotation` terminé<br>`3-3-model-registry-hot-reload` terminé |
+| 4 | terminé | terminé | `4-1-golden-set-expert-loop-label-studio-webhook` terminé<br>`4-2-golden-set-user-loop-frontend-corrections` terminé<br>`4-3-lora-finetuning-auto-trigger-camunda` terminé<br>`4-4-lora-pipeline-dataset-training-validation-deploy` terminé |
+| 5 | terminé | terminé | `5-1-realtime-sync-hocuspocus-yjs` terminé<br>`5-2-secure-wss-handshake-ticket-redis` terminé<br>`5-3-bidirectional-audio-text-sync` terminé<br>`5-4-automatic-snapshot-persistence` terminé<br>`5-5-realtime-grammar-check-languagetool` terminé |
+| 6 | terminé | terminé | `6-1-transcripteur-submission` terminé<br>`6-2-manager-approval-rejection` terminé<br>`6-3-project-closure-golden-set-archival` terminé<br>`6-4-dashboard-expert-wiring` terminé |
+| 7 | terminé | terminé | `7-1-export-docx-txt-srt` terminé<br>`7-2-whisper-open-api` terminé<br>`7-3-biblical-citation-detection` terminé |
+| 8 | terminé | terminé | `8-1-backend-hardening-and-telemetry` terminé<br>`8-2-dashboards-admin-manager-stitch` terminé<br>`8-3-dashboards-transcriber-expert-stitch` terminé |
+| 9 | terminé | terminé | `9-1-azure-design-tokens-theme-playground` terminé<br>`9-2-virtualized-azuretable-shared-ui-primitives` terminé<br>`9-3-unified-notification-provider-event-bus` terminé<br>`9-4-azure-flow-shell-responsive-layout-breadcrumbs` terminé |
+| 10 | terminé | terminé | `10-1-vue-detail-projet-actions-groupees` terminé<br>`10-2-modals-glass-natures-labels-assignations` terminé<br>`10-3-validation-one-click-modal-rejet-structure` terminé<br>`10-4-audit-trail-projet-visibilite-partagee` terminé |
+| 11 | terminé | terminé | `11-1-workspace-karaoke-surlignage-neon-eco-mode` terminé<br>`11-2-menu-contextuel-azure-accessibilite-clavier` terminé<br>`11-3-interface-reconciliation-side-by-side-resizable` terminé<br>`11-4-intelligence-linguistique-bible-preview-async` terminé<br>`11-5-moteur-biblique-local-ingestion-donnees-souverainete` terminé |
+| 12 | terminé | terminé | `12-1-centre-profil-consentement-anonymisation-rgpd` terminé<br>`12-2-visual-diff-ghost-mode-worker-based-performance` terminé<br>`12-3-restauration-securisee-verrouillage-websocket` terminé |
+| 13 | terminé | terminé | `13-1-restore-failure-broadcast-collaborators` terminé<br>`13-2-bible-verse-redis-cache-opt-in` terminé<br>`13-3-api-mapping-openapi-alignment` terminé |
+| 14 | en cours | optionnel | `14-1-restore-failure-signal-review-hardening` prêt pour dev |
+<!-- sync-epic-docs:end -->
