@@ -1,0 +1,6 @@
+#!/bin/sh
+# Runs on every commit; regenerates docs/epics-and-stories.md from sprint-status.yaml.
+set -e
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+exec python3 "$ROOT/scripts/sync_epic_docs.py" pre-commit

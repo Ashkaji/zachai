@@ -6,8 +6,9 @@
 # story_location: .bmad-outputs/implementation-artifacts
 #
 # DOCS SYNC — automated (no manual generate/check):
-#   - pre-commit: python scripts/sync_epic_docs.py pre-commit (regenerates docs/epics-and-stories.md + stages it)
-#   - CI:        python scripts/sync_epic_docs.py ci-verify
+#   - Git hook: ./scripts/install-git-hooks.sh → core.hooksPath=scripts/git-hooks (runs sync_epic_docs pre-commit on each commit)
+#   - Optional: pip install pre-commit && pre-commit install — uses .pre-commit-config.yaml instead
+#   - CI: python scripts/sync_epic_docs.py ci-verify
 #   - Manual only: narrative prose in docs/epics-and-stories.md; new ### Epic / #### Story in epics.md when scope changes.
 
 # STATUS DEFINITIONS:

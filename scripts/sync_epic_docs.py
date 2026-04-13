@@ -154,7 +154,7 @@ def build_table(status: dict[str, str]) -> str:
         "### État des épiques et stories (généré automatiquement)",
         "",
         "Source : `.bmad-outputs/implementation-artifacts/sprint-status.yaml`.",
-        "Mis à jour automatiquement par le hook **pre-commit** ; la CI échoue si ce bloc est obsolète.",
+        "Mis à jour automatiquement au commit (hook Git `scripts/git-hooks/` ou outil pre-commit) ; la CI échoue si ce bloc est obsolète.",
         "",
         "| Épique | Statut | Rétro | Stories |",
         "|--------|--------|-------|---------|",

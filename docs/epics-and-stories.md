@@ -3,7 +3,7 @@
 **Dernière mise à jour :** 2026-04-13
 **Sprint plan :** `.bmad-outputs/implementation-artifacts/sprint-status.yaml`  
 **Détail PRD / critères :** `.bmad-outputs/planning-artifacts/epics.md` (même périmètre ; ce fichier reste la vue lisible « epics + stories »).  
-**Synchronisation :** le tableau automatique en bas de ce fichier est régénéré par **pre-commit** (`pip install pre-commit && pre-commit install`). La CI vérifie la cohérence. Le texte narratif (goals, stories) et les nouvelles sections dans `epics.md` restent manuels.
+**Synchronisation :** le tableau automatique en bas est régénéré au **commit** par le hook Git (`./scripts/install-git-hooks.sh` une fois par clone ; pas besoin de pip). La CI vérifie la cohérence. Le texte narratif (goals, stories) et les nouvelles sections dans `epics.md` restent manuels.
 
 ---
 
@@ -235,7 +235,7 @@
 ### État des épiques et stories (généré automatiquement)
 
 Source : `.bmad-outputs/implementation-artifacts/sprint-status.yaml`.
-Mis à jour automatiquement par le hook **pre-commit** ; la CI échoue si ce bloc est obsolète.
+Mis à jour automatiquement au commit (hook Git `scripts/git-hooks/` ou outil pre-commit) ; la CI échoue si ce bloc est obsolète.
 
 | Épique | Statut | Rétro | Stories |
 |--------|--------|-------|---------|

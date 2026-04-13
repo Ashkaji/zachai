@@ -1,6 +1,5 @@
-# https://pre-commit.com
-# Install once: pip install pre-commit && pre-commit install
-# The hook regenerates docs/epics-and-stories.md from sprint-status.yaml and stages it — no manual generate/check.
+# https://pre-commit.com (optional — default is scripts/install-git-hooks.sh + core.hooksPath)
+# pip install pre-commit && pre-commit install
 repos:
   - repo: local
     hooks:
