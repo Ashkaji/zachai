@@ -41,6 +41,8 @@ with patch("httpx.AsyncClient") as mock_httpx:
         AudioFileStatus,
         EditorTicketRequest,
         DocumentRestoreRequest,
+        DocumentRestoreFailureCode,
+        _document_restore_failed_signal,
         _restore_document_from_snapshot_core,
         post_editor_ticket,
         restore_document_from_snapshot,
@@ -249,6 +251,34 @@ async def test_restore_integrity_mismatch_returns_502():
         assert fail_payload["code"] == "INTEGRITY_MISMATCH"
         assert any("document_unlocked" in p for p in pub_calls)
         mock_redis.delete.assert_called_with("lock:document:1:restoring")
+
+
+def test_document_restore_failed_signal_structured_http_detail():
+    exc = HTTPException(
+        status_code=502,
+        detail={
+            "error": "Snapshot Yjs payload does not match stored integrity hash",
+            "code": DocumentRestoreFailureCode.INTEGRITY_MISMATCH,
+        },
+    )
+    payload = _document_restore_failed_signal(42, exc)
+    assert payload["type"] == "document_restore_failed"
+    assert payload["document_id"] == 42
+    assert payload["code"] == "INTEGRITY_MISMATCH"
+    assert "integrity" in (payload.get("message") or "").lower()
+
+
+def test_document_restore_failed_signal_list_detail_message():
+    exc = HTTPException(status_code=404, detail=[{"msg": "gone", "type": "value_error"}])
+    payload = _document_restore_failed_signal(3, exc)
+    assert payload["code"] == DocumentRestoreFailureCode.SNAPSHOT_NOT_FOUND
+    assert payload.get("message") == "gone"
+
+
+def test_document_restore_failed_signal_attributeerror_code():
+    payload = _document_restore_failed_signal(9, AttributeError("'NoneType' has no attribute 'x'"))
+    assert payload["code"] == DocumentRestoreFailureCode.SNAPSHOT_PAYLOAD_INVALID
+    assert payload.get("message")
 
 
 @pytest.mark.asyncio

@@ -3840,51 +3840,116 @@ class DocumentRestoreFailureCode:
     UNKNOWN = "UNKNOWN"
 
 
+_KNOWN_DOCUMENT_RESTORE_FAILURE_CODES: frozenset[str] = frozenset(
+    {
+        DocumentRestoreFailureCode.SNAPSHOT_NOT_FOUND,
+        DocumentRestoreFailureCode.AUDIO_NOT_FOUND,
+        DocumentRestoreFailureCode.SNAPSHOT_FETCH_FAILED,
+        DocumentRestoreFailureCode.SNAPSHOT_PAYLOAD_INVALID,
+        DocumentRestoreFailureCode.INTEGRITY_MISMATCH,
+        DocumentRestoreFailureCode.STORAGE_ERROR,
+        DocumentRestoreFailureCode.UNKNOWN,
+    }
+)
+
+
 def _short_restore_public_message(text: str, max_len: int = 240) -> str:
     t = (text or "").strip()
     return t[:max_len] if t else ""
 
 
-def _document_restore_failed_signal(audio_id: int, exc: BaseException) -> dict[str, Any]:
-    """Build Redis JSON for ``document_restore_failed`` before ``document_unlocked`` on failure paths."""
-    code = DocumentRestoreFailureCode.UNKNOWN
-    message = ""
+def _restore_failure_public_text_from_detail_piece(value: Any) -> str:
+    """Flatten a detail fragment for short UI copy (no stack traces, no object dumps)."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, dict):
+        for key in ("error", "message", "msg", "detail"):
+            if key in value:
+                return _restore_failure_public_text_from_detail_piece(value[key])
+        return ""
+    if isinstance(value, (list, tuple)):
+        parts: list[str] = []
+        for item in value:
+            s = _restore_failure_public_text_from_detail_piece(item)
+            if s:
+                parts.append(s)
+        return "; ".join(parts)
+    return ""
 
+
+def _restore_failure_code_from_http_detail(detail: Any) -> str | None:
+    if isinstance(detail, dict):
+        raw = detail.get("code")
+        if isinstance(raw, str):
+            c = raw.strip()
+            if c in _KNOWN_DOCUMENT_RESTORE_FAILURE_CODES:
+                return c
+    return None
+
+
+def _restore_failure_message_from_http_detail(detail: Any) -> str:
+    if isinstance(detail, dict):
+        structured = _restore_failure_code_from_http_detail(detail) is not None
+        for key in ("error", "message"):
+            if key in detail:
+                t = _restore_failure_public_text_from_detail_piece(detail[key])
+                if t:
+                    return t
+        if not structured and detail:
+            # Avoid forwarding arbitrary dict keys (may contain internal fields).
+            return ""
+        return ""
+    if isinstance(detail, str):
+        return detail.strip()
+    if isinstance(detail, (list, tuple)):
+        return _restore_failure_public_text_from_detail_piece(detail)
+    return str(detail).strip() if detail is not None else ""
+
+
+def _default_restore_failure_code_for_status(status_code: int) -> str:
+    if status_code == 404:
+        return DocumentRestoreFailureCode.SNAPSHOT_NOT_FOUND
+    if status_code == 502:
+        return DocumentRestoreFailureCode.STORAGE_ERROR
+    if status_code in (409, 423):
+        return DocumentRestoreFailureCode.STORAGE_ERROR
+    return DocumentRestoreFailureCode.UNKNOWN
+
+
+def _document_restore_failed_signal_from_http_exception(audio_id: int, exc: HTTPException) -> dict[str, Any]:
+    structured = _restore_failure_code_from_http_detail(exc.detail)
+    code = structured or _default_restore_failure_code_for_status(exc.status_code)
+    message = _short_restore_public_message(_restore_failure_message_from_http_detail(exc.detail))
+    out: dict[str, Any] = {
+        "type": "document_restore_failed",
+        "schema_version": DOCUMENT_RESTORE_FAILED_SCHEMA_VERSION,
+        "document_id": audio_id,
+        "code": code,
+    }
+    if message:
+        out["message"] = message
+    return out
+
+
+def _document_restore_failed_signal(audio_id: int, exc: Exception) -> dict[str, Any]:
+    """Build Redis JSON for ``document_restore_failed`` before ``document_unlocked`` on failure paths.
+
+    Only ``Exception`` is accepted: restore core uses ``except Exception`` before signaling, so
+    ``KeyboardInterrupt`` / ``SystemExit`` never reach this helper.
+    """
     if isinstance(exc, HTTPException):
-        detail = exc.detail
-        err = ""
-        if isinstance(detail, dict):
-            err = str(detail.get("error", ""))
-        elif isinstance(detail, (str, list, tuple)):
-            err = str(detail)
-        
-        el = err.lower()
-        if exc.status_code == 404:
-            code = (
-                DocumentRestoreFailureCode.SNAPSHOT_NOT_FOUND
-                if "snapshot" in el
-                else DocumentRestoreFailureCode.AUDIO_NOT_FOUND
-            )
-            message = _short_restore_public_message(err)
-        elif exc.status_code == 502:
-            if "integrity" in el or "hash" in el:
-                code = DocumentRestoreFailureCode.INTEGRITY_MISMATCH
-            elif "fetch" in el or "storage" in el:
-                code = DocumentRestoreFailureCode.SNAPSHOT_FETCH_FAILED
-            elif "yjs" in el or "missing" in el:
-                code = DocumentRestoreFailureCode.SNAPSHOT_PAYLOAD_INVALID
-            else:
-                code = DocumentRestoreFailureCode.STORAGE_ERROR
-            message = _short_restore_public_message(err)
-        elif exc.status_code in (409, 423):
-            code = DocumentRestoreFailureCode.STORAGE_ERROR
-            message = _short_restore_public_message(err)
-        else:
-            message = _short_restore_public_message(err)
+        return _document_restore_failed_signal_from_http_exception(audio_id, exc)
+
+    if isinstance(exc, (AttributeError, KeyError, TypeError, ValueError)):
+        code = DocumentRestoreFailureCode.SNAPSHOT_PAYLOAD_INVALID
+        message = _short_restore_public_message("Snapshot data could not be processed")
     else:
-        # Story 13.1: catch-all for internal bugs (AttributeError, etc.)
         code = DocumentRestoreFailureCode.UNKNOWN
-        message = "Restore failed due to an internal error"
+        message = _short_restore_public_message("Restore failed due to an internal error")
 
     out: dict[str, Any] = {
         "type": "document_restore_failed",
@@ -3923,7 +3988,7 @@ async def _restore_document_from_snapshot_core(
         )
 
     locked_signaled = False
-    pending_exc: BaseException | None = None
+    pending_exc: Exception | None = None
     try:
         await _publish_hocuspocus_signal(
             {
@@ -3941,7 +4006,13 @@ async def _restore_document_from_snapshot_core(
         r_snap = await db.execute(stmt)
         snap = r_snap.scalar_one_or_none()
         if not snap:
-            raise HTTPException(status_code=404, detail={"error": "Snapshot not found"})
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "Snapshot not found",
+                    "code": DocumentRestoreFailureCode.SNAPSHOT_NOT_FOUND,
+                },
+            )
 
         bucket = "snapshots"
         object_key = snap.json_object_key
@@ -3953,16 +4024,34 @@ async def _restore_document_from_snapshot_core(
             data = json.loads(resp.read().decode("utf-8"))
             yjs_b64 = data.get("yjs_state_binary")
             if not yjs_b64:
-                raise HTTPException(status_code=502, detail={"error": "Snapshot JSON missing yjs_state_binary"})
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "error": "Snapshot JSON missing yjs_state_binary",
+                        "code": DocumentRestoreFailureCode.SNAPSHOT_PAYLOAD_INVALID,
+                    },
+                )
             yjs_raw = base64.b64decode(yjs_b64.encode("ascii"), validate=True)
         except S3Error as exc:
             logger.error("minio_error snapshot_id=%s error=%s", snapshot_id, exc)
-            raise HTTPException(status_code=502, detail={"error": "Failed to fetch snapshot from storage"})
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "Failed to fetch snapshot from storage",
+                    "code": DocumentRestoreFailureCode.SNAPSHOT_FETCH_FAILED,
+                },
+            )
         except HTTPException:
             raise
         except Exception as exc:
             logger.error("snapshot_yjs_error snapshot_id=%s error=%s", snapshot_id, exc)
-            raise HTTPException(status_code=502, detail={"error": str(exc)})
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "Snapshot payload could not be read",
+                    "code": DocumentRestoreFailureCode.STORAGE_ERROR,
+                },
+            )
 
         digest = hashlib.sha256(yjs_raw).hexdigest()
         if digest != snap.yjs_sha256:
@@ -3974,7 +4063,10 @@ async def _restore_document_from_snapshot_core(
             )
             raise HTTPException(
                 status_code=502,
-                detail={"error": "Snapshot Yjs payload does not match stored integrity hash"},
+                detail={
+                    "error": "Snapshot Yjs payload does not match stored integrity hash",
+                    "code": DocumentRestoreFailureCode.INTEGRITY_MISMATCH,
+                },
             )
 
         result_af = await db.execute(
@@ -3982,7 +4074,13 @@ async def _restore_document_from_snapshot_core(
         )
         af = result_af.scalar_one_or_none()
         if not af:
-            raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "Audio file not found",
+                    "code": DocumentRestoreFailureCode.AUDIO_NOT_FOUND,
+                },
+            )
 
         async with db.begin_nested():
             await db.execute(select(AudioFile).where(AudioFile.id == audio_id).with_for_update())

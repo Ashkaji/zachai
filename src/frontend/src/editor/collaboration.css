@@ -49,6 +49,34 @@
   min-height: 60vh;
 }
 
+/* Story 14.1 — remote restore failure (collaborators); z-index local to editor shell */
+.za-restore-failure-banner {
+  position: fixed;
+  top: var(--spacing-4);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  max-width: 560px;
+  padding: var(--spacing-4) var(--spacing-5);
+  border: 1px solid #e54242;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-3);
+}
+
+.za-restore-failure-banner__title {
+  color: #a40000;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.za-restore-failure-banner__message {
+  color: #323130;
+  font-size: 0.95rem;
+}
+
 .ProseMirror {
   outline: none;
 }

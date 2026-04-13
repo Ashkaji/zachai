@@ -44,18 +44,13 @@ import {
   type TextSpan,
 } from "./grammarUtils";
 import { useNotifications } from "../shared/notifications/NotificationContext";
+import {
+  editorStrings,
+  remoteRestoreFailureFallback,
+  resolveEditorLocale,
+  type EditorLocale,
+} from "./editorStrings";
 import "./collaboration.css";
-
-/** Story 13.1 — generic copy per `code` when server omits `message` */
-const REMOTE_RESTORE_FAILURE_BY_CODE: Record<string, string> = {
-  SNAPSHOT_NOT_FOUND: "Snapshot not found.",
-  AUDIO_NOT_FOUND: "Audio document not found.",
-  SNAPSHOT_FETCH_FAILED: "Could not load snapshot from storage.",
-  SNAPSHOT_PAYLOAD_INVALID: "Snapshot data is invalid.",
-  INTEGRITY_MISMATCH: "Snapshot did not match stored integrity.",
-  STORAGE_ERROR: "Restoration failed due to a storage error.",
-  UNKNOWN: "Document restoration failed.",
-};
 
 // --- Types for Ghost Mode ---
 type DiffChange = {
@@ -177,6 +172,8 @@ export function TranscriptionEditor() {
   const auth = useAuth();
   const token = useMemo(() => bearerForApi(auth.user), [auth.user]);
   const { notify } = useNotifications();
+  const [editorLocale] = useState<EditorLocale>(() => resolveEditorLocale());
+  const editorCopy = useMemo(() => editorStrings(editorLocale), [editorLocale]);
   const audioIdParam = new URLSearchParams(window.location.search).get("audio_id");
   const audioId =
     audioIdParam && /^\d+$/.test(audioIdParam) ? parseInt(audioIdParam, 10) : null;
@@ -266,6 +263,8 @@ export function TranscriptionEditor() {
   const [remoteRestoreFailureMessage, setRemoteRestoreFailureMessage] = useState<string | null>(null);
   const localRestoreRequestActiveRef = useRef(false);
   const suppressRemoteRestoreFailureRef = useRef(false);
+  /** Story 14.1: `document_unlocked` maps to `zachai:document_restored` even after failure — ignore that one clear. */
+  const pendingFailureUnlockRef = useRef(false);
 
   const handleRestoreSnapshot = async (snapId: string) => {
     if (!audioId || !token) return;
@@ -273,6 +272,7 @@ export function TranscriptionEditor() {
     setIsRestoring(true);
     setShowRestoreConfirm(false);
     setRemoteRestoreFailureMessage(null);
+    pendingFailureUnlockRef.current = false;
     localRestoreRequestActiveRef.current = true;
     
     try {
@@ -575,7 +575,11 @@ export function TranscriptionEditor() {
               );
             } else if (data.type === "zachai:document_restored") {
               setRemoteRestoringBy(null);
-              setRemoteRestoreFailureMessage(null);
+              if (pendingFailureUnlockRef.current) {
+                pendingFailureUnlockRef.current = false;
+              } else {
+                setRemoteRestoreFailureMessage(null);
+              }
             } else if (data.type === "zachai:document_restore_failed") {
               const docId =
                 typeof data.document_id === "number" && Number.isFinite(data.document_id)
@@ -590,11 +594,10 @@ export function TranscriptionEditor() {
                 typeof data.code === "string" && data.code.trim() ? data.code.trim() : "UNKNOWN";
               const custom =
                 typeof data.message === "string" && data.message.trim() ? data.message.trim() : null;
-              const fallback: string =
-                REMOTE_RESTORE_FAILURE_BY_CODE[code] ??
-                REMOTE_RESTORE_FAILURE_BY_CODE.UNKNOWN ??
-                "Document restoration failed.";
-              setRemoteRestoreFailureMessage(custom ?? fallback);
+              pendingFailureUnlockRef.current = true;
+              setRemoteRestoreFailureMessage(
+                custom ?? remoteRestoreFailureFallback(code, editorLocale),
+              );
             }
           } catch {
             /* ignore */
@@ -616,7 +619,7 @@ export function TranscriptionEditor() {
       if (reconnectTimer) clearTimeout(reconnectTimer);
       cleanupProvider();
     };
-  }, [audioId, token, ydoc]);
+  }, [audioId, token, ydoc, editorLocale]);
 
   const editor = useEditor(
     {
@@ -1445,38 +1448,23 @@ export function TranscriptionEditor() {
     <div className="za-workspace-container" style={{ display: "flex", flexDirection: "row", padding: 0 }}>
       {/* Story 13.1 — remote restore failed (collaborators); not the same UX as success */}
       {remoteRestoreFailureMessage && (
-        <div
-          role="alert"
-          className="za-card za-glass"
-          style={{
-            position: "fixed",
-            top: "1rem",
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 10000,
-            maxWidth: 560,
-            padding: "var(--spacing-4) var(--spacing-5)",
-            border: "1px solid #e54242",
-            background: "rgba(255, 255, 255, 0.95)",
-            boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)",
-            display: "flex",
-            alignItems: "flex-start",
-            gap: "var(--spacing-3)",
-          }}
-        >
+        <div role="alert" className="za-card za-glass za-restore-failure-banner">
           <div style={{ flex: 1 }}>
-            <strong style={{ color: "#a40000", display: "block", marginBottom: 4 }}>
-              Restoration failed
+            <strong className="za-restore-failure-banner__title">
+              {editorCopy.restoreFailureTitle}
             </strong>
-            <span style={{ color: "#323130", fontSize: "0.95rem" }}>{remoteRestoreFailureMessage}</span>
+            <span className="za-restore-failure-banner__message">{remoteRestoreFailureMessage}</span>
           </div>
           <button
             type="button"
             className="za-button za-button-subtle"
             style={{ flexShrink: 0 }}
-            onClick={() => setRemoteRestoreFailureMessage(null)}
+            onClick={() => {
+              pendingFailureUnlockRef.current = false;
+              setRemoteRestoreFailureMessage(null);
+            }}
           >
-            Dismiss
+            {editorCopy.restoreFailureDismiss}
           </button>
         </div>
       )}

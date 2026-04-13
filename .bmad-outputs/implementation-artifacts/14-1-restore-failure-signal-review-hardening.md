@@ -1,6 +1,6 @@
 # Story 14.1: Restore failure signal — code review hardening (post–13.1)
 
-Status: ready-for-dev
+Status: review
 
 <!-- Ultimate context engine analysis completed — comprehensive developer guide created -->
 
@@ -56,9 +56,9 @@ Status: ready-for-dev
 
 ## Tasks / Subtasks
 
-- [ ] **Backend:** Refine `_document_restore_failed_signal` + restore-core raises per AC 1–3, 8.
-- [ ] **Frontend:** Stale-banner audit + i18n per AC 4–5; optional local style cleanup per AC 6.
-- [ ] **Tests:** Pytest updates per AC 7 — run `pytest src/api/fastapi/test_story_12_3.py -q`.
+- [x] **Backend:** Refine `_document_restore_failed_signal` + restore-core raises per AC 1–3, 8.
+- [x] **Frontend:** Stale-banner audit + i18n per AC 4–5; optional local style cleanup per AC 6.
+- [x] **Tests:** Pytest updates per AC 7 — run `pytest src/api/fastapi/test_story_12_3.py -q`.
 
 ## Dev notes
 
@@ -121,13 +121,30 @@ Status: ready-for-dev
 
 ### Agent Model Used
 
-_(To be filled at implementation)_
+Cursor agent (implementation session 2026-04-13)
 
 ### Debug Log References
 
+_(none)_
+
 ### Completion Notes List
 
+- **Backend (AC 1–3, 8):** Structured `code` + `error` on all `HTTPException` paths inside `_restore_document_from_snapshot_core`; `_document_restore_failed_signal` now accepts `Exception` only and maps `HTTPException` via deterministic detail parsing (dict / str / list/tuple) plus optional structured `code`. Replaced substring heuristics with explicit codes; `AttributeError` / `KeyError` / `TypeError` / `ValueError` map to `SNAPSHOT_PAYLOAD_INVALID` with safe copy; generic wrap no longer forwards raw `str(exc)` to clients. `pending_exc` typed as `Exception | None` to match `except Exception`.
+- **Frontend (AC 4–6):** `pendingFailureUnlockRef` ignores the spurious `zachai:document_restored` that follows `document_unlocked` after a failed restore (fixes banner cleared immediately and stale-success edge cases). Editor copy for restore failure uses `editorStrings.ts` (en/fr) and CSS class `za-restore-failure-banner` instead of hardcoded English / heavy inline layout.
+- **Tests (AC 7):** Added unit tests for structured HTTP detail, list-shaped `detail`, and non-HTTP `AttributeError`; existing ordering test unchanged.
+
 ### File List
+
+- `src/api/fastapi/main.py`
+- `src/api/fastapi/test_story_12_3.py`
+- `src/frontend/src/editor/TranscriptionEditor.tsx`
+- `src/frontend/src/editor/editorStrings.ts`
+- `src/frontend/src/editor/collaboration.css`
+- `.bmad-outputs/implementation-artifacts/sprint-status.yaml`
+
+### Change Log
+
+- 2026-04-13: Story 14.1 — restore failure signal hardening (review items from 13.1).
 
 ---
 
