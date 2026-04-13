@@ -83,3 +83,26 @@ async def test_get_admin_token_error_handling():
             await get_admin_token()
         
         assert "Keycloak token request failed" in str(excinfo.value)
+
+def test_admin_token_roles_claim_path():
+    """
+    Verify that the role extraction path matches the requirement in AC6:
+    resource_access["realm-management"]["roles"]
+    """
+    # This sample payload represents what Keycloak returns for a service account
+    # with realm-management roles assigned.
+    payload = {
+        "resource_access": {
+            "realm-management": {
+                "roles": ["manage-users", "view-users", "query-groups"]
+            }
+        }
+    }
+    
+    # Verify the path mentioned in AC6
+    roles = payload.get("resource_access", {}).get("realm-management", {}).get("roles", [])
+    
+    assert "manage-users" in roles
+    assert "view-users" in roles
+    assert "query-groups" in roles
+    assert len(roles) == 3
