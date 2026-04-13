@@ -7,7 +7,7 @@ alwaysApply: true
 
 When a development task is **complete** (story created, implementation done, or code review addressed) and the user expects a **git checkpoint**:
 
-1. Run the **API test suite** from the repo root (or the subset relevant to the change), e.g. `python3 -m pytest src/api/fastapi -q` — use a venv / environment where `requirements.txt` for the FastAPI service is installed if `pytest` is missing.
+1. Run the **API test suite** from the repo root (or the subset relevant to the change), e.g. `./scripts/run-api-pytest.sh` (crée `.venv` et installe `src/api/fastapi/requirements.txt` au premier lancement) ou `python3 -m pytest src/api/fastapi -q` si ton venv est déjà prêt.
 2. If tests pass and there are uncommitted changes, run **`./scripts/verify-and-commit.sh "type: concise message"`** (or pass `VERIFY_CMD=...` for a narrower test run). This runs tests again, then `git add -A` and `git commit`.
 3. For **documentation-only** or **planning-only** changes where tests are not applicable, use **`./scripts/verify-and-commit.sh --skip-tests "docs: ..."`** instead of asking the user to commit manually.
 

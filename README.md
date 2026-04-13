@@ -183,6 +183,20 @@ Le projet utilise la méthodologie **BMad** (Build Modality with Agentic Design)
 
 ---
 
+## Tests API (pytest)
+
+Les tests du gateway FastAPI vivent sous `src/api/fastapi/`. Sans pytest installé globalement, utilise le script qui provisionne un **venv local** `.venv/` (ignoré par Git) à la racine du dépôt :
+
+```bash
+./scripts/run-api-pytest.sh
+```
+
+Variantes : `./scripts/run-api-pytest.sh src/api/fastapi/test_story_12_3.py -q` ; autre emplacement de venv : `ZACHAI_VENV=/chemin/vers/venv ./scripts/run-api-pytest.sh`.
+
+Dépendances : [`src/api/fastapi/requirements.txt`](src/api/fastapi/requirements.txt) (inclut `pytest` et `pytest-asyncio`).
+
+---
+
 ## Documentation
 
 | Document | Contenu |

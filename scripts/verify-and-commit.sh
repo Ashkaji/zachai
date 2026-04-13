@@ -7,7 +7,7 @@
 #   VERIFY_CMD="python3 -m pytest src/api/fastapi/test_story_12_3.py -q" ./scripts/verify-and-commit.sh "test: restore"
 #   ./scripts/verify-and-commit.sh --skip-tests "docs: planning only"
 #
-# Requires: pytest available on PATH or via python3 -m pytest (e.g. activate venv with API deps first).
+# Default verify runs ./scripts/run-api-pytest.sh (creates .venv + installs src/api/fastapi/requirements.txt on first use).
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
@@ -28,7 +28,7 @@ fi
 MSG="$*"
 
 if [[ "$SKIP_TESTS" -eq 0 ]]; then
-  VERIFY_CMD="${VERIFY_CMD:-python3 -m pytest src/api/fastapi -q}"
+  VERIFY_CMD="${VERIFY_CMD:-./scripts/run-api-pytest.sh}"
   echo "Running: $VERIFY_CMD"
   if ! eval "$VERIFY_CMD"; then
     echo "verify-and-commit: tests failed — no commit." >&2
