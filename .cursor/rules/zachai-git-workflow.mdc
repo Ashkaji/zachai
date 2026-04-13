@@ -1,0 +1,16 @@
+---
+description: When to commit after BMAD story work (tests + git)
+alwaysApply: true
+---
+
+# Git workflow after story / dev / code review
+
+When a development task is **complete** (story created, implementation done, or code review addressed) and the user expects a **git checkpoint**:
+
+1. Run the **API test suite** from the repo root (or the subset relevant to the change), e.g. `python3 -m pytest src/api/fastapi -q` — use a venv / environment where `requirements.txt` for the FastAPI service is installed if `pytest` is missing.
+2. If tests pass and there are uncommitted changes, run **`./scripts/verify-and-commit.sh "type: concise message"`** (or pass `VERIFY_CMD=...` for a narrower test run). This runs tests again, then `git add -A` and `git commit`.
+3. For **documentation-only** or **planning-only** changes where tests are not applicable, use **`./scripts/verify-and-commit.sh --skip-tests "docs: ..."`** instead of asking the user to commit manually.
+
+Do **not** only stage files without committing unless the user explicitly wants a partial stage. Prefer one clear commit per completed phase when tests are green.
+
+The existing **pre-commit** hook still runs on `git commit` (epic doc sync). `verify-and-commit.sh` does not replace the user’s decision *when* to commit — it bundles **tests + commit** so the agent does not need a separate “please git commit” step.
