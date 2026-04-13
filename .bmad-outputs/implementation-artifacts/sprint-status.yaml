@@ -5,12 +5,10 @@
 # tracking_system: file-system
 # story_location: .bmad-outputs/implementation-artifacts
 #
-# DOCS SYNC — automation + manual:
-#   - Run:  python scripts/sync_epic_docs.py generate
-#     Refreshes the auto table + "Dernière mise à jour" in docs/epics-and-stories.md from this file.
-#   - Run:  python scripts/sync_epic_docs.py check
-#     Verifies sprint keys match epics.md for epics 9–14 (planning file). Exit 1 on drift.
-#   - Still manual: narrative "Goal / Story" prose in docs/epics-and-stories.md, and new ### Epic / #### Story in epics.md when scope changes.
+# DOCS SYNC — automated (no manual generate/check):
+#   - pre-commit: python scripts/sync_epic_docs.py pre-commit (regenerates docs/epics-and-stories.md + stages it)
+#   - CI:        python scripts/sync_epic_docs.py ci-verify
+#   - Manual only: narrative prose in docs/epics-and-stories.md; new ### Epic / #### Story in epics.md when scope changes.
 
 # STATUS DEFINITIONS:
 # ==================

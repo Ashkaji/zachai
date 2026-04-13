@@ -1,9 +1,11 @@
-# https://pre-commit.com — install: pip install pre-commit && pre-commit install
+# https://pre-commit.com
+# Install once: pip install pre-commit && pre-commit install
+# The hook regenerates docs/epics-and-stories.md from sprint-status.yaml and stages it — no manual generate/check.
 repos:
   - repo: local
     hooks:
-      - id: sync-epic-docs-check
-        name: sprint-status vs epics.md (sync_epic_docs)
-        entry: python3 scripts/sync_epic_docs.py check
+      - id: sync-epic-docs
+        name: sync epic docs (generate + check + git add)
+        entry: python3 scripts/sync_epic_docs.py pre-commit
         language: system
         pass_filenames: false

@@ -2,8 +2,10 @@
 """
 Keep sprint tracking aligned with planning docs.
 
-  python scripts/sync_epic_docs.py check   # exit 1 if sprint-status vs epics.md diverge (for epics defined in epics.md)
-  python scripts/sync_epic_docs.py generate  # refresh auto-generated status table + header date in docs/epics-and-stories.md
+  python scripts/sync_epic_docs.py pre-commit   # generate + check + git add docs (used by pre-commit; you should not need to run this by hand)
+  python scripts/sync_epic_docs.py ci-verify    # generate, fail if docs differ from repo, then check (used by CI)
+  python scripts/sync_epic_docs.py check        # sprint-status vs epics.md only
+  python scripts/sync_epic_docs.py generate     # refresh auto block + header date (for debugging)
 
 epics.md only lists epics 9–14 in this repo; epics 1–8 are validated in sprint only.
 """
@@ -12,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -105,8 +108,6 @@ def check() -> list[str]:
     status = parse_sprint_status(SPRINT)
     epics_in_md, stories_in_md = parse_epics_md_plan(EPICS_MD)
     stories_by_epic = sprint_story_keys(status)
-    epic_st = epic_keys_status(status)
-    retro_st = retro_keys_status(status)
 
     for n_str in sorted(epics_in_md, key=int):
         n = int(n_str)
@@ -153,7 +154,7 @@ def build_table(status: dict[str, str]) -> str:
         "### État des épiques et stories (généré automatiquement)",
         "",
         "Source : `.bmad-outputs/implementation-artifacts/sprint-status.yaml`.",
-        "Régénérer avec : `python scripts/sync_epic_docs.py generate`",
+        "Mis à jour automatiquement par le hook **pre-commit** ; la CI échoue si ce bloc est obsolète.",
         "",
         "| Épique | Statut | Rétro | Stories |",
         "|--------|--------|-------|---------|",
@@ -203,21 +204,74 @@ def generate() -> None:
     print(f"Updated {DOCS_VIEW.relative_to(ROOT)}")
 
 
-def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("command", choices=("check", "generate"), nargs="?", default="check")
-    args = p.parse_args()
-
-    if args.command == "generate":
-        generate()
-        return
-
+def _run_check_or_exit() -> None:
     errs = check()
     if errs:
         print("sync_epic_docs check failed:", file=sys.stderr)
         for e in errs:
             print(f"  - {e}", file=sys.stderr)
         sys.exit(1)
+
+
+def pre_commit() -> None:
+    """Regenerate docs view, validate, stage for the current commit."""
+    generate()
+    _run_check_or_exit()
+    r = subprocess.run(
+        ["git", "add", "docs/epics-and-stories.md"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        print(
+            "sync_epic_docs: git add failed (is this a git work tree?):",
+            r.stderr or r.stdout,
+            file=sys.stderr,
+        )
+        sys.exit(r.returncode)
+
+
+def ci_verify() -> None:
+    """CI: regenerated doc must match committed file; then structural check."""
+    generate()
+    r = subprocess.run(
+        ["git", "diff", "--exit-code", "--", "docs/epics-and-stories.md"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        print(
+            "docs/epics-and-stories.md is out of sync with sprint-status.yaml.",
+            "Run `pre-commit run --all-files` locally or commit after the hook updates the doc.",
+            file=sys.stderr,
+            sep="\n",
+        )
+        sys.exit(1)
+    _run_check_or_exit()
+    print("sync_epic_docs ci-verify OK")
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "command",
+        choices=("check", "generate", "pre-commit", "ci-verify"),
+        nargs="?",
+        default="check",
+    )
+    args = p.parse_args()
+
+    if args.command == "generate":
+        generate()
+        return
+    if args.command == "pre-commit":
+        pre_commit()
+        return
+    if args.command == "ci-verify":
+        ci_verify()
+        return
+
+    _run_check_or_exit()
     print("sync_epic_docs check OK (sprint-status vs epics.md for epics present in epics.md)")
 
 

@@ -1,4 +1,4 @@
-# Validates BMAD sprint tracking against planning epics (see scripts/sync_epic_docs.py).
+# Ensures docs/epics-and-stories.md matches sprint-status after generate, and sprint matches epics.md.
 name: Epic docs sync
 
 on:
@@ -8,10 +8,10 @@ on:
     branches: [main, master]
 
 jobs:
-  check:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check sprint-status vs epics.md
-        run: python3 scripts/sync_epic_docs.py check
+      - name: Verify epic docs (generate + diff + check)
+        run: python3 scripts/sync_epic_docs.py ci-verify
