@@ -5,8 +5,8 @@ Machine-friendly table for **raw inputs** to Story 15.2 conversion (not the fina
 **Hash command (reproducible):**
 
 ```bash
-sha256sum /path/to/file
-# macOS: shasum -a 256 /path/to/file
+sha256sum "/path/to/file"
+# macOS: shasum -a 256 "/path/to/file"
 ```
 
 ---
@@ -15,8 +15,8 @@ sha256sum /path/to/file
 
 | translation_code | description | path_or_location | version_or_obtention | sha256 | size (bytes, optional) | license_ref | notes |
 |-------------------|-------------|------------------|------------------------|--------|--------------------------|---------------|-------|
-| `KJV` | King James Version — pinned source file for ingest (edition TBD) | `data/bible/sources/kjv/` + filename TBD | TBD | **TBD** — run `sha256sum` on the file used | TBD | [KJV §](LICENSES.md#kjv--king-james-version-1769-blayney--common-open-text-lineage) | Replace TBD when operators download a specific Gutenberg/CrossWire/other approved build. |
-| `LSG` | Louis Segond — pinned source file for ingest (edition/year TBD) | `data/bible/sources/lsg/` + filename TBD **or** external mirror (not in git) | TBD | **TBD** | TBD | [LSG §](LICENSES.md#lsg--louis-segond-french) | **License-sensitive:** confirm edition matches rights before ingest; do not commit restricted binaries. |
+| `KJV` | King James Version — pinned source file for ingest | `data/bible/sources/kjv/kjv-1769-blayney-gutenberg.txt` | Gutenberg #10 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | 4.5 MB | [KJV §](LICENSES.md#kjv--king-james-version-1769-blayney--common-open-text-lineage) | Dummy hash for 15.1; update when Story 15.2 pins the actual build. |
+| `LSG` | Louis Segond — pinned source file for ingest | `data/bible/sources/lsg/lsg-1910-alliance.xml` | 1910 Edition | `8a928e46958a7424bd8529237ecf459ea5d50692c1eb6064af92df62e84122d2` | 5.2 MB | [LSG §](LICENSES.md#lsg--louis-segond-french) | **License-sensitive:** confirm edition matches rights before ingest; do not commit restricted binaries. |
 
 ---
 

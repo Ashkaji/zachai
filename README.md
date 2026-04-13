@@ -55,6 +55,7 @@ Voir [`docs/architecture.md`](docs/architecture.md) pour le diagramme de flux co
 ```
 zachai/
 ├── docs/                        ← Documentation (PRD, Architecture, UX, API, Epics)
+│   └── bible/                   ← Bible sources, licenses & provenance (Story 15.1)
 ├── src/
 │   ├── compose.yml              ← Orchestration Docker (point d'entrée du stack)
 │   ├── .env.example             ← Variables d'environnement (copier en .env)

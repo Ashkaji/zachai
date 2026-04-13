@@ -24,7 +24,7 @@
 ## Where raw files live
 
 - **Recommended layout (not created by 15.1):** `data/bible/sources/<translation_code>/` under the repo root, with one subdirectory per translation or edition you pin for ingest.
-- **Git:** Heavy archives are **not** committed by default. This repo ignores common archive/binary patterns (e.g. `*.zip`, `*.tar*`, `*.gz`, `*.7z` — see [`.gitignore`](../../.gitignore) — *Heavy Assets & Data*). Operators keep downloads **outside git** or use **Git LFS** only if your org policy allows and licenses permit redistribution of LFS objects.
+- **Git:** Heavy archives and uncompressed data are **not** committed by default. This repo ignores common archive/binary patterns (e.g. `*.zip`, `*.tar*`, `*.gz`, `*.7z`) as well as `*.xml` and `*.txt` under data directories (see [`.gitignore`](../../.gitignore) — *Heavy Assets & Data*). Operators keep downloads **outside git** or use **Git LFS** only if your org policy allows and licenses permit redistribution of LFS objects.
 - **Never commit:** Secrets, license keys, or paywalled files that violate terms.
 
 ---
@@ -43,8 +43,8 @@
 After you obtain a source file, record its digest before conversion:
 
 ```bash
-sha256sum /path/to/your/downloaded/file
-# macOS: shasum -a 256 /path/to/your/downloaded/file
+sha256sum "/path/to/your/downloaded/file"
+# macOS: shasum -a 256 "/path/to/your/downloaded/file"
 ```
 
 Update [`SOURCES.md`](SOURCES.md) with the exact hash of the bytes you use for ingestion so CI and humans can detect drift on re-ingest.

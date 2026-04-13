@@ -221,11 +221,11 @@
 
 ---
 
-## Epic 14 — L6 : Suivi — Durcissement chemin de restauration (revue 13.1)
-**Goal :** Renforcer l’implémentation Story 13.1 selon les findings de revue encore ouverts (exceptions, `finally`, mapping d’erreurs, UX/i18n), sans nouvelle fonctionnalité produit ni changement de contrat public non versionné.
+## Epic 14 — L6 : Suivi — Durcissement chemin de restauration (en revue 13.1)
+**Goal :** Renforcer l’implémentation Story 13.1 selon les findings de en revue encore ouverts (exceptions, `finally`, mapping d’erreurs, UX/i18n), sans nouvelle fonctionnalité produit ni changement de contrat public non versionné.
 **Statut :** En cours *(Story 14.1 prête pour le dev — voir sprint-status)*
 
-- **Story 14.1 : Durcissement signaux d’échec de restauration (revue code)**
+- **Story 14.1 : Durcissement signaux d’échec de restauration (en revue code)**
   - *As a Maintainer, I want the restore-failure signal path hardened per unresolved 13.1 review items, so that backend publishing, error codes, and editor failure UX are robust and localizable while keeping the documented stateless contract stable.*
 
 ---
@@ -307,7 +307,7 @@ Mis à jour automatiquement au commit (hook Git `scripts/git-hooks/` ou outil pr
 | 12 | terminé | terminé | `12-1-centre-profil-consentement-anonymisation-rgpd` terminé<br>`12-2-visual-diff-ghost-mode-worker-based-performance` terminé<br>`12-3-restauration-securisee-verrouillage-websocket` terminé |
 | 13 | terminé | terminé | `13-1-restore-failure-broadcast-collaborators` terminé<br>`13-2-bible-verse-redis-cache-opt-in` terminé<br>`13-3-api-mapping-openapi-alignment` terminé |
 | 14 | terminé | optionnel | `14-1-restore-failure-signal-review-hardening` terminé |
-| 15 | en cours | optionnel | `15-1-bible-sources-licensing-and-provenance` revue<br>`15-2-bible-extract-to-zachai-json` backlog<br>`15-3-bible-ingest-smoke-and-operator-docs` backlog |
+| 15 | en cours | optionnel | `15-1-bible-sources-licensing-and-provenance` terminé<br>`15-2-bible-extract-to-zachai-json` prêt pour dev<br>`15-3-bible-ingest-smoke-and-operator-docs` backlog |
 | 16 | backlog | optionnel | `16-1-keycloak-admin-client-and-service-account` backlog<br>`16-2-manager-scope-membership-model` backlog<br>`16-3-api-user-provisioning-and-rbac` backlog<br>`16-4-ui-admin-create-managers` backlog<br>`16-5-ui-manager-invite-transcripteur-expert` backlog<br>`16-6-expert-label-studio-project-access` backlog |
 | 17 | backlog | optionnel | `17-1-demo-runbook-multi-role-e2e` backlog<br>`17-2-readme-roadmap-and-bible-demo-pointers` backlog |
 <!-- sync-epic-docs:end -->
