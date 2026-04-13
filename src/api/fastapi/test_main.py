@@ -5079,6 +5079,29 @@ def test_get_bible_verses_exact_success(mock_db):
     assert "aimé le monde" in data["verses"][0]["text"]
 
 
+def test_get_bible_verses_kjv_john_3_16_golden_snippet(mock_db):
+    """GET /v1/bible/verses KJV John 3:16 matches operator smoke golden (Story 15.3)."""
+    v = MagicMock()
+    v.verse = 16
+    v.text = "For God so loved the world, that he gave his only begotten Son..."
+
+    res = MagicMock()
+    res.scalars.return_value.all.return_value = [v]
+    mock_db.execute = AsyncMock(return_value=res)
+
+    with patch.object(main, "decode_token", return_value=TRANSCRIPTEUR_PAYLOAD):
+        response = client.get(
+            "/v1/bible/verses",
+            headers={"Authorization": "Bearer dummy.token.here"},
+            params={"ref": "John 3:16", "translation": "KJV"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["translation"] == "KJV"
+    assert "For God so loved the world" in data["verses"][0]["text"]
+
+
 def test_get_bible_verses_range_success(mock_db):
     """GET /v1/bible/verses returns 200 for range reference."""
     v1 = MagicMock(); v1.verse = 1; v1.text = "Au commencement..."
@@ -5160,6 +5183,19 @@ def test_post_bible_ingest_forbidden():
         }
     )
     assert response.status_code == 403
+
+
+def test_post_bible_ingest_unauthorized_missing_secret():
+    """POST /v1/bible/ingest returns 401 when internal secret header is absent (Story 15.3 runbook)."""
+    response = client.post(
+        "/v1/bible/ingest",
+        json={
+            "verses": [
+                {"translation": "LSG", "book": "Jean", "chapter": 3, "verse": 16, "text": "x"}
+            ]
+        },
+    )
+    assert response.status_code == 401
 
 
 # ─── Story 13.2: Bible verse Redis cache (opt-in) ──────────────────────────

@@ -38,6 +38,87 @@
 
 ---
 
+## Operator Runbook (Story 15.3)
+
+This section provides the exact commands for ingestion, required environment variables (secrets), and the expected local file structure to populate the `bible_verses` table in PostgreSQL.
+
+### Prerequisites
+
+1.  **FastAPI Backend:** The backend must be running (usually on `http://localhost:8000`).
+2.  **Internal Secret:** You must have the `GOLDEN_SET_INTERNAL_SECRET`. This secret is required for the `X-ZachAI-Golden-Set-Internal-Secret` header. It should be set in your `.env` file or passed as a CLI argument.
+3.  **JSON Source Files:** The converted Bible JSON files should be located in `data/bible/json/`.
+
+### Ingestion Commands
+
+To ingest a Bible translation, use the `src/scripts/ingest_bible.py` script:
+
+```bash
+# Ingest Louis Segond (LSG)
+python3 src/scripts/ingest_bible.py data/bible/json/lsg.json \
+  --url http://localhost:8000 \
+  --secret YOUR_GOLDEN_SET_INTERNAL_SECRET \
+  --translation LSG
+
+# Ingest King James Version (KJV)
+python3 src/scripts/ingest_bible.py data/bible/json/kjv.json \
+  --url http://localhost:8000 \
+  --secret YOUR_GOLDEN_SET_INTERNAL_SECRET \
+  --translation KJV
+```
+
+### Ingest auth checks (internal secret)
+
+`POST /v1/bible/ingest` is protected by `verify_golden_set_internal_secret` (see `src/api/fastapi/main.py`). The request body must satisfy `BibleIngestRequest` (**at least one verse**) before the handler runs; an empty `verses` array returns **422**, not an auth error.
+
+Quick checks against a running API (`BASE` defaults to `http://localhost:8000`); use a minimal placeholder verse for auth-only probes:
+
+```bash
+BASE="${BASE:-http://localhost:8000}"
+BODY='{"verses":[{"translation":"LSG","book":"Jean","chapter":3,"verse":16,"text":"probe"}]}'
+
+# No X-ZachAI-Golden-Set-Internal-Secret header → 401 Unauthorized
+curl -sS -o /dev/null -w "%{http_code}\n" -X POST "${BASE}/v1/bible/ingest" \
+  -H "Content-Type: application/json" \
+  -d "$BODY"
+
+# Wrong secret → 403 Forbidden
+curl -sS -o /dev/null -w "%{http_code}\n" -X POST "${BASE}/v1/bible/ingest" \
+  -H "Content-Type: application/json" \
+  -H "X-ZachAI-Golden-Set-Internal-Secret: not-the-configured-secret" \
+  -d "$BODY"
+```
+
+### Verification (Smoke Test)
+
+After ingestion, run the smoke test to verify that `GET /v1/bible/verses` returns the expected **Golden Verse** snippets for LSG and KJV (200 + body match). The script requires **all** checks to pass; exit code is non-zero if any verse is missing or mismatched.
+
+**Redis cache (Story 13.2):** Successful ingest increments the per-translation generation in Redis when `BIBLE_VERSE_CACHE_ENABLED` is on, so cache keys rotate and clients do not keep serving stale payloads. This script does not inspect Redis; to validate end-to-end after you change text and re-ingest, run the smoke test again and confirm snippets still match the database.
+
+```bash
+# Set your JWT (from a logged-in session or test user)
+export ZACHAI_TEST_JWT="your_jwt_here"
+
+# Run the smoke test
+python3 src/scripts/smoke_test_bible.py --url http://localhost:8000
+```
+
+### Expected File Structure
+
+```text
+zachai/
+├── data/
+│   └── bible/
+│       └── json/
+│           ├── lsg.json
+│           └── kjv.json
+└── src/
+    └── scripts/
+        ├── ingest_bible.py
+        └── smoke_test_bible.py
+```
+
+---
+
 ## Reproducing checksums
 
 After you obtain a source file, record its digest before conversion:
