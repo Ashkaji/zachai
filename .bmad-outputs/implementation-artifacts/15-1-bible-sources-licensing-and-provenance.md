@@ -1,6 +1,6 @@
 # Story 15.1: Bible sources, licensing & provenance
 
-Status: ready-for-dev
+Status: review
 
 <!-- Ultimate context engine analysis completed - comprehensive developer guide created -->
 
@@ -38,21 +38,21 @@ so that downstream ingestion (Stories 15.2–15.3), redistribution inside ZachAI
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Layout & entrypoint (AC: #1, #4)**  
-  - [ ] Add `docs/bible/` (or agreed equivalent) with `README.md` as index.  
-  - [ ] Document boundary: **15.1 = docs + manifest only**; no requirement to land conversion scripts (15.2) or operator runbook (15.3) in this story.
+- [x] **Task 1 — Layout & entrypoint (AC: #1, #4)**  
+  - [x] Add `docs/bible/` (or agreed equivalent) with `README.md` as index.  
+  - [x] Document boundary: **15.1 = docs + manifest only**; no requirement to land conversion scripts (15.2) or operator runbook (15.3) in this story.
 
-- [ ] **Task 2 — Licensing register (AC: #2)**  
-  - [ ] Add `docs/bible/LICENSES.md` (or section in README) with one subsection per translation/edition.  
-  - [ ] State compatibility with **local DB + API serving** (not just “personal use”).
+- [x] **Task 2 — Licensing register (AC: #2)**  
+  - [x] Add `docs/bible/LICENSES.md` (or section in README) with one subsection per translation/edition.  
+  - [x] State compatibility with **local DB + API serving** (not just “personal use”).
 
-- [ ] **Task 3 — Provenance manifest (AC: #3)**  
-  - [ ] Add machine-friendly table in `docs/bible/SOURCES.md` or `MANIFEST.md` (Markdown table or checked-in `.csv` under `docs/bible/`): columns at minimum `translation_code`, `description`, `path_or_location`, `sha256`, `license_ref`, `notes`.  
-  - [ ] If hashes are produced locally, document the command used (e.g. `sha256sum`) so CI/humans can reproduce.
+- [x] **Task 3 — Provenance manifest (AC: #3)**  
+  - [x] Add machine-friendly table in `docs/bible/SOURCES.md` or `MANIFEST.md` (Markdown table or checked-in `.csv` under `docs/bible/`): columns at minimum `translation_code`, `description`, `path_or_location`, `sha256`, `license_ref`, `notes`.  
+  - [x] If hashes are produced locally, document the command used (e.g. `sha256sum`) so CI/humans can reproduce.
 
-- [ ] **Task 4 — Cross-links & sync (AC: #5)**  
-  - [ ] Link from `docs/epics-and-stories.md` Epic 15 / Story 15.1 to `docs/bible/README.md`.  
-  - [ ] After edits, run normal commit flow so `sync_epic_docs` / pre-commit keeps `docs/epics-and-stories.md` aligned if required.
+- [x] **Task 4 — Cross-links & sync (AC: #5)**  
+  - [x] Link from `docs/epics-and-stories.md` Epic 15 / Story 15.1 to `docs/bible/README.md`.  
+  - [x] After edits, run normal commit flow so `sync_epic_docs` / pre-commit keeps `docs/epics-and-stories.md` aligned if required.
 
 ## Dev Notes
 
@@ -106,11 +106,26 @@ so that downstream ingestion (Stories 15.2–15.3), redistribution inside ZachAI
 
 ### Agent Model Used
 
-(create-story workflow — Cursor Agent)
+Cursor Agent (dev-story workflow)
 
 ### Debug Log References
 
 ### Completion Notes List
 
+- Added `docs/bible/README.md` as single entry point (scope 15.1 vs 15.2/15.3, `data/bible/sources/` pattern, gitignore/LFS/external policy, `sha256sum` / `shasum -a 256`).
+- Added `docs/bible/LICENSES.md` for **KJV** (PD US + jurisdiction caveats + citations) and **LSG** (no PD assumption; DB + API compatibility emphasis; publisher/society citations).
+- Added `docs/bible/SOURCES.md` manifest table with required columns; TBD rows until Story 15.2 pins files and hashes.
+- Linked from `docs/epics-and-stories.md` Epic 15 and Story 15.1 to Bible docs; sprint `15-1` set to `review`; pre-commit `sync_epic_docs` refreshes the auto table from `sprint-status.yaml`.
+
 ### File List
 
+- `docs/bible/README.md`
+- `docs/bible/LICENSES.md`
+- `docs/bible/SOURCES.md`
+- `docs/epics-and-stories.md`
+- `.bmad-outputs/implementation-artifacts/sprint-status.yaml`
+- `.bmad-outputs/implementation-artifacts/15-1-bible-sources-licensing-and-provenance.md`
+
+### Change Log
+
+- 2026-04-13: Story 15.1 — Bible documentation layout, license register, provenance manifest, epic cross-links, sprint status → review.

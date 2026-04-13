@@ -234,8 +234,11 @@
 **Goal :** Remplir la base locale des versets avec des sources licenciées et un pipeline reproductible (sans API Bible « live » en production).
 **Statut :** Backlog
 
+**Voir aussi (sources, licences, provenance) :** [`docs/bible/README.md`](bible/README.md)
+
 - **Story 15.1 : Sources, licences et provenance**
   - *As a Maintainer, I can document chosen Bible text sources, their licenses, and provenance files (hashes/paths) in the repo, so that ingestion and redistribution stay auditable and legally defensible.*
+  - **Documentation :** [`docs/bible/README.md`](bible/README.md) (point d’entrée), [`docs/bible/LICENSES.md`](bible/LICENSES.md), [`docs/bible/SOURCES.md`](bible/SOURCES.md).
 
 - **Story 15.2 : Extraction vers JSON ZachAI**
   - *As a Maintainer, I can convert approved source files into the JSON shape expected by `src/scripts/ingest_bible.py` (book names compatible with `_normalize_bible_book`), with automated checks on sample references, so that batch ingest does not silently 404.*
@@ -304,7 +307,7 @@ Mis à jour automatiquement au commit (hook Git `scripts/git-hooks/` ou outil pr
 | 12 | terminé | terminé | `12-1-centre-profil-consentement-anonymisation-rgpd` terminé<br>`12-2-visual-diff-ghost-mode-worker-based-performance` terminé<br>`12-3-restauration-securisee-verrouillage-websocket` terminé |
 | 13 | terminé | terminé | `13-1-restore-failure-broadcast-collaborators` terminé<br>`13-2-bible-verse-redis-cache-opt-in` terminé<br>`13-3-api-mapping-openapi-alignment` terminé |
 | 14 | terminé | optionnel | `14-1-restore-failure-signal-review-hardening` terminé |
-| 15 | en cours | optionnel | `15-1-bible-sources-licensing-and-provenance` prêt pour dev<br>`15-2-bible-extract-to-zachai-json` backlog<br>`15-3-bible-ingest-smoke-and-operator-docs` backlog |
+| 15 | en cours | optionnel | `15-1-bible-sources-licensing-and-provenance` revue<br>`15-2-bible-extract-to-zachai-json` backlog<br>`15-3-bible-ingest-smoke-and-operator-docs` backlog |
 | 16 | backlog | optionnel | `16-1-keycloak-admin-client-and-service-account` backlog<br>`16-2-manager-scope-membership-model` backlog<br>`16-3-api-user-provisioning-and-rbac` backlog<br>`16-4-ui-admin-create-managers` backlog<br>`16-5-ui-manager-invite-transcripteur-expert` backlog<br>`16-6-expert-label-studio-project-access` backlog |
 | 17 | backlog | optionnel | `17-1-demo-runbook-multi-role-e2e` backlog<br>`17-2-readme-roadmap-and-bible-demo-pointers` backlog |
 <!-- sync-epic-docs:end -->
