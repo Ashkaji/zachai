@@ -4,7 +4,11 @@
 #
 # Usage (from repo root):
 #   ./scripts/run-api-pytest.sh
+#   ./scripts/run-api-pytest.sh -q
 #   ./scripts/run-api-pytest.sh src/api/fastapi/test_story_12_3.py -q
+#
+# If you pass only pytest flags (first arg starts with "-"), the FastAPI test
+# directory is prepended so collection does not walk the whole repo.
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
@@ -27,5 +31,8 @@ fi
 
 if [[ $# -eq 0 ]]; then
   exec "$PY" -m pytest src/api/fastapi -q
+fi
+if [[ "$1" == -* ]]; then
+  exec "$PY" -m pytest src/api/fastapi "$@"
 fi
 exec "$PY" -m pytest "$@"
