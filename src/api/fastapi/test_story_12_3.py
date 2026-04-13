@@ -239,6 +239,14 @@ async def test_restore_integrity_mismatch_returns_502():
         assert "integrity" in err_text.lower() or "hash" in err_text.lower()
 
         pub_calls = [c[0][1] for c in mock_redis.publish.call_args_list]
+        fail_idx = next(i for i, p in enumerate(pub_calls) if "document_restore_failed" in p)
+        unlock_idx = next(i for i, p in enumerate(pub_calls) if "document_unlocked" in p)
+        assert fail_idx < unlock_idx
+        fail_payload = json.loads(pub_calls[fail_idx])
+        assert fail_payload["type"] == "document_restore_failed"
+        assert fail_payload["schema_version"] == 1
+        assert fail_payload["document_id"] == 1
+        assert fail_payload["code"] == "INTEGRITY_MISMATCH"
         assert any("document_unlocked" in p for p in pub_calls)
         mock_redis.delete.assert_called_with("lock:document:1:restoring")
 

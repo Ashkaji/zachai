@@ -46,6 +46,17 @@ import {
 import { useNotifications } from "../shared/notifications/NotificationContext";
 import "./collaboration.css";
 
+/** Story 13.1 — generic copy per `code` when server omits `message` */
+const REMOTE_RESTORE_FAILURE_BY_CODE: Record<string, string> = {
+  SNAPSHOT_NOT_FOUND: "Snapshot not found.",
+  AUDIO_NOT_FOUND: "Audio document not found.",
+  SNAPSHOT_FETCH_FAILED: "Could not load snapshot from storage.",
+  SNAPSHOT_PAYLOAD_INVALID: "Snapshot data is invalid.",
+  INTEGRITY_MISMATCH: "Snapshot did not match stored integrity.",
+  STORAGE_ERROR: "Restoration failed due to a storage error.",
+  UNKNOWN: "Document restoration failed.",
+};
+
 // --- Types for Ghost Mode ---
 type DiffChange = {
   type: 'add' | 'remove' | 'equal';
@@ -251,12 +262,18 @@ export function TranscriptionEditor() {
   const [snapshotToRestore, setSnapshotToRestore] = useState<string | null>(null);
   /** Set when another collaborator triggers restoration (Hocuspocus stateless). */
   const [remoteRestoringBy, setRemoteRestoringBy] = useState<string | null>(null);
+  /** Story 13.1: remote collaborator restore failure (distinct from success overlay). */
+  const [remoteRestoreFailureMessage, setRemoteRestoreFailureMessage] = useState<string | null>(null);
+  const localRestoreRequestActiveRef = useRef(false);
+  const suppressRemoteRestoreFailureRef = useRef(false);
 
   const handleRestoreSnapshot = async (snapId: string) => {
     if (!audioId || !token) return;
     
     setIsRestoring(true);
     setShowRestoreConfirm(false);
+    setRemoteRestoreFailureMessage(null);
+    localRestoreRequestActiveRef.current = true;
     
     try {
       const resp = await apiFetch(`/v1/snapshots/${encodeURIComponent(snapId)}/restore`, token, {
@@ -287,6 +304,7 @@ export function TranscriptionEditor() {
       
       notify({ tier: "informational", title: "Restoration", body: "Document restored successfully" });
       setStatus("Document restored successfully");
+      setRemoteRestoreFailureMessage(null);
       setIsTimelineOpen(false);
       setActiveSnapshotId(null);
       setGhostMode(false);
@@ -295,8 +313,13 @@ export function TranscriptionEditor() {
       const msg = err instanceof Error ? err.message : String(err);
       notify({ tier: "critical", title: "Restoration Failed", body: msg });
       setStatus(`Restoration failed: ${msg}`);
+      suppressRemoteRestoreFailureRef.current = true;
+      window.setTimeout(() => {
+        suppressRemoteRestoreFailureRef.current = false;
+      }, 3500);
     } finally {
       setIsRestoring(false);
+      localRestoreRequestActiveRef.current = false;
     }
   };
 
@@ -540,6 +563,9 @@ export function TranscriptionEditor() {
             const data = JSON.parse(payload) as {
               type?: string;
               user_name?: string | null;
+              document_id?: number;
+              code?: string;
+              message?: string;
             };
             if (data.type === "zachai:document_restoring") {
               setRemoteRestoringBy(
@@ -549,6 +575,26 @@ export function TranscriptionEditor() {
               );
             } else if (data.type === "zachai:document_restored") {
               setRemoteRestoringBy(null);
+              setRemoteRestoreFailureMessage(null);
+            } else if (data.type === "zachai:document_restore_failed") {
+              const docId =
+                typeof data.document_id === "number" && Number.isFinite(data.document_id)
+                  ? data.document_id
+                  : null;
+              if (docId !== null && docId !== audioId) return;
+              setRemoteRestoringBy(null);
+              if (localRestoreRequestActiveRef.current || suppressRemoteRestoreFailureRef.current) {
+                return;
+              }
+              const code =
+                typeof data.code === "string" && data.code.trim() ? data.code.trim() : "UNKNOWN";
+              const custom =
+                typeof data.message === "string" && data.message.trim() ? data.message.trim() : null;
+              const fallback: string =
+                REMOTE_RESTORE_FAILURE_BY_CODE[code] ??
+                REMOTE_RESTORE_FAILURE_BY_CODE.UNKNOWN ??
+                "Document restoration failed.";
+              setRemoteRestoreFailureMessage(custom ?? fallback);
             }
           } catch {
             /* ignore */
@@ -1397,6 +1443,43 @@ export function TranscriptionEditor() {
 
   return (
     <div className="za-workspace-container" style={{ display: "flex", flexDirection: "row", padding: 0 }}>
+      {/* Story 13.1 — remote restore failed (collaborators); not the same UX as success */}
+      {remoteRestoreFailureMessage && (
+        <div
+          role="alert"
+          className="za-card za-glass"
+          style={{
+            position: "fixed",
+            top: "1rem",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 10000,
+            maxWidth: 560,
+            padding: "var(--spacing-4) var(--spacing-5)",
+            border: "1px solid #e54242",
+            background: "rgba(255, 255, 255, 0.95)",
+            boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "var(--spacing-3)",
+          }}
+        >
+          <div style={{ flex: 1 }}>
+            <strong style={{ color: "#a40000", display: "block", marginBottom: 4 }}>
+              Restoration failed
+            </strong>
+            <span style={{ color: "#323130", fontSize: "0.95rem" }}>{remoteRestoreFailureMessage}</span>
+          </div>
+          <button
+            type="button"
+            className="za-button za-button-subtle"
+            style={{ flexShrink: 0 }}
+            onClick={() => setRemoteRestoreFailureMessage(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       {/* Restoration Overlay (Story 12.3 — collaborators + local) */}
       {(isRestoring || remoteRestoringBy) && (
         <div 

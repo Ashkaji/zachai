@@ -79,3 +79,8 @@
 
 - **DLQ escalation vs explicit admin alert**: Explicit operator alert channel (pager/webhook/metrics) is deferred to a dedicated ops-observability story; current ERROR+DLQ visibility is sufficient for Story 5.4 scope.
 
+
+## Deferred from: code review of story-13.1 (2026-04-13)
+- Network I/O in `finally` block: performing multiple await calls inside `finally` is risky if broadcasts hang.
+- Triple fallback in UI rendering: defensive coding taken to a paranoid, messy extreme.
+- Z-index escalation strategy: hardcoding 10000 suggests a lack of a proper modal/portal strategy.

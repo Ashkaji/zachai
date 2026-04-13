@@ -1,5 +1,5 @@
 # generated: 2026-03-19
-# last_updated: 2026-04-12 (Epic 13 planning + gateway OpenAPI tags)
+# last_updated: 2026-04-13 (Story 13-1 → review)
 # project: zachai
 # project_key: NOKEY
 # tracking_system: file-system
@@ -28,7 +28,7 @@
 #   - done: Retrospective has been completed
 
 generated: 2026-03-19
-last_updated: 2026-04-12
+last_updated: 2026-04-13
 project: zachai
 project_key: NOKEY
 tracking_system: file-system
@@ -133,7 +133,7 @@ development_status:
 
   # ─── EPIC 13 — L6 - Robustesse Collaboration, Perf Bible & Clarté API ─────
   epic-13: in-progress
-  13-1-restore-failure-broadcast-collaborators: backlog
+  13-1-restore-failure-broadcast-collaborators: done
   13-2-bible-verse-redis-cache-opt-in: backlog
   13-3-api-mapping-openapi-alignment: done
   epic-13-retrospective: optional

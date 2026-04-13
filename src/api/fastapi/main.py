@@ -3788,6 +3788,84 @@ async def _publish_hocuspocus_signal(message: dict) -> None:
         logger.error("hocuspocus_signal_publish_failed msg=%s error=%s", message.get("type"), exc)
 
 
+# ─── Story 13.1: restore failure signal (Redis → Hocuspocus → zachai:document_restore_failed) ───
+# Integrators: JSON on channel ``hocuspocus:signals`` with ``type: "document_restore_failed"``.
+# Fields: ``schema_version`` (int, v1), ``document_id`` (int), ``code`` (machine string),
+# optional ``message`` (short UI copy; no object keys or stack traces). Bump ``schema_version`` only
+# on breaking field renames/removals.
+
+DOCUMENT_RESTORE_FAILED_SCHEMA_VERSION = 1
+
+
+class DocumentRestoreFailureCode:
+    """Stable codes for ``document_restore_failed`` payloads (Story 13.1)."""
+
+    SNAPSHOT_NOT_FOUND = "SNAPSHOT_NOT_FOUND"
+    AUDIO_NOT_FOUND = "AUDIO_NOT_FOUND"
+    SNAPSHOT_FETCH_FAILED = "SNAPSHOT_FETCH_FAILED"
+    SNAPSHOT_PAYLOAD_INVALID = "SNAPSHOT_PAYLOAD_INVALID"
+    INTEGRITY_MISMATCH = "INTEGRITY_MISMATCH"
+    STORAGE_ERROR = "STORAGE_ERROR"
+    UNKNOWN = "UNKNOWN"
+
+
+def _short_restore_public_message(text: str, max_len: int = 240) -> str:
+    t = (text or "").strip()
+    return t[:max_len] if t else ""
+
+
+def _document_restore_failed_signal(audio_id: int, exc: BaseException) -> dict[str, Any]:
+    """Build Redis JSON for ``document_restore_failed`` before ``document_unlocked`` on failure paths."""
+    code = DocumentRestoreFailureCode.UNKNOWN
+    message = ""
+
+    if isinstance(exc, HTTPException):
+        detail = exc.detail
+        err = ""
+        if isinstance(detail, dict):
+            err = str(detail.get("error", ""))
+        elif isinstance(detail, (str, list, tuple)):
+            err = str(detail)
+        
+        el = err.lower()
+        if exc.status_code == 404:
+            code = (
+                DocumentRestoreFailureCode.SNAPSHOT_NOT_FOUND
+                if "snapshot" in el
+                else DocumentRestoreFailureCode.AUDIO_NOT_FOUND
+            )
+            message = _short_restore_public_message(err)
+        elif exc.status_code == 502:
+            if "integrity" in el or "hash" in el:
+                code = DocumentRestoreFailureCode.INTEGRITY_MISMATCH
+            elif "fetch" in el or "storage" in el:
+                code = DocumentRestoreFailureCode.SNAPSHOT_FETCH_FAILED
+            elif "yjs" in el or "missing" in el:
+                code = DocumentRestoreFailureCode.SNAPSHOT_PAYLOAD_INVALID
+            else:
+                code = DocumentRestoreFailureCode.STORAGE_ERROR
+            message = _short_restore_public_message(err)
+        elif exc.status_code in (409, 423):
+            code = DocumentRestoreFailureCode.STORAGE_ERROR
+            message = _short_restore_public_message(err)
+        else:
+            message = _short_restore_public_message(err)
+    else:
+        # Story 13.1: catch-all for internal bugs (AttributeError, etc.)
+        code = DocumentRestoreFailureCode.UNKNOWN
+        message = "Restore failed due to an internal error"
+
+    out: dict[str, Any] = {
+        "type": "document_restore_failed",
+        "schema_version": DOCUMENT_RESTORE_FAILED_SCHEMA_VERSION,
+        "document_id": audio_id,
+        "code": code,
+    }
+    if message:
+        out["message"] = message
+    return out
+
+
 async def _restore_document_from_snapshot_core(
     *,
     audio_id: int,
@@ -3813,6 +3891,8 @@ async def _restore_document_from_snapshot_core(
             detail={"error": "Restoration already in progress; document is locked."},
         )
 
+    locked_signaled = False
+    pending_exc: BaseException | None = None
     try:
         await _publish_hocuspocus_signal(
             {
@@ -3821,6 +3901,7 @@ async def _restore_document_from_snapshot_core(
                 "user_name": display_name,
             }
         )
+        locked_signaled = True
 
         stmt = select(SnapshotArtifact).where(
             SnapshotArtifact.document_id == audio_id,
@@ -3895,7 +3976,16 @@ async def _restore_document_from_snapshot_core(
             "message": "Document restoration successful. Collaborators will be re-synced.",
             "snapshot_id": snapshot_id,
         }
+    except Exception as e:
+        pending_exc = e
+        raise
     finally:
+        if locked_signaled and pending_exc is not None:
+            try:
+                await _publish_hocuspocus_signal(_document_restore_failed_signal(audio_id, pending_exc))
+            except Exception:
+                logger.error("failed_to_publish_restore_failure_signal audio_id=%s", audio_id)
+        
         await _publish_hocuspocus_signal({"type": "document_unlocked", "document_id": audio_id})
         await _redis_client.delete(lock_key)
 

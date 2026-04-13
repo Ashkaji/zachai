@@ -307,6 +307,9 @@ redisSignals.on("message", async (channel, message) => {
         type?: string;
         document_id?: number;
         user_name?: string;
+        schema_version?: number;
+        code?: string;
+        message?: string;
       };
       const documentId = data.document_id;
       const documentName =
@@ -318,6 +321,22 @@ redisSignals.on("message", async (channel, message) => {
         if (doc) {
           log("info", "flushing document cache for reload", { document_id: documentId });
           doc.destroy();
+        }
+      } else if (data.type === "document_restore_failed" && documentName) {
+        const doc = server.documents.get(documentName);
+        if (doc && !doc.isDestroyed) {
+          const code = typeof data.code === "string" && data.code.trim() ? data.code.trim() : "UNKNOWN";
+          const payload: Record<string, unknown> = {
+            type: "zachai:document_restore_failed",
+            schema_version: typeof data.schema_version === "number" && Number.isFinite(data.schema_version) ? data.schema_version : 1,
+            document_id: documentId,
+            code,
+          };
+          if (typeof data.message === "string" && data.message.trim()) {
+            payload.message = data.message.trim();
+          }
+          doc.broadcastStateless(JSON.stringify(payload));
+          log("info", "broadcast document_restore_failed", { document_id: documentId, code });
         }
       } else if ((data.type === "document_locked" || data.type === "document_unlocked") && documentName) {
         const doc = server.documents.get(documentName);

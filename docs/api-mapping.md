@@ -1,6 +1,6 @@
 # ZachAI: System Interfaces (API Mapping)
 
-**Dernière mise à jour :** 2026-04-12  
+**Dernière mise à jour :** 2026-04-13  
 **Gateway :** FastAPI — **version OpenAPI `2.11.0`** (champ `version` de l’app).
 
 **Source de vérité interactive :** schéma **`GET /openapi.json`**, exploration **`/docs`** (Swagger), **`/redoc`**.  
@@ -194,6 +194,18 @@ FastAPI ne fait pas transiter les binaires — uniquement des URLs présignées 
 - **`POST /v1/proxy/grammar`** — proxy LanguageTool, cache Redis, rate limit (Story 5.5).
 
 Détails WSS (room = `audio_files.id`, port Hocuspocus, etc.) : conserver la sémantique décrite historiquement dans les stories 5.x ; le schéma exact du body snapshot est celui de **`EditorSnapshotCallbackRequest`** dans le code.
+
+### Messages stateless (Hocuspocus) — restauration (Story 12.3 / 13.1)
+
+Redis **`hocuspocus:signals`** transporte des JSON avec un champ **`type`**. Hocuspocus relaie vers les clients WebSocket en **`broadcastStateless`** :
+
+| `type` (Redis) | Type client (stateless) | Rôle |
+|----------------|-------------------------|------|
+| `document_locked` | `zachai:document_restoring` | restauration en cours (nom utilisateur optionnel) |
+| `document_unlocked` | `zachai:document_restored` | déverrouillage après **succès** |
+| `document_restore_failed` | `zachai:document_restore_failed` | échec après verrouillage (Story 13.1) — **pas** équivalent à « restauré » |
+
+**Payload `document_restore_failed` / `zachai:document_restore_failed` (v1) :** `schema_version` (int, `1`), `document_id` (int), `code` (chaîne stable, ex. `INTEGRITY_MISMATCH`, `SNAPSHOT_FETCH_FAILED`), `message` (optionnel, court). Ne pas s’appuyer sur des détails d’infrastructure dans `message` — utiliser `code` pour la logique UI.
 
 ---
 
