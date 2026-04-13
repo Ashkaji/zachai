@@ -1,5 +1,5 @@
 # generated: 2026-03-19
-# last_updated: 2026-04-13 (Epics 15–17 backlog; Epic 13 retrospective complete)
+# last_updated: 2026-04-13 (Story 15.1 ready-for-dev; Epic 15 in progress)
 # project: zachai
 # project_key: NOKEY
 # tracking_system: file-system
@@ -150,8 +150,8 @@ development_status:
   epic-14-retrospective: optional
 
   # ─── EPIC 15 — L7: Données bibliques — sources, conversion & ingestion ─────
-  epic-15: backlog
-  15-1-bible-sources-licensing-and-provenance: backlog
+  epic-15: in-progress
+  15-1-bible-sources-licensing-and-provenance: ready-for-dev
   15-2-bible-extract-to-zachai-json: backlog
   15-3-bible-ingest-smoke-and-operator-docs: backlog
   epic-15-retrospective: optional
