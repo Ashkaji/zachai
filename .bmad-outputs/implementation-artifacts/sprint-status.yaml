@@ -1,5 +1,5 @@
 # generated: 2026-03-19
-# last_updated: 2026-04-13 (Epic 13 retrospective complete)
+# last_updated: 2026-04-13 (Epics 15–17 backlog; Epic 13 retrospective complete)
 # project: zachai
 # project_key: NOKEY
 # tracking_system: file-system
@@ -148,3 +148,26 @@ development_status:
   epic-14: in-progress
   14-1-restore-failure-signal-review-hardening: ready-for-dev
   epic-14-retrospective: optional
+
+  # ─── EPIC 15 — L7: Données bibliques — sources, conversion & ingestion ─────
+  epic-15: backlog
+  15-1-bible-sources-licensing-and-provenance: backlog
+  15-2-bible-extract-to-zachai-json: backlog
+  15-3-bible-ingest-smoke-and-operator-docs: backlog
+  epic-15-retrospective: optional
+
+  # ─── EPIC 16 — L7: IAM — création de comptes (Admin → Manager → équipe) ────
+  epic-16: backlog
+  16-1-keycloak-admin-client-and-service-account: backlog
+  16-2-manager-scope-membership-model: backlog
+  16-3-api-user-provisioning-and-rbac: backlog
+  16-4-ui-admin-create-managers: backlog
+  16-5-ui-manager-invite-transcripteur-expert: backlog
+  16-6-expert-label-studio-project-access: backlog
+  epic-16-retrospective: optional
+
+  # ─── EPIC 17 — L7: Démo terrain & documentation produit ───────────────────
+  epic-17: backlog
+  17-1-demo-runbook-multi-role-e2e: backlog
+  17-2-readme-roadmap-and-bible-demo-pointers: backlog
+  epic-17-retrospective: optional

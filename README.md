@@ -191,7 +191,7 @@ Le projet utilise la méthodologie **BMad** (Build Modality with Agentic Design)
 | [`docs/prd.md`](docs/prd.md) | Product Requirements — specs fonctionnelles, workflows, NFR |
 | [`docs/architecture.md`](docs/architecture.md) | Architecture technique, décisions, diagramme de flux |
 | [`docs/api-mapping.md`](docs/api-mapping.md) | Contrats d'interface FastAPI (tous les endpoints) |
-| [`docs/epics-and-stories.md`](docs/epics-and-stories.md) | Roadmap — 7 Epics, 22 User Stories |
+| [`docs/epics-and-stories.md`](docs/epics-and-stories.md) | Roadmap — epics et user stories (voir fichier ; suivi sprint dans `sprint-status.yaml`) |
 | [`docs/ux-design.md`](docs/ux-design.md) | UX Design — "Azure Flow", composants, interactions |
 
 ---

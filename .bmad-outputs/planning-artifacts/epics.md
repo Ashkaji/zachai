@@ -337,6 +337,70 @@ So that backend publishing, error codes, and editor failure UX are robust and lo
 - **When** les correctifs sont implémentés
 - **Then** les tests `test_story_12_3.py` (et tests UI si ajoutés) couvrent les branches critiques et le contrat **document_restore_failed** reste compatible (**schema_version** inchangé ou bump explicite)
 
+### Epic 15: L7 — Données bibliques — sources, conversion & ingestion
+Remplir la base PostgreSQL (`BibleVerse`) avec des textes dont la licence le permet, via un pipeline reproductible (fichiers téléchargés → JSON `ingest_bible.py` → `POST /v1/bible/ingest`), sans appel Bible « live » en production.
+
+#### Story 15.1: Sources, licences et provenance
+As a Maintainer,
+I can document chosen Bible text sources, licenses, and provenance files (hashes/paths) in the repo,
+So that ingestion and redistribution stay auditable and legally defensible.
+
+#### Story 15.2: Extraction vers JSON ZachAI
+As a Maintainer,
+I can convert approved source files into the JSON shape expected by `src/scripts/ingest_bible.py` (book names compatible with `_normalize_bible_book`), with automated checks on sample references,
+So that batch ingest does not silently 404.
+
+#### Story 15.3: Ingestion, smoke tests et doc opérateur
+As an Operator,
+I can run ingestion against `POST /v1/bible/ingest` (batches via `ingest_bible.py`), verify `GET /v1/bible/verses` for representative refs, and follow README-level steps for secrets and URLs,
+So that the team can repopulate the DB after reset.
+
+### Epic 16: L7 — IAM — création de comptes depuis l’app (hiérarchie Admin → Manager → équipe)
+Permettre la création et l’assignation de rôles depuis ZachAI sans console Keycloak pour le flux nominal. **Transcripteur** : périmètre **uniquement l’UI ZachAI**. **Expert** : **UI ZachAI** (dashboard, réconciliation) **et** accès au **projet Label Studio** provisionné pour le même projet ZachAI.
+
+#### Story 16.1: Client Keycloak Admin & service account
+As a Security Admin,
+I can configure a confidential Keycloak client with a service account and least-privilege roles for user management,
+So that FastAPI can call the Admin REST API without exposing credentials to the browser.
+
+#### Story 16.2: Modèle de périmètre Manager
+As a Maintainer,
+I can persist which users belong to which manager’s scope (Keycloak groups and/or PostgreSQL mapping),
+So that the API can enforce that a Manager only provisions users inside their perimeter.
+
+#### Story 16.3: API provisioning utilisateurs & RBAC
+As the System,
+I expose authenticated FastAPI endpoints to create/disable users and assign realm roles according to hierarchy rules (Admin vs Manager),
+Returning clear errors for forbidden operations.
+
+#### Story 16.4: UI Admin — création de Managers
+As an Admin,
+I can create Manager accounts from the web UI without using Keycloak Admin,
+So that onboarding stays in-product.
+
+#### Story 16.5: UI Manager — invitation Transcripteur / Expert
+As a Manager,
+I can invite Transcripteur and Expert users within my scope from the web UI,
+So that my team is provisioned without IAM console access.
+
+#### Story 16.6: Expert — UI ZachAI & accès projet Label Studio
+As an Expert,
+I can use the ZachAI web UI for expert workflows and reach the Label Studio project provisioned for the same ZachAI project,
+So that annotation in LS stays aligned with in-app expert views — via SSO, automatic LS membership, org mapping, or a documented deep-link path.
+
+### Epic 17: L7 — Démo terrain & documentation produit
+Runbook multi-rôles (fichiers audio réels) et alignement README (compteur d’epics, pointeurs Bible / runbook).
+
+#### Story 17.1: Runbook démo multi-rôles E2E
+As a Product Owner,
+I can follow a written runbook to exercise Admin / Manager / Transcripteur (UI ZachAI only) / Expert (UI ZachAI + Label Studio project) flows with real audio files — including manual Expert→LS steps until Story 16.6 is done,
+So we validate UX by role before building more role-specific features.
+
+#### Story 17.2: README — roadmap & pointeurs Bible / démo
+As a New Contributor,
+I can read an accurate epic/story count in README, find pointers to Bible ingestion and demo runbook,
+So onboarding matches `docs/epics-and-stories.md`.
+
 ## 3. Requirements Coverage Map
 
 ### FR Coverage Map
@@ -367,3 +431,6 @@ FR23: Epic 7 - (Terminé) Export formats.
 FR24: Epic 7 - (Terminé) API Whisper ouverte.
 FR25: Epic 11 - Biblical Citation Detection (UI highlighting).
 FR26: Epic 11 - Local Bible Database Engine; Epic 13 - Optional Redis cache for verse retrieval.
+FR27: Epic 15 - Bible text pipeline (licensing, JSON conversion, ingest operator docs).
+FR28: Epic 16 - In-app user provisioning (Keycloak Admin via backend), hierarchy Admin→Manager→team; Expert ZachAI UI + Label Studio project access.
+FR29: Epic 17 - Demo runbook and README alignment.
