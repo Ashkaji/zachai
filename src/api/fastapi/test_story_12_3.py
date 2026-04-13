@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastapi import HTTPException
 
-# Environment required before importing main (same pattern as test_main.py)
+# Environment required before importing main (same pattern as fastapi_test_app / legacy test_main)
 os.environ.setdefault("KEYCLOAK_ISSUER", "http://keycloak:8080/realms/zachai")
 os.environ.setdefault("KEYCLOAK_ADMIN_CLIENT_ID", "zachai-admin-cli")
 os.environ.setdefault("KEYCLOAK_ADMIN_CLIENT_SECRET", "test-secret")

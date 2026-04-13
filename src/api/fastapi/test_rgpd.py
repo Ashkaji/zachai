@@ -1,4 +1,4 @@
-
+import os
 import pytest
 import json
 import io
@@ -7,8 +7,6 @@ from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi.testclient import TestClient
 
-# Set env vars before import
-import os
 os.environ["KEYCLOAK_ISSUER"] = "http://test"
 os.environ["KEYCLOAK_ADMIN_CLIENT_ID"] = "zachai-admin-cli"
 os.environ["KEYCLOAK_ADMIN_CLIENT_SECRET"] = "test-secret"
@@ -22,6 +20,14 @@ os.environ["POSTGRES_PASSWORD"] = "p"
 os.environ["REDIS_URL"] = "redis://localhost"
 os.environ["CAMUNDA_REST_URL"] = "http://c"
 os.environ["FFMPEG_WORKER_URL"] = "http://f"
+os.environ.setdefault("LABEL_STUDIO_WEBHOOK_SECRET", "x")
+os.environ.setdefault("GOLDEN_SET_INTERNAL_SECRET", "x")
+os.environ.setdefault("GOLDEN_SET_BUCKET", "golden-set")
+os.environ.setdefault("MODEL_READY_CALLBACK_SECRET", "x")
+os.environ.setdefault("SNAPSHOT_CALLBACK_SECRET", "x")
+os.environ.setdefault("EXPORT_WORKER_URL", "http://export")
+os.environ.setdefault("WHISPER_OPEN_API_KEY", "x")
+os.environ.setdefault("OPENVINO_WORKER_URL", "http://openvino")
 
 # Mock AsyncSessionLocal before importing main to avoid engine creation issues
 with patch("sqlalchemy.ext.asyncio.create_async_engine"), \
@@ -31,6 +37,8 @@ with patch("sqlalchemy.ext.asyncio.create_async_engine"), \
 
 client = TestClient(app)
 
+RGPD_FIXED_DT = datetime(2026, 4, 13, 12, 0, 0, tzinfo=timezone.utc)
+
 # Payloads for different roles
 ADMIN_PAYLOAD = {"sub": "admin-1", "realm_access": {"roles": ["Admin"]}, "exp": 9999999999}
 USER_PAYLOAD = {"sub": "user-1", "realm_access": {"roles": ["Transcripteur"]}, "exp": 9999999999}
@@ -38,10 +46,13 @@ USER_PAYLOAD = {"sub": "user-1", "realm_access": {"roles": ["Transcripteur"]}, "
 @pytest.fixture
 def mock_db():
     db = AsyncMock()
-    
+    db.add = MagicMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+
     async def override_get_db():
         yield db
-        
+
     app.dependency_overrides[main.get_db] = override_get_db
     yield db
     app.dependency_overrides.clear()
@@ -52,11 +63,11 @@ def test_get_profile_lazy_init(mock_db):
     res.scalar_one_or_none.return_value = None
     mock_db.execute.return_value = res
     
-    # Mock refresh to set required fields
     async def mock_refresh(obj):
-        obj.updated_at = datetime.now(timezone.utc)
+        obj.updated_at = RGPD_FIXED_DT
         obj.ml_usage_approved = False
         obj.biometric_data_approved = False
+
     mock_db.refresh.side_effect = mock_refresh
 
     with patch("main.decode_token", return_value=USER_PAYLOAD):
@@ -71,10 +82,10 @@ def test_get_profile_lazy_init(mock_db):
 def test_update_consents_ml_purge(mock_db):
     """Withdrawing ML consent should purge frontend corrections."""
     consent = UserConsent(
-        user_id="user-1", 
-        ml_usage_approved=True, 
+        user_id="user-1",
+        ml_usage_approved=True,
         biometric_data_approved=True,
-        updated_at=datetime.now(timezone.utc)
+        updated_at=RGPD_FIXED_DT,
     )
     res = MagicMock()
     res.scalar_one_or_none.return_value = consent
@@ -82,7 +93,8 @@ def test_update_consents_ml_purge(mock_db):
     
     # Mock refresh to ensure updated_at is there
     async def mock_refresh(obj):
-        obj.updated_at = datetime.now(timezone.utc)
+        obj.updated_at = RGPD_FIXED_DT
+
     mock_db.refresh.side_effect = mock_refresh
 
     with patch("main.decode_token", return_value=USER_PAYLOAD):
@@ -99,11 +111,11 @@ def test_update_consents_ml_purge(mock_db):
 def test_account_deletion_flow(mock_db):
     """Test request and cancel deletion."""
     consent = UserConsent(
-        user_id="user-1", 
+        user_id="user-1",
         deletion_pending_at=None,
-        updated_at=datetime.now(timezone.utc),
+        updated_at=RGPD_FIXED_DT,
         ml_usage_approved=False,
-        biometric_data_approved=False
+        biometric_data_approved=False,
     )
     res = MagicMock()
     res.scalar_one_or_none.return_value = consent
@@ -111,7 +123,8 @@ def test_account_deletion_flow(mock_db):
     
     # Mock refresh
     async def mock_refresh(obj):
-        obj.updated_at = datetime.now(timezone.utc)
+        obj.updated_at = RGPD_FIXED_DT
+
     mock_db.refresh.side_effect = mock_refresh
 
     with patch("main.decode_token", return_value=USER_PAYLOAD):
@@ -128,11 +141,11 @@ def test_account_deletion_flow(mock_db):
 def test_access_guard_blocks_when_pending(mock_db):
     """Access Guard should block write operations when deletion is pending."""
     consent = UserConsent(
-        user_id="user-1", 
-        deletion_pending_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        user_id="user-1",
+        deletion_pending_at=RGPD_FIXED_DT,
+        updated_at=RGPD_FIXED_DT,
         ml_usage_approved=False,
-        biometric_data_approved=False
+        biometric_data_approved=False,
     )
     res = MagicMock()
     res.scalar_one_or_none.return_value = consent
