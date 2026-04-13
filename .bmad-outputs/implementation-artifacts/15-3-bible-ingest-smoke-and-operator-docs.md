@@ -14,6 +14,8 @@ so that the team can repopulate the database after a reset or in a new environme
 
 **En tant qu'** opérateur, **je veux** exécuter la chaîne d'ingestion biblique vers le backend FastAPI, la vérifier avec des smoke tests et disposer d'une documentation claire sur les secrets et la configuration, **afin que** l'équipe puisse repeupler la base de données après une réinitialisation ou dans un nouvel environnement.
 
+**AC #4 (sécurité ingest, FR) :** sans l’en-tête `X-ZachAI-Golden-Set-Internal-Secret` (corps de requête valide) → **401** ; en-tête présent mais secret incorrect → **403** — comme `docs/bible/README.md` et les tests `test_post_bible_ingest_*`.
+
 ## Acceptance Criteria
 
 1. **Given** the JSON files generated in Story 15.2,
@@ -28,9 +30,11 @@ so that the team can repopulate the database after a reset or in a new environme
    **When** an operator reads `docs/bible/README.md` (or a dedicated operator file),
    **Then** they find the exact commands for ingestion, the required environment variables (secrets), and the expected local file structure.
 
-4. **Given** the internal security model,
-   **When** ingestion is attempted without the `X-ZachAI-Golden-Set-Internal-Secret` header,
-   **Then** the API returns a 403 Forbidden.
+4. **Given** the internal security model for `POST /v1/bible/ingest` (`verify_golden_set_internal_secret` / `_verify_shared_secret` in `src/api/fastapi/main.py`),
+   **When** a **valid** ingest body is sent **without** the `X-ZachAI-Golden-Set-Internal-Secret` header,
+   **Then** the API returns **401 Unauthorized**.
+   **And** **when** the header is present but does **not** match the configured `GOLDEN_SET_INTERNAL_SECRET`,
+   **Then** the API returns **403 Forbidden**.
 
 5. **Given** the Redis cache (Story 13.2),
    **When** re-ingestion occurs,
@@ -59,7 +63,7 @@ so that the team can repopulate the database after a reset or in a new environme
 
 ### Technical Context & Guardrails
 
-- **Authentication:** `POST /v1/bible/ingest` requires the header `X-ZachAI-Golden-Set-Internal-Secret`. This secret is shared with the Golden Set ingestion flow.
+- **Authentication:** `POST /v1/bible/ingest` requires the header `X-ZachAI-Golden-Set-Internal-Secret` matching `GOLDEN_SET_INTERNAL_SECRET`. Missing header → **401**; wrong secret → **403** (see `_verify_shared_secret`). Shared with the Golden Set ingestion flow.
 - **JWT for Smoke Test:** `GET /v1/bible/verses` requires a valid JWT. You can use `src/scripts/generate_test_token.py` (if it exists) or capture one from a logged-in session.
 - **Portability:** Use `http://localhost:8000` as the default URL but ensure it's configurable via CLI arguments or environment variables.
 - **Cache Invalidation:** The API automatically increments the `bible:verse:gen:{translation}` key in Redis upon successful ingestion. The smoke test should ideally confirm that a second request returns the latest data.
