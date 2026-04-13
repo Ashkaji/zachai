@@ -1,6 +1,6 @@
 # Story 15.2: Extraction vers JSON ZachAI / Extract to ZachAI JSON
 
-Status: ready-for-dev
+Status: in-progress
 
 <!-- Ultimate context engine analysis completed - comprehensive developer guide created -->
 
@@ -56,6 +56,18 @@ so that batch ingestion is reproducible, validated, and avoids silent 404s durin
 - [ ] **Task 4 — Manifest Update (AC: #1, #2)**
   - [ ] Run `sha256sum` on the final source files used.
   - [ ] Update `docs/bible/SOURCES.md` with actual hashes (replacing 15.1 placeholders).
+
+### Review Findings
+
+- [x] [Review][Defer] Golden verse smoke test: strictness vs single-translation JSON files — deferred (operator chose option 0: decide later). Follow-up: pick (A) `--translation` + strict goldens, (B) relax AC #4, or (C) custom rule.
+
+- [x] [Review][Patch] `docs/bible/SOURCES.md` KJV notes still say “Dummy hash for 15.1” after the SHA was updated — align the note with the pinned file (Task 4). [`docs/bible/SOURCES.md`] — addressed 2026-04-13.
+
+- [x] [Review][Patch] KJV verses encountered before any recognized book header are silently dropped (`current_book is None` + `continue`). Risk of partial output without error. [`src/scripts/convert_bible_kjv.py:141-143`] — addressed 2026-04-13 (count + non-zero exit before writing JSON).
+
+- [x] [Review][Patch] LSG converter passes XML `bname` through unchanged; Task 2 asked to map French book IDs to normalized keys. If Zefania uses labels not present in `_BIBLE_BOOK_ALIASES` (e.g. “Psaumes”), validation fails. Add an explicit `bname`→normalized mapping table or document the required XML strings. [`src/scripts/convert_bible_lsg.py:22-35`] — addressed 2026-04-13 (`LSG_BNAME_MAP`).
+
+- [x] [Review][Defer] `extract_aliases_from_main` regex-parse of `_BIBLE_BOOK_ALIASES` may break if `main.py` reformats the dict — deferred, pre-existing risk pattern. [`src/scripts/validate_bible_json.py:7-27`]
 
 ## Dev Notes
 

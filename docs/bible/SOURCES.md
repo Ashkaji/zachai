@@ -15,7 +15,7 @@ sha256sum "/path/to/file"
 
 | translation_code | description | path_or_location | version_or_obtention | sha256 | size (bytes, optional) | license_ref | notes |
 |-------------------|-------------|------------------|------------------------|--------|--------------------------|---------------|-------|
-| `KJV` | King James Version — pinned source file for ingest | `data/bible/sources/kjv/kjv-1769-blayney-gutenberg.txt` | Gutenberg #10 | `38687828fb8a96d2f7ff0b559b20e4adc9920b36c5249bbc3dabf5a7eca0246a` | 4.5 MB | [KJV §](LICENSES.md#kjv--king-james-version-1769-blayney--common-open-text-lineage) | Dummy hash for 15.1; update when Story 15.2 pins the actual build. |
+| `KJV` | King James Version — pinned source file for ingest | `data/bible/sources/kjv/kjv-1769-blayney-gutenberg.txt` | Gutenberg #10 | `38687828fb8a96d2f7ff0b559b20e4adc9920b36c5249bbc3dabf5a7eca0246a` | 4.5 MB | [KJV §](LICENSES.md#kjv--king-james-version-1769-blayney--common-open-text-lineage) | SHA-256 of the exact bytes used for Story 15.2 conversion; refresh if the source file changes. |
 | `LSG` | Louis Segond — pinned source file for ingest | `data/bible/sources/lsg/lsg-1910-alliance.xml` | 1910 Edition | `87093952d57b61595a0b33487486122265d40ffcbb6e24f28d4ac5c46a720e35` | 5.2 MB | [LSG §](LICENSES.md#lsg--louis-segond-french) | **License-sensitive:** confirm edition matches rights before ingest; do not commit restricted binaries. |
 
 ---

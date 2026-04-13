@@ -3,6 +3,7 @@ import re
 import json
 import argparse
 import os
+import sys
 
 # Mapping from Gutenberg header patterns to normalized English keys
 # This covers common variants found in Project Gutenberg eBook #10
@@ -84,7 +85,7 @@ def map_book_name(line):
 def convert_kjv(input_path, output_path):
     if not os.path.exists(input_path):
         print(f"Error: Input file {input_path} not found.")
-        return
+        return False
 
     with open(input_path, 'r', encoding='utf-8') as f:
         content = f.read()
@@ -114,7 +115,8 @@ def convert_kjv(input_path, output_path):
     verse_re = re.compile(r"^(\d+):(\d+)\s+(.*)$")
     
     current_verse = None
-    
+    skipped_verse_lines = 0
+
     for line in lines:
         line = line.strip()
         if not line:
@@ -139,9 +141,9 @@ def convert_kjv(input_path, output_path):
             text = match.group(3)
             
             if current_book is None:
-                # Should not happen with valid Gutenberg file if mapping is complete
+                skipped_verse_lines += 1
                 continue
-                
+
             current_verse = {
                 "book": current_book,
                 "chapter": chapter,
@@ -160,15 +162,24 @@ def convert_kjv(input_path, output_path):
     for v in verses:
         v["text"] = re.sub(r"\s+", " ", v["text"]).strip()
 
+    if skipped_verse_lines:
+        print(
+            f"Error: {skipped_verse_lines} verse line(s) appeared before any book heading was detected.",
+            file=sys.stderr,
+        )
+        return False
+
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(verses, f, ensure_ascii=False, indent=2)
 
     print(f"Converted {len(verses)} verses to {output_path}")
+    return True
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert Project Gutenberg KJV text to ZachAI JSON")
     parser.add_argument("input", help="Path to raw Gutenberg KJV text file")
     parser.add_argument("output", help="Path to output JSON file")
     args = parser.parse_args()
-    
-    convert_kjv(args.input, args.output)
+
+    if not convert_kjv(args.input, args.output):
+        sys.exit(1)

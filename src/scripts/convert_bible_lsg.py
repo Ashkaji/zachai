@@ -2,7 +2,34 @@
 import json
 import argparse
 import os
+import re
 import xml.etree.ElementTree as ET
+
+# Zefania `bname` (lowercased, whitespace-normalized) → JSON `book` string that
+# `_BIBLE_BOOK_ALIASES` / `validate_bible_json.py` accept (French where listed in
+# main.py; otherwise English canonical where the French XML label is absent there).
+LSG_BNAME_MAP = {
+    "psaumes": "Psalm",
+    "proverbes": "Proverbs",
+    "ecclésiaste": "Ecclesiastes",
+    "ecclesiaste": "Ecclesiastes",
+    "abdias": "Obadiah",
+    "michée": "Micah",
+    "michee": "Micah",
+    "habacuc": "Habakkuk",
+    "philémon": "Philemon",
+    "philemon": "Philemon",
+    "joël": "Joel",
+}
+
+
+def _map_lsg_bname(bname):
+    if not bname or not str(bname).strip():
+        return bname or ""
+    raw = str(bname).strip()
+    key = re.sub(r"\s+", " ", raw.lower())
+    return LSG_BNAME_MAP.get(key, raw)
+
 
 def convert_lsg(input_path, output_path):
     if not os.path.exists(input_path):
@@ -20,7 +47,7 @@ def convert_lsg(input_path, output_path):
     
     # Zefania XML structure: XMLBIBLE -> BIBLEBOOK -> CHAPTER -> VERS
     for book in root.findall('BIBLEBOOK'):
-        book_name = book.get('bname')
+        book_name = _map_lsg_bname(book.get('bname'))
         for chapter in book.findall('CHAPTER'):
             chapter_num = int(chapter.get('cnumber'))
             for verse in chapter.findall('VERS'):

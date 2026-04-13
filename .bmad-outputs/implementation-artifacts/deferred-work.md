@@ -1,3 +1,8 @@
+## Deferred from: code review of 15-2-bible-extract-to-zachai-json.md (2026-04-13)
+
+- **Golden verse smoke strictness (AC #4)**: Operator deferred policy (option 0). Decide later: `--translation KJV|LSG` with strict goldens, narrow AC wording, or another rule. [`src/scripts/validate_bible_json.py`]
+- **Regex extraction of `_BIBLE_BOOK_ALIASES`**: `validate_bible_json.py` parses `main.py` with a regex; refactoring the dict literal in `main.py` could break validation until the parser is updated. [`src/scripts/validate_bible_json.py`]
+
 ## Deferred from: code review of 12-3-restauration-securisee-verrouillage-websocket.md (2026-04-12)
 
 - **Remote restore failure visibility**: After a failed restore, `finally` still publishes `document_unlocked`; collaborators who saw `document_locked` may think the restore completed. Only the initiating client gets the HTTP error. Optional follow-up: broadcast a failure stateless message (e.g. `zachai:document_restore_failed`). [`src/api/fastapi/main.py`]
