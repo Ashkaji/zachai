@@ -1,6 +1,6 @@
 # Story 16.1: Keycloak Admin Client & service account
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -42,6 +42,13 @@ so that FastAPI can call the Admin REST API without exposing credentials to the 
   - [x] Mock the token HTTP call with `unittest.mock` / `patch` on `httpx.AsyncClient` (same style as `test_main.py` / `test_story_12_2.py`).
   - [x] (Optional) Script or manual runbook note to hit a live Keycloak instance.
 
+### Review Findings
+
+- [x] [Review][Patch] AC6 role claim test never exercises `get_admin_token()` or `jose` decode — `test_admin_token_roles_claim_path` only asserts on a literal dict, so a regression in token handling would not be caught [`src/api/fastapi/test_keycloak_admin.py`] — fixed: mock returns real JWT; `jwt.get_unverified_claims` after `get_admin_token()`
+- [x] [Review][Patch] Error paths raise generic `Exception`; AC6 asks for clear handling — prefer small typed errors (e.g. `KeycloakAdminTokenError`) for HTTP non-200, missing `access_token`, and transport failures [`src/api/fastapi/keycloak_admin.py`] — fixed: `KeycloakAdminTokenError` + invalid JSON guard
+- [x] [Review][Defer] Concurrent `asyncio` callers could race on first fetch / cache refresh (duplicate token requests) — acceptable for v1 per AC5; optional `asyncio.Lock` if hot path becomes noisy [`src/api/fastapi/keycloak_admin.py`] — deferred, pre-existing design tradeoff
+- [x] [Review][Defer] Confirm on a fresh `compose up` that `zachai-realm.json` service-account user + `realm-management` role mappings import cleanly on Keycloak 26 — JSON-only mappings can be brittle [`src/config/realms/zachai-realm.json`] — deferred, operator verification
+
 ## Implementation guardrails
 
 - **Keycloak 26:** Client and import format must match the version used in `src/compose.yml` / project Keycloak image.
@@ -71,6 +78,7 @@ gemini-2.0-pro-exp-02-05
 ### Debug Log References
 
 ### Completion Notes List
+- Code review (2026-04-13): `KeycloakAdminTokenError`, stricter token response handling, AC6 role assertions on JWT from `get_admin_token()` via `jose` decode.
 - Implemented `zachai-admin-cli` confidential client in `zachai-realm.json`.
 - Added `service-account-zachai-admin-cli` user with `realm-management` roles in `zachai-realm.json`.
 - Updated `REQUIRED_ENV_VARS` in `main.py` to ensure `KEYCLOAK_ADMIN_CLIENT_ID` and `KEYCLOAK_ADMIN_CLIENT_SECRET` are set.

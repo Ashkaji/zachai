@@ -1,3 +1,8 @@
+## Deferred from: code review of 16-1-keycloak-admin-client-and-service-account.md (2026-04-13)
+
+- **Concurrent admin token fetch**: Multiple concurrent `get_admin_token()` calls on a cold cache can each POST to Keycloak until the first response fills `_admin_token_cache`; acceptable for v1 (AC5); revisit with `asyncio.Lock` if this becomes hot or rate-limited. [`src/api/fastapi/keycloak_admin.py`]
+- **Realm import / service-account role mappings**: Validate on a fresh Keycloak 26 compose import that `service-account-zachai-admin-cli` receives `realm-management` roles as intended; realm JSON can be version-sensitive. [`src/config/realms/zachai-realm.json`]
+
 ## Deferred from: code review of 15-2-bible-extract-to-zachai-json.md (2026-04-13)
 
 - **Golden verse smoke strictness (AC #4)**: Operator deferred policy (option 0). Decide later: `--translation KJV|LSG` with strict goldens, narrow AC wording, or another rule. [`src/scripts/validate_bible_json.py`]
