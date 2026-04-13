@@ -1,6 +1,6 @@
 # Story 15.2: Extraction vers JSON ZachAI / Extract to ZachAI JSON
 
-Status: in-progress
+Status: done
 
 <!-- Ultimate context engine analysis completed - comprehensive developer guide created -->
 
@@ -38,24 +38,24 @@ so that batch ingestion is reproducible, validated, and avoids silent 404s durin
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — KJV Gutenberg Extraction (AC: #1, #4, #5)**
-  - [ ] Implement `src/scripts/convert_bible_kjv.py`.
-  - [ ] Use regex to handle Gutenberg multi-line verses and metadata stripping.
-  - [ ] Map Gutenberg book titles to standard "Genesis", "Exodus", etc.
+- [x] **Task 1 — KJV Gutenberg Extraction (AC: #1, #4, #5)**
+  - [x] Implement `src/scripts/convert_bible_kjv.py`.
+  - [x] Use regex to handle Gutenberg multi-line verses and metadata stripping.
+  - [x] Map Gutenberg book titles to standard "Genesis", "Exodus", etc.
 
-- [ ] **Task 2 — LSG XML Extraction (AC: #2, #4, #5)**
-  - [ ] Implement `src/scripts/convert_bible_lsg.py`.
-  - [ ] Use `xml.etree.ElementTree` or `lxml` to parse the milestone-based or container-based XML (detect format from `data/bible/sources/lsg/`).
-  - [ ] Map French book IDs to "Genèse", "Exode", etc.
+- [x] **Task 2 — LSG XML Extraction (AC: #2, #4, #5)**
+  - [x] Implement `src/scripts/convert_bible_lsg.py`.
+  - [x] Use `xml.etree.ElementTree` or `lxml` to parse the milestone-based or container-based XML (detect format from `data/bible/sources/lsg/`).
+  - [x] Map French book IDs to "Genèse", "Exode", etc.
 
-- [ ] **Task 3 — Integrity Validation (AC: #3, #4)**
-  - [ ] Create `src/scripts/validate_bible_json.py`.
-  - [ ] Import `_BIBLE_BOOK_ALIASES` (or parse it from `main.py` if import is too heavy) to check coverage.
-  - [ ] Implement "Golden Verse" snippet verification.
+- [x] **Task 3 — Integrity Validation (AC: #3, #4)**
+  - [x] Create `src/scripts/validate_bible_json.py`.
+  - [x] Import `_BIBLE_BOOK_ALIASES` (or parse it from `main.py` if import is too heavy) to check coverage.
+  - [x] Implement "Golden Verse" snippet verification.
 
-- [ ] **Task 4 — Manifest Update (AC: #1, #2)**
-  - [ ] Run `sha256sum` on the final source files used.
-  - [ ] Update `docs/bible/SOURCES.md` with actual hashes (replacing 15.1 placeholders).
+- [x] **Task 4 — Manifest Update (AC: #1, #2)**
+  - [x] Run `sha256sum` on the final source files used.
+  - [x] Update `docs/bible/SOURCES.md` with actual hashes (replacing 15.1 placeholders).
 
 ### Review Findings
 
