@@ -59,6 +59,8 @@ logger = logging.getLogger(__name__)
 
 REQUIRED_ENV_VARS = [
     "KEYCLOAK_ISSUER",
+    "KEYCLOAK_ADMIN_CLIENT_ID",
+    "KEYCLOAK_ADMIN_CLIENT_SECRET",
     "MINIO_ENDPOINT",
     "MINIO_ACCESS_KEY",
     "MINIO_SECRET_KEY",

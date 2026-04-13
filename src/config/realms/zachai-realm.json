@@ -78,7 +78,37 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "zachai-admin-cli",
+      "name": "ZachAI Admin CLI",
+      "description": "Backend service account for user management — confidential client",
+      "enabled": true,
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "zachai-admin-secret-placeholder",
+      "protocol": "openid-connect",
+      "fullScopeAllowed": false,
+      "defaultClientScopes": [
+        "profile",
+        "email",
+        "roles"
+      ]
     }
   ],
-  "users": []
+  "users": [
+    {
+      "username": "service-account-zachai-admin-cli",
+      "enabled": true,
+      "serviceAccountClientId": "zachai-admin-cli",
+      "clientRoles": {
+        "realm-management": [
+          "manage-users",
+          "view-users",
+          "query-groups"
+        ]
+      }
+    }
+  ]
 }

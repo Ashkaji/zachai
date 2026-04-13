@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 # Set env vars before import
 import os
 os.environ["KEYCLOAK_ISSUER"] = "http://test"
+os.environ["KEYCLOAK_ADMIN_CLIENT_ID"] = "zachai-admin-cli"
+os.environ["KEYCLOAK_ADMIN_CLIENT_SECRET"] = "test-secret"
 os.environ["MINIO_ENDPOINT"] = "localhost:9000"
 os.environ["MINIO_ACCESS_KEY"] = "minio"
 os.environ["MINIO_SECRET_KEY"] = "minio"

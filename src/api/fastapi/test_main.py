@@ -19,6 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # Set required environment variables before importing main
 os.environ.setdefault("KEYCLOAK_ISSUER", "http://keycloak:8080/realms/zachai")
+os.environ.setdefault("KEYCLOAK_ADMIN_CLIENT_ID", "zachai-admin-cli")
+os.environ.setdefault("KEYCLOAK_ADMIN_CLIENT_SECRET", "test-secret")
 os.environ.setdefault("MINIO_ENDPOINT", "minio:9000")
 os.environ.setdefault("MINIO_ACCESS_KEY", "minioadmin")
 os.environ.setdefault("MINIO_SECRET_KEY", "minioadmin")
