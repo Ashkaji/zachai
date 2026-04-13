@@ -147,7 +147,7 @@ development_status:
   # ─── EPIC 14 — L6 follow-up: Restore signal hardening (post-13.1 review) ───
   epic-14: done
   14-1-restore-failure-signal-review-hardening: done
-  epic-14-retrospective: optional
+  epic-14-retrospective: done
 
   # ─── EPIC 15 — L7: Données bibliques — sources, conversion & ingestion ─────
   epic-15: in-progress
