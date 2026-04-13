@@ -505,6 +505,22 @@ class AuditLog(Base):
     __table_args__ = (Index("ix_audit_logs_project_id", "project_id"),)
 
 
+class ManagerMembership(Base):
+    """Manager/Member mapping (Story 16.2) — one user belongs to exactly one manager."""
+
+    __tablename__ = "manager_memberships"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    manager_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    member_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("member_id", name="uq_manager_membership_member"),
+    )
+
+
 class ModelReadyIdempotency(Base):
     """One row per successful model-ready callback (Story 4.4) — dedupes worker retries."""
 
@@ -674,6 +690,24 @@ async def lifespan(app: FastAPI):
                         ")"
                     )
                 )
+
+                # Story 16.2: Manager memberships
+                await conn.execute(
+                    text(
+                        "CREATE TABLE IF NOT EXISTS manager_memberships ("
+                        "id SERIAL PRIMARY KEY, "
+                        "manager_id VARCHAR(255) NOT NULL, "
+                        "member_id VARCHAR(255) NOT NULL UNIQUE, "
+                        "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+                        ")"
+                    )
+                )
+                await conn.execute(
+                    text("CREATE INDEX IF NOT EXISTS ix_manager_memberships_manager_id ON manager_memberships (manager_id)")
+                )
+                await conn.execute(
+                    text("CREATE INDEX IF NOT EXISTS ix_manager_memberships_member_id ON manager_memberships (member_id)")
+                )
             except Exception as ddl_exc:
                 logger.warning(
                     "Brownfield audio_files/audit_logs DDL skipped/failed (will likely break endpoints): %s",
@@ -799,6 +833,7 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {"name": "Editor & collaboration", "description": "WSS ticket, grammar proxy, Hocuspocus snapshot callback."},
     {"name": "Webhooks & callbacks", "description": "Label Studio, LoRA model-ready, internal secrets."},
     {"name": "Bible", "description": "Local sovereign verse retrieval and bulk ingest."},
+    {"name": "IAM", "description": "Identity and Access Management perimeter mapping (Story 16.2)."},
 ]
 
 app = FastAPI(
@@ -1243,6 +1278,13 @@ class CitationDetectRequest(BaseModel):
         if not s:
             raise ValueError("text must contain non-whitespace characters")
         return v
+
+
+class ManagerMembershipCreate(BaseModel):
+    """POST /v1/iam/memberships — Story 16.2."""
+
+    manager_id: str = Field(..., min_length=1, max_length=255)
+    member_id: str = Field(..., min_length=1, max_length=255)
 
 
 class EditorSnapshotCallbackRequest(BaseModel):
@@ -3567,6 +3609,122 @@ async def admin_purge_user(
     await db.commit()
     
     return {"status": "purged", "user_id": user_id}
+
+
+@app.post(
+    "/v1/iam/memberships",
+    tags=["IAM"],
+    responses={
+        200: {"description": "Membership already existed for this manager/member pair (idempotent)."},
+        201: {"description": "Membership created."},
+        400: {"description": "Invalid request (e.g. manager_id equals member_id)."},
+        403: {"description": "Admin role required."},
+        409: {"description": "Member already mapped to a different manager."},
+    },
+)
+async def post_membership(
+    req: ManagerMembershipCreate,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> JSONResponse:
+    """Associate a user to a manager scope (Story 16.2 AC 3). Admin only."""
+    roles = get_roles(payload)
+    if "Admin" not in roles:
+        raise HTTPException(status_code=403, detail={"error": "Admin role required"})
+
+    if req.manager_id == req.member_id:
+        raise HTTPException(status_code=400, detail={"error": "manager_id and member_id must be different"})
+
+    r = await db.execute(select(ManagerMembership).where(ManagerMembership.member_id == req.member_id))
+    existing = r.scalar_one_or_none()
+    if existing:
+        if existing.manager_id == req.manager_id:
+            body = {
+                "id": existing.id,
+                "manager_id": existing.manager_id,
+                "member_id": existing.member_id,
+                "created_at": existing.created_at.isoformat(),
+            }
+            return JSONResponse(status_code=200, content=body)
+        raise HTTPException(status_code=409, detail={"error": "User already belongs to another manager"})
+
+    new_m = ManagerMembership(manager_id=req.manager_id, member_id=req.member_id)
+    db.add(new_m)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        r2 = await db.execute(select(ManagerMembership).where(ManagerMembership.member_id == req.member_id))
+        existing2 = r2.scalar_one_or_none()
+        if existing2 and existing2.manager_id == req.manager_id:
+            body = {
+                "id": existing2.id,
+                "manager_id": existing2.manager_id,
+                "member_id": existing2.member_id,
+                "created_at": existing2.created_at.isoformat(),
+            }
+            return JSONResponse(status_code=200, content=body)
+        raise HTTPException(status_code=409, detail={"error": "User already belongs to another manager"})
+
+    await db.refresh(new_m)
+    body = {
+        "id": new_m.id,
+        "manager_id": new_m.manager_id,
+        "member_id": new_m.member_id,
+        "created_at": (new_m.created_at.isoformat() if new_m.created_at else datetime.now(timezone.utc).isoformat()),
+    }
+    return JSONResponse(status_code=201, content=body)
+
+
+@app.get("/v1/iam/memberships/{manager_id}", tags=["IAM"])
+async def get_memberships(
+    manager_id: str,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[dict]:
+    """List all users in a manager's perimeter (Story 16.2 AC 3). Admin or the manager itself."""
+    roles = get_roles(payload)
+    sub = payload.get("sub")
+    
+    if "Admin" not in roles and sub != manager_id:
+        raise HTTPException(status_code=403, detail={"error": "Access denied"})
+    
+    r = await db.execute(select(ManagerMembership).where(ManagerMembership.manager_id == manager_id))
+    rows = r.scalars().all()
+    
+    return [
+        {
+            "id": row.id,
+            "manager_id": row.manager_id,
+            "member_id": row.member_id,
+            "created_at": row.created_at.isoformat(),
+        }
+        for row in rows
+    ]
+
+
+@app.delete("/v1/iam/memberships/{manager_id}/{member_id}", tags=["IAM"], status_code=204)
+async def delete_membership(
+    manager_id: str,
+    member_id: str,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Remove a user from a manager's perimeter (Story 16.2 AC 3). Admin only."""
+    roles = get_roles(payload)
+    if "Admin" not in roles:
+        raise HTTPException(status_code=403, detail={"error": "Admin role required"})
+    
+    r = await db.execute(
+        delete(ManagerMembership)
+        .where(ManagerMembership.manager_id == manager_id)
+        .where(ManagerMembership.member_id == member_id)
+    )
+    if r.rowcount == 0:
+        raise HTTPException(status_code=404, detail={"error": "Membership not found"})
+    
+    await db.commit()
+    return None
 
 
 @app.get("/v1/me/export-data", tags=["Profile & GDPR"])
