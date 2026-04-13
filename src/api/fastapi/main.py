@@ -241,6 +241,21 @@ except (TypeError, ValueError):
     logger.warning("GRAMMAR_RATE_LIMIT_PER_MIN=%r invalid; using 120", _raw_grammar_rate_limit)
     GRAMMAR_RATE_LIMIT_PER_MIN = 120
 
+# Bible verse HTTP cache (Story 13.2) — optional Redis; PostgreSQL remains source of truth
+_raw_bible_cache_enabled = (os.environ.get("BIBLE_VERSE_CACHE_ENABLED") or "false").strip().lower()
+BIBLE_VERSE_CACHE_ENABLED: bool = _raw_bible_cache_enabled in ("1", "true", "yes", "on")
+_raw_bible_verse_ttl = os.environ.get("BIBLE_VERSE_CACHE_TTL_SEC", "600")
+try:
+    BIBLE_VERSE_CACHE_TTL_SEC: int = max(0, int(_raw_bible_verse_ttl))
+except (TypeError, ValueError):
+    logger.warning(
+        "BIBLE_VERSE_CACHE_TTL_SEC=%r invalid; using 600",
+        _raw_bible_verse_ttl,
+    )
+    BIBLE_VERSE_CACHE_TTL_SEC = 600
+BIBLE_VERSE_GEN_PREFIX = "bible:verse:gen:"
+BIBLE_VERSE_CACHE_KEY_PREFIX = "bible:verse:v1:"
+
 
 # ─── ORM Models ───────────────────────────────────────────────────────────────
 
@@ -703,6 +718,22 @@ async def lifespan(app: FastAPI):
     else:
         logger.error("REDIS_URL empty — POST /v1/editor/ticket will return 503")
         _redis_client = None
+
+    # Bible verse cache (Story 13.2) — observability for operators
+    if BIBLE_VERSE_CACHE_ENABLED and BIBLE_VERSE_CACHE_TTL_SEC > 0:
+        if _redis_client is not None:
+            logger.info(
+                "Bible verse Redis cache enabled (TTL %ss)",
+                BIBLE_VERSE_CACHE_TTL_SEC,
+            )
+        else:
+            logger.warning(
+                "BIBLE_VERSE_CACHE_ENABLED but Redis unavailable — GET /v1/bible/verses will use PostgreSQL only",
+            )
+    elif BIBLE_VERSE_CACHE_ENABLED and BIBLE_VERSE_CACHE_TTL_SEC <= 0:
+        logger.warning(
+            "BIBLE_VERSE_CACHE_ENABLED but BIBLE_VERSE_CACHE_TTL_SEC<=0 — Bible verse Redis cache disabled",
+        )
 
     # Export worker — Story 5.4 (snapshot conversion/upload pipeline).
     if EXPORT_WORKER_URL:
@@ -5396,6 +5427,47 @@ async def post_model_ready_callback(
 # ─── Routes — Bible Engine (Story 11.5) ──────────────────────────────────────
 
 
+def _bible_verse_cache_key(
+    gen: int,
+    translation_upper: str,
+    ref: str,
+    book_norm: str,
+    chapter: int,
+    verse_start: int,
+    verse_end: int | None,
+) -> str:
+    """Stable Redis key: generation + SHA-256 of request + normalized lookup (Story 13.2)."""
+    ve = "" if verse_end is None else str(verse_end)
+    canonical = f"{translation_upper}\t{ref}\t{book_norm}\t{chapter}\t{verse_start}\t{ve}"
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return f"{BIBLE_VERSE_CACHE_KEY_PREFIX}{gen}:{digest}"
+
+
+def _bible_verse_cached_payload_valid(data: Any) -> bool:
+    if not isinstance(data, dict):
+        return False
+    if "reference" not in data or "translation" not in data or "verses" not in data:
+        return False
+    if not isinstance(data["verses"], list):
+        return False
+    return True
+
+
+async def _bible_verse_generation_read(translation_upper: str) -> int:
+    if _redis_client is None:
+        return 0
+    try:
+        raw = await _redis_client.get(f"{BIBLE_VERSE_GEN_PREFIX}{translation_upper}")
+        if raw is None:
+            return 0
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+    except Exception as exc:
+        logger.warning("bible_verse_cache gen read failed translation=%s: %s", translation_upper, exc)
+        return 0
+
+
 @app.get("/v1/bible/verses", tags=["Bible"], response_model=BibleRetrievalResponse)
 async def get_bible_verses(
     ref: str = Query(..., description="Bible reference, e.g. 'Jean 3:16' or 'Gen 1:1-5'"),
@@ -5420,41 +5492,77 @@ async def get_bible_verses(
     chapter = int(m.group("chapter"))
     verse_start = int(m.group("verse_start"))
     verse_end_raw = m.group("verse_end")
-    
+
     book_norm = _normalize_bible_book(book_raw)
-    
+    translation_upper = translation.upper()
+    verse_end: int | None = int(verse_end_raw) if verse_end_raw else None
+
+    cache_key: str | None = None
+    if BIBLE_VERSE_CACHE_ENABLED and BIBLE_VERSE_CACHE_TTL_SEC > 0 and _redis_client is not None:
+        gen = await _bible_verse_generation_read(translation_upper)
+        cache_key = _bible_verse_cache_key(
+            gen, translation_upper, ref, book_norm, chapter, verse_start, verse_end
+        )
+        try:
+            raw = await _redis_client.get(cache_key)
+            if raw:
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    data = None
+                if data is not None and _bible_verse_cached_payload_valid(data):
+                    logger.debug("bible_verse_cache_hit translation=%s", translation_upper)
+                    return data
+                try:
+                    await _redis_client.delete(cache_key)
+                except Exception as exc:
+                    logger.warning("bible_verse_cache corrupt entry delete failed: %s", exc)
+            else:
+                logger.debug("bible_verse_cache_miss translation=%s", translation_upper)
+        except Exception as exc:
+            logger.warning("bible_verse_cache read failed: %s", exc)
+
     stmt = (
         select(BibleVerse)
         .where(
-            BibleVerse.translation == translation.upper(),
+            BibleVerse.translation == translation_upper,
             BibleVerse.book == book_norm,
             BibleVerse.chapter == chapter
         )
     )
-    
-    if verse_end_raw:
-        verse_end = int(verse_end_raw)
+
+    if verse_end is not None:
         # Handle ranges within the same chapter.
         stmt = stmt.where(BibleVerse.verse.between(verse_start, verse_end))
     else:
         stmt = stmt.where(BibleVerse.verse == verse_start)
-        
+
     stmt = stmt.order_by(BibleVerse.verse)
-    
+
     result = await db.execute(stmt)
     verses = result.scalars().all()
-    
+
     if not verses:
         raise HTTPException(
             status_code=404,
             detail={"error": f"Reference '{ref}' not found in {translation} translation"}
         )
-        
-    return {
+
+    out: dict[str, Any] = {
         "reference": ref,
-        "translation": translation.upper(),
-        "verses": [{"verse": v.verse, "text": v.text} for v in verses]
+        "translation": translation_upper,
+        "verses": [{"verse": v.verse, "text": v.text} for v in verses],
     }
+
+    if cache_key is not None and _redis_client is not None:
+        try:
+            await _redis_client.setex(
+                cache_key, BIBLE_VERSE_CACHE_TTL_SEC, json.dumps(out, ensure_ascii=False)
+            )
+        except Exception as exc:
+            logger.warning("bible_verse_cache write failed: %s", exc)
+
+    return out
 
 
 @app.post("/v1/bible/ingest", tags=["Bible"], status_code=201)
@@ -5501,7 +5609,20 @@ async def post_bible_ingest(
         res = await db.execute(stmt)
         await db.commit()
         written = len(body.verses)
-        
+
+        # Story 13.2: bump generation per translation so GET /v1/bible/verses cache keys rotate
+        if BIBLE_VERSE_CACHE_ENABLED and BIBLE_VERSE_CACHE_TTL_SEC > 0 and _redis_client is not None:
+            seen_tr: set[str] = set()
+            for v in body.verses:
+                tu = v.translation.upper()
+                if tu in seen_tr:
+                    continue
+                seen_tr.add(tu)
+                try:
+                    await _redis_client.incr(f"{BIBLE_VERSE_GEN_PREFIX}{tu}")
+                except Exception as exc:
+                    logger.warning("bible_verse_cache gen incr failed translation=%s: %s", tu, exc)
+
     except Exception as exc:
         await db.rollback()
         logger.error("bible_ingest_failed error=%s", exc)

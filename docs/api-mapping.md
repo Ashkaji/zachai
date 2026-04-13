@@ -220,7 +220,7 @@ Il n’existe **pas** de route **`POST /v1/callback/transcription`** dans le gat
 
 ## 17. Bible (moteur local)
 
-- **`GET /v1/bible/verses`** — lecture versets depuis PostgreSQL (traductions LSG, KJV, etc.) — **JWT** requis.
+- **`GET /v1/bible/verses`** — lecture versets depuis PostgreSQL (traductions LSG, KJV, etc.) — **JWT** requis. Réponse identique si **cache Redis optionnel** activé (`BIBLE_VERSE_CACHE_ENABLED` / `BIBLE_VERSE_CACHE_TTL_SEC`, Story 13.2).
 - **`POST /v1/bible/ingest`** — ingestion bulk (secret interne, même famille que Golden Set ingest).
 
 ---
