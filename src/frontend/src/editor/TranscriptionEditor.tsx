@@ -263,8 +263,8 @@ export function TranscriptionEditor() {
   const [remoteRestoreFailureMessage, setRemoteRestoreFailureMessage] = useState<string | null>(null);
   const localRestoreRequestActiveRef = useRef(false);
   const suppressRemoteRestoreFailureRef = useRef(false);
-  /** Story 14.1: `document_unlocked` maps to `zachai:document_restored` even after failure — ignore that one clear. */
-  const pendingFailureUnlockRef = useRef(false);
+  /** Story 14.1: Track the latest active restore operation to pair signals correctly. */
+  const activeRestoreIdRef = useRef<string | null>(null);
 
   const handleRestoreSnapshot = async (snapId: string) => {
     if (!audioId || !token) return;
@@ -272,7 +272,7 @@ export function TranscriptionEditor() {
     setIsRestoring(true);
     setShowRestoreConfirm(false);
     setRemoteRestoreFailureMessage(null);
-    pendingFailureUnlockRef.current = false;
+    activeRestoreIdRef.current = null;
     localRestoreRequestActiveRef.current = true;
     
     try {
@@ -280,30 +280,31 @@ export function TranscriptionEditor() {
         method: "POST",
       });
       
+      const body = await resp.json().catch(() => ({ error: "Invalid server response format" }));
       if (!resp.ok) {
-        let msg = "Restoration failed";
-        try {
-          const err = (await resp.json()) as { detail?: unknown; error?: string };
-          const d = err.detail;
-          if (typeof d === "object" && d !== null && "error" in d) {
-            msg = String((d as { error: string }).error);
-          } else if (typeof d === "string") {
-            msg = d;
-          } else if (err.error) {
-            msg = String(err.error);
-          }
-        } catch {
-          /* ignore */
+        let msg = editorCopy.restoreFailureDefault;
+        const d = body.detail;
+        if (typeof d === "object" && d !== null && "error" in d) {
+          msg = String((d as { error: string }).error);
+        } else if (typeof d === "string") {
+          msg = d;
+        } else if (body.error) {
+          msg = String(body.error);
         }
         throw new Error(msg);
+      }
+
+      // initiator tracks their own restore_id to pair signals
+      if (body.restore_id) {
+        activeRestoreIdRef.current = body.restore_id;
       }
       
       // Force reconnect to get new state from Hocuspocus
       provider?.disconnect();
       provider?.connect();
       
-      notify({ tier: "informational", title: "Restoration", body: "Document restored successfully" });
-      setStatus("Document restored successfully");
+      notify({ tier: "informational", title: editorCopy.restoreSuccessTitle, body: editorCopy.restoreSuccessMessage });
+      setStatus(editorCopy.restoreSuccessMessage);
       setRemoteRestoreFailureMessage(null);
       setIsTimelineOpen(false);
       setActiveSnapshotId(null);
@@ -311,8 +312,8 @@ export function TranscriptionEditor() {
     } catch (err) {
       console.error("restore_error", err);
       const msg = err instanceof Error ? err.message : String(err);
-      notify({ tier: "critical", title: "Restoration Failed", body: msg });
-      setStatus(`Restoration failed: ${msg}`);
+      notify({ tier: "critical", title: editorCopy.restoreFailureTitle, body: msg });
+      setStatus(`${editorCopy.restoreFailureTitle}: ${msg}`);
       suppressRemoteRestoreFailureRef.current = true;
       window.setTimeout(() => {
         suppressRemoteRestoreFailureRef.current = false;
@@ -566,6 +567,7 @@ export function TranscriptionEditor() {
               document_id?: number;
               code?: string;
               message?: string;
+              restore_id?: string;
             };
             if (data.type === "zachai:document_restoring") {
               setRemoteRestoringBy(
@@ -575,9 +577,9 @@ export function TranscriptionEditor() {
               );
             } else if (data.type === "zachai:document_restored") {
               setRemoteRestoringBy(null);
-              if (pendingFailureUnlockRef.current) {
-                pendingFailureUnlockRef.current = false;
-              } else {
+              // Only clear if no restore_id (legacy) or if it matches the latest operation we know about.
+              // This prevents clearing a valid failure message from a different operation.
+              if (!data.restore_id || activeRestoreIdRef.current === data.restore_id) {
                 setRemoteRestoreFailureMessage(null);
               }
             } else if (data.type === "zachai:document_restore_failed") {
@@ -587,6 +589,11 @@ export function TranscriptionEditor() {
                   : null;
               if (docId !== null && docId !== audioId) return;
               setRemoteRestoringBy(null);
+              
+              if (data.restore_id) {
+                activeRestoreIdRef.current = data.restore_id;
+              }
+
               if (localRestoreRequestActiveRef.current || suppressRemoteRestoreFailureRef.current) {
                 return;
               }
@@ -594,7 +601,7 @@ export function TranscriptionEditor() {
                 typeof data.code === "string" && data.code.trim() ? data.code.trim() : "UNKNOWN";
               const custom =
                 typeof data.message === "string" && data.message.trim() ? data.message.trim() : null;
-              pendingFailureUnlockRef.current = true;
+              
               setRemoteRestoreFailureMessage(
                 custom ?? remoteRestoreFailureFallback(code, editorLocale),
               );
@@ -1486,11 +1493,13 @@ export function TranscriptionEditor() {
           }}
         >
           <div className="za-spinner" style={{ width: '48px', height: '48px', marginBottom: '1.5rem' }} />
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: '0.5rem' }}>Document restoration</h2>
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: '0.5rem' }}>{editorCopy.restorationOverlayTitle}</h2>
           <p style={{ opacity: 0.9, maxWidth: 420, textAlign: "center", padding: "0 1rem" }}>
+            {editorCopy.restorationOverlayWait}
+            <br />
             Document being restored by{" "}
             <strong>{isRestoring ? displayName : remoteRestoringBy}</strong>
-            … Please wait — editing is temporarily disabled.
+            …
           </p>
         </div>
       )}

@@ -84,3 +84,6 @@
 - Network I/O in `finally` block: performing multiple await calls inside `finally` is risky if broadcasts hang.
 - Triple fallback in UI rendering: defensive coding taken to a paranoid, messy extreme.
 - Z-index escalation strategy: hardcoding 10000 suggests a lack of a proper modal/portal strategy.
+
+## Deferred from: code review of 14-1-restore-failure-signal-review-hardening.md (2026-04-13)
+- [x] [Review][Defer] Unbounded S3 read in restore core [src/api/fastapi/main.py] — deferred, pre-existing. The snapshot retrieval logic performs an unbounded read from S3, which could lead to OOM with very large payloads.

@@ -261,10 +261,11 @@ def test_document_restore_failed_signal_structured_http_detail():
             "code": DocumentRestoreFailureCode.INTEGRITY_MISMATCH,
         },
     )
-    payload = _document_restore_failed_signal(42, exc)
+    payload = _document_restore_failed_signal(42, exc, restore_id="test-id-123")
     assert payload["type"] == "document_restore_failed"
     assert payload["document_id"] == 42
     assert payload["code"] == "INTEGRITY_MISMATCH"
+    assert payload["restore_id"] == "test-id-123"
     assert "integrity" in (payload.get("message") or "").lower()
 
 
@@ -275,10 +276,17 @@ def test_document_restore_failed_signal_list_detail_message():
     assert payload.get("message") == "gone"
 
 
+def test_document_restore_failed_signal_scalar_detail():
+    # Pass 2: Ensure scalar details are stringified correctly
+    exc = HTTPException(status_code=404, detail=404)
+    payload = _document_restore_failed_signal(1, exc)
+    assert payload.get("message") == "404"
+
+
 def test_document_restore_failed_signal_attributeerror_code():
     payload = _document_restore_failed_signal(9, AttributeError("'NoneType' has no attribute 'x'"))
     assert payload["code"] == DocumentRestoreFailureCode.SNAPSHOT_PAYLOAD_INVALID
-    assert payload.get("message")
+    assert payload.get("message") == "Snapshot data could not be processed"
 
 
 @pytest.mark.asyncio

@@ -60,6 +60,28 @@ Status: review
 - [x] **Frontend:** Stale-banner audit + i18n per AC 4–5; optional local style cleanup per AC 6.
 - [x] **Tests:** Pytest updates per AC 7 — run `pytest src/api/fastapi/test_story_12_3.py -q`.
 
+### Review Findings
+
+- [x] [Review][Decision] Fragile `pendingFailureUnlockRef` boolean for signal synchronization — Fixed: Implemented `restore_id` (Sequence ID) synchronization across Backend, Hocuspocus, and Frontend.
+- [x] [Review][Patch] Brittle Error Parsing & Potential Data Leak [src/api/fastapi/main.py] — Fixed: Implemented safer detail extraction with recursion limits and explicit key mapping.
+- [x] [Review][Patch] Mismatch between type hint and docstring for exceptions [src/api/fastapi/main.py] — Fixed: Updated docstring to match `Exception` type hint.
+- [x] [Review][Patch] Unbounded recursion and string joins in error flattener [src/api/fastapi/main.py] — Fixed: Added depth limit (3) and length truncation to error pieces.
+- [x] [Review][Patch] Loss of semantic distinction for 409/423 status codes [src/api/fastapi/main.py] — Fixed: Both 409 and 423 now map to `STORAGE_ERROR` but with specific machine codes if provided.
+- [x] [Review][Patch] Hardcoded UI Colors and Magic Z-Index in CSS [src/frontend/src/editor/collaboration.css] — Fixed: Migrated to design tokens and added rationale for z-index.
+- [x] [Review][Patch] Case-sensitive check for error codes [src/api/fastapi/main.py] — Fixed: Added `.upper()` normalization to code checks.
+- [x] [Review][Patch] Premature banner clearance for the initiator of restoration [src/frontend/src/editor/TranscriptionEditor.tsx] — Fixed: Using `restore_id` to pair signals ensures only relevant unlocks clear the banner.
+- [x] [Review][Patch] Stale failure banner persists after reconnect [src/frontend/src/editor/TranscriptionEditor.tsx] — Fixed: Explicitly clear failure message on new ticket minting.
+### Review Findings (Pass 2)
+
+- [x] [Review][Patch] document_unlocked signal immediately clears failure banner [src/frontend/src/editor/TranscriptionEditor.tsx:580] — Fixed: Switched to `zachai:document_restored` (explicit success) for banner clearing; `document_unlocked` now only removes the lock overlay.
+- [x] [Review][Patch] Broken onClick handler refers to deleted pendingFailureUnlockRef [src/frontend/src/editor/TranscriptionEditor.tsx] — Fixed: Removed stale reference in Dismiss button.
+- [x] [Review][Patch] Missed localization in initiator path and overlay [src/frontend/src/editor/TranscriptionEditor.tsx] — Fixed: Completed i18n migration for all restoration UI.
+- [x] [Review][Patch] New document_restored signal is ignored by Hocuspocus [src/collab/hocuspocus/src/index.ts:340] — Fixed: HP now forwards all 4 backend restoration signals.
+- [x] [Review][Patch] restore_id and new signals missing from docs/api-mapping.md [docs/api-mapping.md] — Fixed: Updated §15 with new contract details and `restore_id` semantics.
+- [x] [Review][Patch] Unbounded string processing in error flattener [src/api/fastapi/main.py:3865] — Fixed: Applied truncation *before* strip/join in flattener.
+- [x] [Review][Patch] Brittle resp.json() in initiator path [src/frontend/src/editor/TranscriptionEditor.tsx:283] — Fixed: Added fallback for non-JSON error responses.
+- [x] [Review][Patch] Scalar error detail suppression in backend [src/api/fastapi/main.py:3910] — Fixed: Improved flattener to correctly stringify non-collection detail values.
+
 ## Dev notes
 
 | Area | Path |

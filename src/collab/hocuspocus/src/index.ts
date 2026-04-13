@@ -335,25 +335,37 @@ redisSignals.on("message", async (channel, message) => {
           if (typeof data.message === "string" && data.message.trim()) {
             payload.message = data.message.trim();
           }
+          if (data.restore_id) {
+            payload.restore_id = data.restore_id;
+          }
           doc.broadcastStateless(JSON.stringify(payload));
-          log("info", "broadcast document_restore_failed", { document_id: documentId, code });
+          log("info", "broadcast document_restore_failed", { document_id: documentId, code, restore_id: data.restore_id });
         }
-      } else if ((data.type === "document_locked" || data.type === "document_unlocked") && documentName) {
+      } else if ((data.type === "document_locked" || data.type === "document_unlocked" || data.type === "document_restored") && documentName) {
         const doc = server.documents.get(documentName);
         if (doc && !doc.isDestroyed) {
-          const payload =
-            data.type === "document_locked"
-              ? {
-                  type: "zachai:document_restoring",
-                  document_id: documentId,
-                  user_name:
-                    typeof data.user_name === "string" && data.user_name.trim()
-                      ? data.user_name.trim()
-                      : null,
-                }
-              : { type: "zachai:document_restored", document_id: documentId };
+          let payload: any;
+          if (data.type === "document_locked") {
+            payload = {
+              type: "zachai:document_restoring",
+              document_id: documentId,
+              user_name:
+                typeof data.user_name === "string" && data.user_name.trim()
+                  ? data.user_name.trim()
+                  : null,
+            };
+          } else if (data.type === "document_restored") {
+            payload = { type: "zachai:document_restored", document_id: documentId };
+          } else {
+            // document_unlocked
+            payload = { type: "zachai:document_unlocked", document_id: documentId };
+          }
+
+          if (data.restore_id) {
+            payload.restore_id = data.restore_id;
+          }
           doc.broadcastStateless(JSON.stringify(payload));
-          log("info", "broadcast restoration state", { document_id: documentId, signal: data.type });
+          log("info", "broadcast restoration state", { document_id: documentId, signal: data.type, restore_id: data.restore_id });
         }
       }
     } catch (e) {

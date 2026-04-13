@@ -9,6 +9,11 @@ const MESSAGES = {
   en: {
     restoreFailureTitle: "Restoration failed",
     restoreFailureDismiss: "Dismiss",
+    restoreFailureDefault: "Restoration failed",
+    restoreSuccessTitle: "Restoration",
+    restoreSuccessMessage: "Document restored successfully",
+    restorationOverlayTitle: "Document restoration",
+    restorationOverlayWait: "Please wait — editing is temporarily disabled.",
     restoreFailureByCode: {
       SNAPSHOT_NOT_FOUND: "Snapshot not found.",
       AUDIO_NOT_FOUND: "Audio document not found.",
@@ -22,6 +27,11 @@ const MESSAGES = {
   fr: {
     restoreFailureTitle: "Échec de la restauration",
     restoreFailureDismiss: "Fermer",
+    restoreFailureDefault: "La restauration a échoué",
+    restoreSuccessTitle: "Restauration",
+    restoreSuccessMessage: "Document restauré avec succès",
+    restorationOverlayTitle: "Restauration du document",
+    restorationOverlayWait: "Veuillez patienter — l'édition est temporairement désactivée.",
     restoreFailureByCode: {
       SNAPSHOT_NOT_FOUND: "Instantané introuvable.",
       AUDIO_NOT_FOUND: "Document audio introuvable.",

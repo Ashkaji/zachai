@@ -303,7 +303,7 @@ Mis à jour automatiquement au commit (hook Git `scripts/git-hooks/` ou outil pr
 | 11 | terminé | terminé | `11-1-workspace-karaoke-surlignage-neon-eco-mode` terminé<br>`11-2-menu-contextuel-azure-accessibilite-clavier` terminé<br>`11-3-interface-reconciliation-side-by-side-resizable` terminé<br>`11-4-intelligence-linguistique-bible-preview-async` terminé<br>`11-5-moteur-biblique-local-ingestion-donnees-souverainete` terminé |
 | 12 | terminé | terminé | `12-1-centre-profil-consentement-anonymisation-rgpd` terminé<br>`12-2-visual-diff-ghost-mode-worker-based-performance` terminé<br>`12-3-restauration-securisee-verrouillage-websocket` terminé |
 | 13 | terminé | terminé | `13-1-restore-failure-broadcast-collaborators` terminé<br>`13-2-bible-verse-redis-cache-opt-in` terminé<br>`13-3-api-mapping-openapi-alignment` terminé |
-| 14 | en cours | optionnel | `14-1-restore-failure-signal-review-hardening` revue |
+| 14 | terminé | optionnel | `14-1-restore-failure-signal-review-hardening` terminé |
 | 15 | en cours | optionnel | `15-1-bible-sources-licensing-and-provenance` prêt pour dev<br>`15-2-bible-extract-to-zachai-json` backlog<br>`15-3-bible-ingest-smoke-and-operator-docs` backlog |
 | 16 | backlog | optionnel | `16-1-keycloak-admin-client-and-service-account` backlog<br>`16-2-manager-scope-membership-model` backlog<br>`16-3-api-user-provisioning-and-rbac` backlog<br>`16-4-ui-admin-create-managers` backlog<br>`16-5-ui-manager-invite-transcripteur-expert` backlog<br>`16-6-expert-label-studio-project-access` backlog |
 | 17 | backlog | optionnel | `17-1-demo-runbook-multi-role-e2e` backlog<br>`17-2-readme-roadmap-and-bible-demo-pointers` backlog |

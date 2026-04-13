@@ -3858,25 +3858,28 @@ def _short_restore_public_message(text: str, max_len: int = 240) -> str:
     return t[:max_len] if t else ""
 
 
-def _restore_failure_public_text_from_detail_piece(value: Any) -> str:
+def _restore_failure_public_text_from_detail_piece(value: Any, depth: int = 0) -> str:
     """Flatten a detail fragment for short UI copy (no stack traces, no object dumps)."""
-    if value is None:
+    if value is None or depth > 3:
         return ""
     if isinstance(value, str):
-        return value.strip()
+        # Truncate early to avoid memory spikes on massive strings.
+        return value[:1024].strip()
     if isinstance(value, (int, float, bool)):
         return str(value)
     if isinstance(value, dict):
         for key in ("error", "message", "msg", "detail"):
             if key in value:
-                return _restore_failure_public_text_from_detail_piece(value[key])
+                return _restore_failure_public_text_from_detail_piece(value[key], depth + 1)
         return ""
     if isinstance(value, (list, tuple)):
         parts: list[str] = []
         for item in value:
-            s = _restore_failure_public_text_from_detail_piece(item)
+            s = _restore_failure_public_text_from_detail_piece(item, depth + 1)
             if s:
                 parts.append(s)
+            if len(parts) >= 10:  # Cap list pieces
+                break
         return "; ".join(parts)
     return ""
 
@@ -3885,7 +3888,7 @@ def _restore_failure_code_from_http_detail(detail: Any) -> str | None:
     if isinstance(detail, dict):
         raw = detail.get("code")
         if isinstance(raw, str):
-            c = raw.strip()
+            c = raw.strip().upper()
             if c in _KNOWN_DOCUMENT_RESTORE_FAILURE_CODES:
                 return c
     return None
@@ -3894,7 +3897,7 @@ def _restore_failure_code_from_http_detail(detail: Any) -> str | None:
 def _restore_failure_message_from_http_detail(detail: Any) -> str:
     if isinstance(detail, dict):
         structured = _restore_failure_code_from_http_detail(detail) is not None
-        for key in ("error", "message"):
+        for key in ("error", "message", "msg", "detail"):
             if key in detail:
                 t = _restore_failure_public_text_from_detail_piece(detail[key])
                 if t:
@@ -3903,11 +3906,12 @@ def _restore_failure_message_from_http_detail(detail: Any) -> str:
             # Avoid forwarding arbitrary dict keys (may contain internal fields).
             return ""
         return ""
-    if isinstance(detail, str):
-        return detail.strip()
+    if isinstance(detail, (str, int, float, bool)):
+        return _restore_failure_public_text_from_detail_piece(detail)
     if isinstance(detail, (list, tuple)):
         return _restore_failure_public_text_from_detail_piece(detail)
-    return str(detail).strip() if detail is not None else ""
+    # Never fall back to str(detail) to avoid leaking internal object dumps.
+    return ""
 
 
 def _default_restore_failure_code_for_status(status_code: int) -> str:
@@ -3915,12 +3919,14 @@ def _default_restore_failure_code_for_status(status_code: int) -> str:
         return DocumentRestoreFailureCode.SNAPSHOT_NOT_FOUND
     if status_code == 502:
         return DocumentRestoreFailureCode.STORAGE_ERROR
-    if status_code in (409, 423):
+    if status_code == 423:
+        return DocumentRestoreFailureCode.STORAGE_ERROR
+    if status_code == 409:
         return DocumentRestoreFailureCode.STORAGE_ERROR
     return DocumentRestoreFailureCode.UNKNOWN
 
 
-def _document_restore_failed_signal_from_http_exception(audio_id: int, exc: HTTPException) -> dict[str, Any]:
+def _document_restore_failed_signal_from_http_exception(audio_id: int, exc: HTTPException, restore_id: str | None = None) -> dict[str, Any]:
     structured = _restore_failure_code_from_http_detail(exc.detail)
     code = structured or _default_restore_failure_code_for_status(exc.status_code)
     message = _short_restore_public_message(_restore_failure_message_from_http_detail(exc.detail))
@@ -3930,19 +3936,21 @@ def _document_restore_failed_signal_from_http_exception(audio_id: int, exc: HTTP
         "document_id": audio_id,
         "code": code,
     }
+    if restore_id:
+        out["restore_id"] = restore_id
     if message:
         out["message"] = message
     return out
 
 
-def _document_restore_failed_signal(audio_id: int, exc: Exception) -> dict[str, Any]:
+def _document_restore_failed_signal(audio_id: int, exc: Exception, restore_id: str | None = None) -> dict[str, Any]:
     """Build Redis JSON for ``document_restore_failed`` before ``document_unlocked`` on failure paths.
 
     Only ``Exception`` is accepted: restore core uses ``except Exception`` before signaling, so
     ``KeyboardInterrupt`` / ``SystemExit`` never reach this helper.
     """
     if isinstance(exc, HTTPException):
-        return _document_restore_failed_signal_from_http_exception(audio_id, exc)
+        return _document_restore_failed_signal_from_http_exception(audio_id, exc, restore_id)
 
     if isinstance(exc, (AttributeError, KeyError, TypeError, ValueError)):
         code = DocumentRestoreFailureCode.SNAPSHOT_PAYLOAD_INVALID
@@ -3957,6 +3965,8 @@ def _document_restore_failed_signal(audio_id: int, exc: Exception) -> dict[str, 
         "document_id": audio_id,
         "code": code,
     }
+    if restore_id:
+        out["restore_id"] = restore_id
     if message:
         out["message"] = message
     return out
@@ -3973,6 +3983,7 @@ async def _restore_document_from_snapshot_core(
     Story 12.3: shared restore — lock, collaboration signal, MinIO fetch + integrity check, PG swap, reload, unlock.
     Caller must have already authorized write access to the document.
     """
+    restore_id = str(uuid.uuid4())
     sub = payload.get("sub")
     display_name = _jwt_display_name(payload)
 
@@ -3995,6 +4006,7 @@ async def _restore_document_from_snapshot_core(
                 "type": "document_locked",
                 "document_id": audio_id,
                 "user_name": display_name,
+                "restore_id": restore_id,
             }
         )
         locked_signaled = True
@@ -4100,10 +4112,20 @@ async def _restore_document_from_snapshot_core(
 
         logger.info("document_restored audio_id=%s snapshot_id=%s user_id=%s", audio_id, snapshot_id, sub)
 
+        await _publish_hocuspocus_signal(
+            {
+                "type": "document_restored",
+                "schema_version": DOCUMENT_RESTORE_FAILED_SCHEMA_VERSION,
+                "document_id": audio_id,
+                "restore_id": restore_id,
+            }
+        )
+
         return {
             "status": "ok",
             "message": "Document restoration successful. Collaborators will be re-synced.",
             "snapshot_id": snapshot_id,
+            "restore_id": restore_id,
         }
     except Exception as e:
         pending_exc = e
@@ -4111,11 +4133,15 @@ async def _restore_document_from_snapshot_core(
     finally:
         if locked_signaled and pending_exc is not None:
             try:
-                await _publish_hocuspocus_signal(_document_restore_failed_signal(audio_id, pending_exc))
+                await _publish_hocuspocus_signal(_document_restore_failed_signal(audio_id, pending_exc, restore_id))
             except Exception:
                 logger.error("failed_to_publish_restore_failure_signal audio_id=%s", audio_id)
         
-        await _publish_hocuspocus_signal({"type": "document_unlocked", "document_id": audio_id})
+        await _publish_hocuspocus_signal({
+            "type": "document_unlocked",
+            "document_id": audio_id,
+            "restore_id": restore_id,
+        })
         await _redis_client.delete(lock_key)
 
 
