@@ -160,7 +160,7 @@ development_status:
   epic-16: in-progress
   16-1-keycloak-admin-client-and-service-account: done
   16-2-manager-scope-membership-model: done
-  16-3-api-user-provisioning-and-rbac: backlog
+  16-3-api-user-provisioning-and-rbac: ready-for-dev
   16-4-ui-admin-create-managers: backlog
   16-5-ui-manager-invite-transcripteur-expert: backlog
   16-6-expert-label-studio-project-access: backlog
