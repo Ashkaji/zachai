@@ -49,6 +49,7 @@ from lxml import etree
 
 import golden_set
 import editor_ticket
+import keycloak_admin
 
 import redis.asyncio as redis_asyncio
 
@@ -1285,6 +1286,23 @@ class ManagerMembershipCreate(BaseModel):
 
     manager_id: str = Field(..., min_length=1, max_length=255)
     member_id: str = Field(..., min_length=1, max_length=255)
+
+
+class UserCreate(BaseModel):
+    """POST /v1/iam/users — Story 16.3."""
+
+    username: str = Field(..., min_length=1, max_length=255)
+    email: str = Field(..., min_length=1, max_length=255)
+    firstName: str = Field(..., min_length=1, max_length=255)
+    lastName: str = Field(..., min_length=1, max_length=255)
+    enabled: bool = True
+    role: str = Field(..., pattern="^(Admin|Manager|Transcripteur|Expert)$")
+
+
+class UserUpdate(BaseModel):
+    """PATCH /v1/iam/users/{user_id} — Story 16.3."""
+
+    enabled: bool
 
 
 class EditorSnapshotCallbackRequest(BaseModel):
@@ -3722,8 +3740,85 @@ async def delete_membership(
     )
     if r.rowcount == 0:
         raise HTTPException(status_code=404, detail={"error": "Membership not found"})
-    
     await db.commit()
+
+
+@app.post("/v1/iam/users", tags=["IAM"], status_code=201)
+async def post_iam_user(
+    body: UserCreate,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Create a new user in Keycloak and assign realm role (Story 16.3 AC 1)."""
+    roles = get_roles(payload)
+    _require_manager_or_admin(roles)
+    sub = payload.get("sub")
+
+    # Manager Scope Enforcement
+    if "Admin" not in roles:
+        if body.role in ("Admin", "Manager"):
+            raise HTTPException(
+                status_code=403,
+                detail={"error": f"Manager cannot create users with role {body.role}"}
+            )
+
+    # Prepare Keycloak user data
+    user_data = {
+        "username": body.username,
+        "email": body.email,
+        "firstName": body.firstName,
+        "lastName": body.lastName,
+        "enabled": body.enabled,
+    }
+
+    # Create in Keycloak + Role mapping (AC 1, 3)
+    new_user_id = await keycloak_admin.create_keycloak_user(user_data, role=body.role)
+
+    # Manager Persistence (Story 16.3 AC 1)
+    if "Admin" not in roles:
+        try:
+            db.add(ManagerMembership(manager_id=sub, member_id=new_user_id))
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail={"error": "Member already mapped to a manager"})
+        except Exception as exc:
+            await db.rollback()
+            logger.error("Failed to persist ManagerMembership for new user %s: %s", new_user_id, exc)
+            raise HTTPException(status_code=500, detail={"error": "Failed to persist manager mapping"})
+
+    return {"status": "created", "id": new_user_id}
+
+
+@app.patch("/v1/iam/users/{user_id}", tags=["IAM"], status_code=204)
+async def patch_iam_user(
+    user_id: str,
+    body: UserUpdate,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Disable/Enable user (Story 16.3 AC 2). Admin or scoped Manager."""
+    roles = get_roles(payload)
+    _require_manager_or_admin(roles)
+    sub = payload.get("sub")
+
+    # Manager Scope Enforcement
+    if "Admin" not in roles:
+        r = await db.execute(
+            select(ManagerMembership)
+            .where(ManagerMembership.manager_id == sub)
+            .where(ManagerMembership.member_id == user_id)
+        )
+        membership = r.scalar_one_or_none()
+        if not membership:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "User is outside your scope of management"}
+            )
+
+    # Update in Keycloak (AC 2)
+    await keycloak_admin.update_keycloak_user(user_id, {"enabled": body.enabled})
+
     return None
 
 

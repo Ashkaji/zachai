@@ -1,6 +1,6 @@
 # Story 16.3: API provisioning utilisateurs & RBAC
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -47,21 +47,21 @@ Status: ready-for-dev
 
 ## Tasks / Subtasks
 
-- [ ] **Implement Keycloak Admin REST Client** (AC: 1, 4)
-  - [ ] Add `create_keycloak_user(user_data, role)` to `src/api/fastapi/keycloak_admin.py`.
-  - [ ] Add `update_keycloak_user(user_id, update_data)` to `src/api/fastapi/keycloak_admin.py`.
-  - [ ] Add `get_keycloak_role_id(role_name)` helper (Keycloak roles need their internal ID for some operations, or use the name-based endpoint if available).
-- [ ] **Define Pydantic Models** (AC: 1, 2)
-  - [ ] `UserCreate`: `username`, `email`, `firstName` / `lastName` (use `Field(alias=...)` or equivalent so request JSON matches AC camelCase), `enabled` optional default true, `role`.
-  - [ ] `UserUpdate`: `enabled`.
-- [ ] **Implement Provisioning Endpoints** (AC: 1, 2)
-  - [ ] `POST /v1/iam/users`: Implement RBAC hierarchy + `ManagerMembership` persistence.
-  - [ ] `PATCH /v1/iam/users/{user_id}`: Implement scope enforcement via `ManagerMembership`.
-- [ ] **Verification & Tests** (AC: 5)
-  - [ ] Create `src/api/fastapi/test_story_16_3.py`.
-  - [ ] Mock `httpx.AsyncClient` for Keycloak Admin API (user CRUD + role-mappings), consistent with `test_keycloak_admin.py` / `test_story_16_2.py` (env vars before `import main` where needed).
-  - [ ] Use `client` + `patch("main.decode_token", ...)` with `ADMIN_PAYLOAD`, `MANAGER_PAYLOAD`, etc. from `fastapi_test_app.py`.
-  - [ ] Assert `ManagerMembership` creation in DB.
+- [x] **Implement Keycloak Admin REST Client** (AC: 1, 4)
+  - [x] Add `create_keycloak_user(user_data, role)` to `src/api/fastapi/keycloak_admin.py`.
+  - [x] Add `update_keycloak_user(user_id, update_data)` to `src/api/fastapi/keycloak_admin.py`.
+  - [x] Add `get_keycloak_role_id(role_name)` helper (Keycloak roles need their internal ID for some operations, or use the name-based endpoint if available).
+- [x] **Define Pydantic Models** (AC: 1, 2)
+  - [x] `UserCreate`: `username`, `email`, `firstName` / `lastName` (use `Field(alias=...)` or equivalent so request JSON matches AC camelCase), `enabled` optional default true, `role`.
+  - [x] `UserUpdate`: `enabled`.
+- [x] **Implement Provisioning Endpoints** (AC: 1, 2)
+  - [x] `POST /v1/iam/users`: Implement RBAC hierarchy + `ManagerMembership` persistence.
+  - [x] `PATCH /v1/iam/users/{user_id}`: Implement scope enforcement via `ManagerMembership`.
+- [x] **Verification & Tests** (AC: 5)
+  - [x] Create `src/api/fastapi/test_story_16_3.py`.
+  - [x] Mock `httpx.AsyncClient` for Keycloak Admin API (user CRUD + role-mappings), consistent with `test_keycloak_admin.py` / `test_story_16_2.py` (env vars before `import main` where needed).
+  - [x] Use `client` + `patch("main.decode_token", ...)` with `ADMIN_PAYLOAD`, `MANAGER_PAYLOAD`, etc. from `fastapi_test_app.py`.
+  - [x] Assert `ManagerMembership` creation in DB.
 
 ## Previous story intelligence (16.2)
 
@@ -99,9 +99,21 @@ Status: ready-for-dev
 ## Dev Agent Record
 
 ### Agent Model Used
+Gemini 3.1 Pro
 
 ### Debug Log References
+- `POST /v1/iam/users` success logs verify both Keycloak call and `ManagerMembership` persistence.
+- `IndentationError` fixed in `main.py` after initial implementation.
+- `TypeError` fixed in `test_keycloak_admin_provisioning.py` (temporary) before final implementation.
 
 ### Completion Notes List
+- [x] Keycloak Admin REST Client updated to support role assignment on creation.
+- [x] `UserCreate` and `UserUpdate` Pydantic models verified in `main.py`.
+- [x] `POST /v1/iam/users` implemented with RBAC hierarchy and scope persistence.
+- [x] `PATCH /v1/iam/users/{user_id}` implemented with management scope enforcement.
+- [x] Tests in `src/api/fastapi/test_story_16_3.py` passing with 100% coverage of AC.
 
 ### File List
+- src/api/fastapi/keycloak_admin.py
+- src/api/fastapi/main.py
+- src/api/fastapi/test_story_16_3.py
