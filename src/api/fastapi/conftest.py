@@ -36,3 +36,36 @@ def mock_db():
     main.app.dependency_overrides[main.get_db] = override
     yield mock_session
     main.app.dependency_overrides.pop(main.get_db, None)
+
+
+@pytest.fixture
+async def db_engine():
+    """In-memory SQLite engine for integration testing."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(main.Base.metadata.create_all)
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+async def real_db(db_engine):
+    """
+    Overwrites the FastAPI get_db dependency with a real in-memory SQLite session.
+    Useful for testing database constraints and integrity errors in API routes.
+    """
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.ext.asyncio import AsyncSession
+    
+    async_session = sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
+    
+    async def override():
+        async with async_session() as session:
+            yield session
+
+    main.app.dependency_overrides[main.get_db] = override
+    # Also return the sessionmaker or a session for direct DB setup in tests
+    async with async_session() as session:
+        yield session
+    main.app.dependency_overrides.pop(main.get_db, None)
