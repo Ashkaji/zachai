@@ -86,6 +86,14 @@ async def get_admin_token() -> str:
         return token
 
 
+def _get_keycloak_admin_urls():
+    """Centralized URL construction for Keycloak Admin API."""
+    issuer = os.environ["KEYCLOAK_ISSUER"].rstrip("/")
+    realm = issuer.split("/")[-1]
+    admin_base = issuer.replace(f"/realms/{realm}", "/admin")
+    return realm, f"{admin_base}/realms/{realm}"
+
+
 async def create_keycloak_user(user_data: dict, role: str | None = None) -> str:
     """
     Create a user in Keycloak and return their new ID (sub).
@@ -95,10 +103,8 @@ async def create_keycloak_user(user_data: dict, role: str | None = None) -> str:
     from fastapi import HTTPException
 
     token = await get_admin_token()
-    issuer = os.environ["KEYCLOAK_ISSUER"].rstrip("/")
-    realm = issuer.split("/")[-1]
-    admin_base = issuer.replace(f"/realms/{realm}", "/admin")
-    users_url = f"{admin_base}/realms/{realm}/users"
+    _, base_url = _get_keycloak_admin_urls()
+    users_url = f"{base_url}/users"
 
     async with httpx.AsyncClient() as client:
         try:
@@ -120,9 +126,11 @@ async def create_keycloak_user(user_data: dict, role: str | None = None) -> str:
             else:
                 user_id = location.split("/")[-1]
             
-            # Story 16.3 AC 3: Assign role if requested
+            # Assign role if requested
             if role:
                 role_obj = await get_realm_role(role)
+                if not role_obj:
+                    raise HTTPException(status_code=500, detail={"error": f"Role {role} configuration mismatch"})
                 await add_realm_role_to_user(user_id, role_obj)
             
             return user_id
@@ -146,28 +154,34 @@ async def get_keycloak_role_id(role_name: str) -> str:
 
 
 async def get_user_id_by_username(username: str) -> str:
-    """Helper to find user ID if Location header was missing."""
+    """Helper to find user ID by exact username search."""
     from fastapi import HTTPException
 
     token = await get_admin_token()
-    issuer = os.environ["KEYCLOAK_ISSUER"].rstrip("/")
-    realm = issuer.split("/")[-1]
-    admin_base = issuer.replace(f"/realms/{realm}", "/admin")
-    search_url = f"{admin_base}/realms/{realm}/users"
+    _, base_url = _get_keycloak_admin_urls()
+    search_url = f"{base_url}/users"
 
     async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            search_url,
-            params={"username": username, "exact": "true"},
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10.0,
-        )
+        try:
+            resp = await client.get(
+                search_url,
+                params={"username": username, "exact": "true"},
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10.0,
+            )
+        except httpx.RequestError as exc:
+            logger.error("Keycloak connection error: %s", exc)
+            raise HTTPException(status_code=502, detail={"error": "Keycloak unreachable"})
+
         if resp.status_code == 200:
             users = resp.json()
-            if users:
+            if len(users) == 1:
                 return users[0]["id"]
+            if len(users) > 1:
+                logger.error("Keycloak returned multiple users for exact username '%s'", username)
+                raise HTTPException(status_code=502, detail={"error": "Ambiguous user ID returned by Keycloak"})
 
-    raise HTTPException(status_code=502, detail={"error": "Failed to retrieve user ID"})
+    raise HTTPException(status_code=502, detail={"error": "Failed to retrieve user ID from Keycloak"})
 
 
 async def get_realm_role(role_name: str) -> dict:
@@ -175,10 +189,8 @@ async def get_realm_role(role_name: str) -> dict:
     from fastapi import HTTPException
 
     token = await get_admin_token()
-    issuer = os.environ["KEYCLOAK_ISSUER"].rstrip("/")
-    realm = issuer.split("/")[-1]
-    admin_base = issuer.replace(f"/realms/{realm}", "/admin")
-    role_url = f"{admin_base}/realms/{realm}/roles/{role_name}"
+    _, base_url = _get_keycloak_admin_urls()
+    role_url = f"{base_url}/roles/{role_name}"
 
     async with httpx.AsyncClient() as client:
         try:
@@ -193,6 +205,7 @@ async def get_realm_role(role_name: str) -> dict:
             return resp.json()
 
         if resp.status_code == 404:
+            logger.error("Role '%s' not found in Keycloak", role_name)
             raise HTTPException(
                 status_code=500, detail={"error": f"Role {role_name} not found in Keycloak"}
             )
@@ -209,11 +222,8 @@ async def add_realm_role_to_user(user_id: str, role: dict):
     from fastapi import HTTPException
 
     token = await get_admin_token()
-    issuer = os.environ["KEYCLOAK_ISSUER"].rstrip("/")
-    realm = issuer.split("/")[-1]
-    admin_base = issuer.replace(f"/realms/{realm}", "/admin")
-    # POST /admin/realms/{realm}/users/{id}/role-mappings/realm
-    mapping_url = f"{admin_base}/realms/{realm}/users/{user_id}/role-mappings/realm"
+    _, base_url = _get_keycloak_admin_urls()
+    mapping_url = f"{base_url}/users/{user_id}/role-mappings/realm"
 
     async with httpx.AsyncClient() as client:
         try:
@@ -227,7 +237,7 @@ async def add_realm_role_to_user(user_id: str, role: dict):
             logger.error("Keycloak connection error: %s", exc)
             raise HTTPException(status_code=502, detail={"error": "Keycloak unreachable"})
 
-        if resp.status_code not in (200, 204):
+        if resp.status_code not in (200, 201, 204):
             logger.error(
                 "Keycloak role mapping failed: %s %s", resp.status_code, resp.text
             )
@@ -244,10 +254,8 @@ async def update_keycloak_user(user_id: str, update_data: dict):
     from fastapi import HTTPException
 
     token = await get_admin_token()
-    issuer = os.environ["KEYCLOAK_ISSUER"].rstrip("/")
-    realm = issuer.split("/")[-1]
-    admin_base = issuer.replace(f"/realms/{realm}", "/admin")
-    user_url = f"{admin_base}/realms/{realm}/users/{user_id}"
+    _, base_url = _get_keycloak_admin_urls()
+    user_url = f"{base_url}/users/{user_id}"
 
     async with httpx.AsyncClient() as client:
         try:

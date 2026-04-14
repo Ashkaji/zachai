@@ -97,3 +97,7 @@
 
 ## Deferred from: code review of 14-1-restore-failure-signal-review-hardening.md (2026-04-13)
 - [x] [Review][Defer] Unbounded S3 read in restore core [src/api/fastapi/main.py] — deferred, pre-existing. The snapshot retrieval logic performs an unbounded read from S3, which could lead to OOM with very large payloads.
+
+## Deferred from: code review of 16-3-api-user-provisioning-and-rbac.md (2026-04-14)
+- Keycloak/DB Transactionality Gap [src/api/fastapi/main.py:3766]: If Keycloak user creation succeeds but PostgreSQL ManagerMembership persistence fails, an orphaned user is created in Keycloak. Acceptable for v1 but needs future hardening.
+- Missing Configuration Guard for Keycloak Issuer [src/api/fastapi/keycloak_admin.py:100]: KEYCLOAK_ISSUER environment variable might be missing or malformed, leading to KeyError or malformed URLs. Needs global config validation.

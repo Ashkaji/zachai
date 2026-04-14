@@ -1293,10 +1293,14 @@ class UserCreate(BaseModel):
 
     username: str = Field(..., min_length=1, max_length=255)
     email: str = Field(..., min_length=1, max_length=255)
-    firstName: str = Field(..., min_length=1, max_length=255)
-    lastName: str = Field(..., min_length=1, max_length=255)
+    first_name: str = Field(..., alias="firstName", min_length=1, max_length=255)
+    last_name: str = Field(..., alias="lastName", min_length=1, max_length=255)
     enabled: bool = True
     role: str = Field(..., pattern="^(Admin|Manager|Transcripteur|Expert)$")
+
+    model_config = {
+        "populate_by_name": True
+    }
 
 
 class UserUpdate(BaseModel):
@@ -3766,8 +3770,8 @@ async def post_iam_user(
     user_data = {
         "username": body.username,
         "email": body.email,
-        "firstName": body.firstName,
-        "lastName": body.lastName,
+        "firstName": body.first_name,
+        "lastName": body.last_name,
         "enabled": body.enabled,
     }
 

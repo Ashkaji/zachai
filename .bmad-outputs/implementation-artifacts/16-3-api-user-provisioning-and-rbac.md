@@ -117,3 +117,14 @@ Gemini 3.1 Pro
 - src/api/fastapi/keycloak_admin.py
 - src/api/fastapi/main.py
 - src/api/fastapi/test_story_16_3.py
+
+### Review Findings (2026-04-14)
+
+- [ ] [Review][Patch] Missing Location Header Handling [src/api/fastapi/keycloak_admin.py:113]
+- [ ] [Review][Patch] Potential Role Mismatch in Keycloak [src/api/fastapi/keycloak_admin.py:119]
+- [ ] [Review][Patch] Ambiguous User ID on Search [src/api/fastapi/keycloak_admin.py:133]
+- [ ] [Review][Patch] Code Duplication in Keycloak Client [src/api/fastapi/keycloak_admin.py]
+- [ ] [Review][Patch] PEP 8 naming for UserCreate Pydantic model [src/api/fastapi/main.py:1287]
+- [ ] [Review][Patch] Brittle Role Mapping Status Code Check [src/api/fastapi/keycloak_admin.py:169]
+- [x] [Review][Defer] Keycloak/DB Transactionality Gap [src/api/fastapi/main.py:3766] — deferred, pre-existing (acceptable for v1)
+- [x] [Review][Defer] Missing Configuration Guard for Keycloak Issuer [src/api/fastapi/keycloak_admin.py:100] — deferred, pre-existing (global config)
