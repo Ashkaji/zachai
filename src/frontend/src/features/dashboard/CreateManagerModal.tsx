@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { GlassModal } from "../../shared/ui/Modals";
 import { createUser, type UserCreate } from "./dashboardApi";
 
@@ -10,15 +10,26 @@ interface CreateManagerModalProps {
 }
 
 export function CreateManagerModal({ isOpen, onClose, token, onSuccess }: CreateManagerModalProps) {
-  const [formData, setFormData] = useState<Omit<UserCreate, "role">>({
+  const initialFormData: Omit<UserCreate, "role"> = {
     username: "",
     email: "",
     firstName: "",
     lastName: "",
     enabled: true,
+  };
+  const [formData, setFormData] = useState<Omit<UserCreate, "role">>({
+    ...initialFormData,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!isOpen) {
+      setFormData(initialFormData);
+      setError("");
+      setLoading(false);
+    }
+  }, [isOpen]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,8 +54,15 @@ export function CreateManagerModal({ isOpen, onClose, token, onSuccess }: Create
     }));
   };
 
+  const handleClose = () => {
+    setFormData(initialFormData);
+    setError("");
+    setLoading(false);
+    onClose();
+  };
+
   return (
-    <GlassModal isOpen={isOpen} onClose={onClose} title="Créer un nouveau Manager">
+    <GlassModal isOpen={isOpen} onClose={handleClose} title="Créer un nouveau Manager">
       <form onSubmit={handleSubmit} style={{ display: "grid", gap: "var(--spacing-4)" }}>
         {error && <p style={{ color: "var(--color-error)", fontSize: "0.85rem", margin: 0 }}>{error}</p>}
         
@@ -99,7 +117,7 @@ export function CreateManagerModal({ isOpen, onClose, token, onSuccess }: Create
         </div>
 
         <div style={{ marginTop: "var(--spacing-4)", display: "flex", justifyContent: "flex-end", gap: "var(--spacing-3)" }}>
-          <button type="button" onClick={onClose} className="za-btn za-btn--ghost" disabled={loading}>
+          <button type="button" onClick={handleClose} className="za-btn za-btn--ghost" disabled={loading}>
             Annuler
           </button>
           <button type="submit" className="za-btn za-btn--primary" disabled={loading}>

@@ -150,10 +150,7 @@ export function AdminDashboard() {
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)} 
         token={token ?? ""} 
-        onSuccess={() => {
-          // No direct visual list of managers yet, but we could refresh something if needed
-          console.log("Manager créé avec succès");
-        }} 
+        onSuccess={() => setError("")} 
       />
 
       <h3 style={{ fontFamily: "var(--font-headline)", fontSize: "1.25rem", fontWeight: 800, marginBottom: "var(--spacing-4)" }}>Santé Système</h3>

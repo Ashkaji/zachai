@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchExpertTasks, fetchProjectStatus } from "./dashboardApi";
+import { createUser, fetchExpertTasks, fetchProjectStatus } from "./dashboardApi";
 
 const apiJsonMock = vi.fn();
 
@@ -59,5 +59,55 @@ describe("dashboardApi.fetchProjectStatus", () => {
     const out = await fetchProjectStatus(42, "token-42");
     expect(out).toEqual(payload);
     expect(apiJsonMock).toHaveBeenCalledWith("/v1/projects/42/status", "token-42");
+  });
+});
+
+describe("dashboardApi.createUser", () => {
+  it("posts manager payload to /v1/iam/users", async () => {
+    apiJsonMock.mockResolvedValueOnce(undefined);
+
+    await createUser(
+      {
+        username: "manager-1",
+        email: "manager@example.com",
+        firstName: "Marie",
+        lastName: "Dupont",
+        role: "Manager",
+        enabled: true,
+      },
+      "token-iam",
+    );
+
+    expect(apiJsonMock).toHaveBeenCalledWith("/v1/iam/users", "token-iam", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: "manager-1",
+        email: "manager@example.com",
+        firstName: "Marie",
+        lastName: "Dupont",
+        role: "Manager",
+        enabled: true,
+      }),
+    });
+  });
+
+  it("propagates backend errors", async () => {
+    const err = new Error("Forbidden") as Error & { status: number };
+    err.status = 403;
+    apiJsonMock.mockRejectedValueOnce(err);
+
+    await expect(
+      createUser(
+        {
+          username: "manager-2",
+          email: "manager2@example.com",
+          firstName: "Anne",
+          lastName: "Durand",
+          role: "Manager",
+        },
+        "token-iam",
+      ),
+    ).rejects.toMatchObject({ message: "Forbidden", status: 403 });
   });
 });
