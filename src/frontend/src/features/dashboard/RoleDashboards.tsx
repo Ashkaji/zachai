@@ -14,6 +14,7 @@ import {
   type GoldenSetStatus,
   type ProjectSummary,
 } from "./dashboardApi";
+import { CreateManagerModal } from "./CreateManagerModal";
 
 function DashboardInfo({ text }: { text: string }) {
   return <p style={{ margin: 0, color: "var(--color-text-muted)", fontSize: "0.9rem" }}>{text}</p>;
@@ -104,6 +105,7 @@ export function AdminDashboard() {
   const [golden, setGolden] = useState<GoldenSetStatus | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [error, setError] = useState("");
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -131,7 +133,28 @@ export function AdminDashboard() {
         @keyframes fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
       `}</style>
       
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "var(--spacing-6)" }}>
+        <div>
+          <p style={{ margin: 0, color: "var(--color-text-muted)", fontSize: "0.95rem" }}>
+            Supervision globale de l'infrastructure et des projets ZachAI.
+          </p>
+        </div>
+        <button onClick={() => setIsModalOpen(true)} className="za-btn za-btn--primary">
+          + Créer Manager
+        </button>
+      </header>
+
       {error ? <p style={{ color: "var(--color-error)", marginBottom: "var(--spacing-4)" }}>{error}</p> : null}
+
+      <CreateManagerModal 
+        isOpen={isModalOpen} 
+        onClose={() => setIsModalOpen(false)} 
+        token={token ?? ""} 
+        onSuccess={() => {
+          // No direct visual list of managers yet, but we could refresh something if needed
+          console.log("Manager créé avec succès");
+        }} 
+      />
 
       <h3 style={{ fontFamily: "var(--font-headline)", fontSize: "1.25rem", fontWeight: 800, marginBottom: "var(--spacing-4)" }}>Santé Système</h3>
       <StatGrid>

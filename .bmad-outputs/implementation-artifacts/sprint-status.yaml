@@ -1,5 +1,5 @@
 # generated: 2026-03-19
-# last_updated: 2026-04-13 (Story 16-2 review fixes applied)
+# last_updated: 2026-04-14 (Story 16-4 UI implemented)
 # project: zachai
 # project_key: NOKEY
 # tracking_system: file-system
@@ -161,7 +161,7 @@ development_status:
   16-1-keycloak-admin-client-and-service-account: done
   16-2-manager-scope-membership-model: done
   16-3-api-user-provisioning-and-rbac: done
-  16-4-ui-admin-create-managers: backlog
+  16-4-ui-admin-create-managers: done
   16-5-ui-manager-invite-transcripteur-expert: backlog
   16-6-expert-label-studio-project-access: backlog
   epic-16-retrospective: optional

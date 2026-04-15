@@ -95,6 +95,15 @@ export type AuditLogEntry = {
   created_at: string;
 };
 
+export type UserCreate = {
+  username: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  role: "Admin" | "Manager" | "Transcripteur" | "Expert";
+  enabled?: boolean;
+};
+
 export function fetchManagerProjects(token: string): Promise<ProjectSummary[]> {
   return apiJson<ProjectSummary[]>("/v1/projects?include=audio_summary", token);
 }
@@ -136,5 +145,13 @@ export function validateAudio(audioId: number, approved: boolean, comment: strin
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ approved, comment }),
+  });
+}
+
+export function createUser(userData: UserCreate, token: string): Promise<void> {
+  return apiJson<void>("/v1/iam/users", token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(userData),
   });
 }
