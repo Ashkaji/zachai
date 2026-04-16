@@ -8,10 +8,16 @@ Ce document est votre guide pas-à-pas pour tester l'intégralité de la platefo
 
 ## 1. Préparation des Comptes (IAM)
 
+### Matrice des capacités par rôle (référence démo)
+- **Admin** : crée les Managers, supervise globalement.
+- **Manager** : crée les membres d'équipe (`Transcripteur` / `Expert`) dans son périmètre.
+- **Transcripteur** : traite les tâches assignées dans l'éditeur ZachAI.
+- **Expert** : profil IAM composite (`Expert` + `Transcripteur`), accès aux workflows Expert ZachAI et aux projets Label Studio liés.
+
 ### Étape A : Création de l'Admin (Console Keycloak)
 1. Accédez à votre instance Keycloak.
 2. Créez un utilisateur (ex: `admin_test`).
-3. Dans l'onglet **Role Mappings**, assignez-lui le rôle de royaume (Realm Role) : **`admin`**.
+3. Dans l'onglet **Role Mappings**, assignez-lui le rôle de royaume (Realm Role) : **`Admin`**.
 4. Définissez un mot de passe (onglet **Credentials**).
 
 ### Étape B : Flux Hiérarchique (Interface ZachAI)
@@ -23,6 +29,7 @@ Ce document est votre guide pas-à-pas pour tester l'intégralité de la platefo
 6. Créez deux comptes :
    - Un **Transcripteur** (ex: `transcripteur_test`).
    - Un **Expert** (ex: `expert_test`).
+7. *Vérification IAM recommandée :* le compte Expert provisionné doit posséder les rôles Keycloak **`Expert`** et **`Transcripteur`**.
 
 ---
 
@@ -65,11 +72,14 @@ Ce document est votre guide pas-à-pas pour tester l'intégralité de la platefo
 
 1. **Déconnectez-vous**, puis **connectez-vous en tant qu'Expert** (`expert_test`).
 2. Sur votre dashboard, repérez la tâche dans "Réconciliation Experte".
-3. Cliquez sur **"Réconcilier →"**.
-4. **Interface Side-by-Side :**
+3. Vérifiez la présence du bouton **"Label Studio →"** pour les tâches source `label_studio`.
+4. Cliquez sur **"Label Studio →"**.
+   - *Vérification :* un nouvel onglet s'ouvre vers le projet Label Studio correspondant (`/projects/{id}`).
+5. Revenez sur ZachAI puis cliquez sur **"Réconcilier →"**.
+6. **Interface Side-by-Side :**
    - Vous devez voir la version IA (Whisper) et la version Humaine (Transcripteur) côte à côte.
    - Validez les segments ou apportez les corrections finales.
-5. Cliquez sur **"Valider la qualité finale"**.
+7. Cliquez sur **"Valider la qualité finale"**.
 
 ---
 
