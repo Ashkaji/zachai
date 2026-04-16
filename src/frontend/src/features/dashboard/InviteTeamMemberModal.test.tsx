@@ -34,18 +34,32 @@ async function flushEffects(): Promise<void> {
   });
 }
 
+function setTextInputValue(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 describe("InviteTeamMemberModal", () => {
   let container: HTMLDivElement;
   let root: Root;
-  let onClose: ReturnType<typeof vi.fn>;
-  let onSuccess: ReturnType<typeof vi.fn>;
+  let onCloseCalls: number;
+  let onSuccessCalls: number;
+  let onClose: () => void;
+  let onSuccess: () => void;
 
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    onClose = vi.fn();
-    onSuccess = vi.fn();
+    onCloseCalls = 0;
+    onSuccessCalls = 0;
+    onClose = () => {
+      onCloseCalls += 1;
+    };
+    onSuccess = () => {
+      onSuccessCalls += 1;
+    };
     createUserMock.mockReset();
   });
 
@@ -85,8 +99,8 @@ describe("InviteTeamMemberModal", () => {
       },
       "bearer-token",
     );
-    expect(onSuccess).toHaveBeenCalledTimes(1);
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onSuccessCalls).toBe(1);
+    expect(onCloseCalls).toBe(1);
   });
 
   it("submits Expert when Expert role is selected", async () => {
@@ -158,8 +172,8 @@ describe("InviteTeamMemberModal", () => {
     });
     await flushEffects();
     expect(document.body.textContent).toContain("Conflict user");
-    expect(onSuccess).not.toHaveBeenCalled();
-    expect(onClose).not.toHaveBeenCalled();
+    expect(onSuccessCalls).toBe(0);
+    expect(onCloseCalls).toBe(0);
   });
 
   it("clears error and form after close and reopen", async () => {
@@ -232,15 +246,12 @@ describe("InviteTeamMemberModal", () => {
     const lastNameInput = document.body.querySelector<HTMLInputElement>('input[name="lastName"]');
 
     await act(async () => {
-      usernameInput!.value = "  user123  ";
-      usernameInput!.dispatchEvent(new Event("input", { bubbles: true }));
-      emailInput!.value = "  test@example.com  ";
-      emailInput!.dispatchEvent(new Event("input", { bubbles: true }));
-      firstNameInput!.value = "  John  ";
-      firstNameInput!.dispatchEvent(new Event("input", { bubbles: true }));
-      lastNameInput!.value = "  Doe  ";
-      lastNameInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      setTextInputValue(usernameInput!, "  user123  ");
+      setTextInputValue(emailInput!, "  test@example.com  ");
+      setTextInputValue(firstNameInput!, "  John  ");
+      setTextInputValue(lastNameInput!, "  Doe  ");
     });
+    await flushEffects();
 
     const form = document.body.querySelector("form");
     await act(async () => {

@@ -282,7 +282,7 @@ export function TranscriptionEditor() {
       
       const body = await resp.json().catch(() => ({ error: "Invalid server response format" }));
       if (!resp.ok) {
-        let msg = editorCopy.restoreFailureDefault;
+        let msg: string = editorCopy.restoreFailureDefault;
         const d = body.detail;
         if (typeof d === "object" && d !== null && "error" in d) {
           msg = String((d as { error: string }).error);
@@ -1467,7 +1467,7 @@ export function TranscriptionEditor() {
             className="za-button za-button-subtle"
             style={{ flexShrink: 0 }}
             onClick={() => {
-              pendingFailureUnlockRef.current = false;
+              suppressRemoteRestoreFailureRef.current = false;
               setRemoteRestoreFailureMessage(null);
             }}
           >

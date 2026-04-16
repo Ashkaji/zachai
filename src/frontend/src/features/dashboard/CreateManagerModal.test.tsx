@@ -30,15 +30,23 @@ async function flushEffects(): Promise<void> {
 describe("CreateManagerModal", () => {
   let container: HTMLDivElement;
   let root: Root;
-  let onClose: ReturnType<typeof vi.fn>;
-  let onSuccess: ReturnType<typeof vi.fn>;
+  let onCloseCalls: number;
+  let onSuccessCalls: number;
+  let onClose: () => void;
+  let onSuccess: () => void;
 
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    onClose = vi.fn();
-    onSuccess = vi.fn();
+    onCloseCalls = 0;
+    onSuccessCalls = 0;
+    onClose = () => {
+      onCloseCalls += 1;
+    };
+    onSuccess = () => {
+      onSuccessCalls += 1;
+    };
     createUserMock.mockReset();
   });
 
@@ -78,8 +86,8 @@ describe("CreateManagerModal", () => {
       },
       "bearer-token",
     );
-    expect(onSuccess).toHaveBeenCalledTimes(1);
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onSuccessCalls).toBe(1);
+    expect(onCloseCalls).toBe(1);
   });
 
   it("clears error and form values after close and reopen", async () => {
