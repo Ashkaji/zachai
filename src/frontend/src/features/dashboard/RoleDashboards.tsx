@@ -15,6 +15,7 @@ import {
   type ProjectSummary,
 } from "./dashboardApi";
 import { CreateManagerModal } from "./CreateManagerModal";
+import { InviteTeamMemberModal } from "./InviteTeamMemberModal";
 
 function DashboardInfo({ text }: { text: string }) {
   return <p style={{ margin: 0, color: "var(--color-text-muted)", fontSize: "0.9rem" }}>{text}</p>;
@@ -230,6 +231,7 @@ export function ManagerDashboard({
   const [golden, setGolden] = useState<GoldenSetStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -272,12 +274,24 @@ export function ManagerDashboard({
             Vue d'ensemble de vos projets de transcription.
           </p>
         </div>
-        {onCreateProject && (
-          <button onClick={onCreateProject} className="za-btn za-btn--primary">
-            + Nouveau Projet
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--spacing-3)", alignItems: "center" }}>
+          <button type="button" onClick={() => setIsInviteModalOpen(true)} className="za-btn za-btn--ghost">
+            + Inviter un membre
           </button>
-        )}
+          {onCreateProject ? (
+            <button type="button" onClick={onCreateProject} className="za-btn za-btn--primary">
+              + Nouveau Projet
+            </button>
+          ) : null}
+        </div>
       </header>
+
+      <InviteTeamMemberModal
+        isOpen={isInviteModalOpen}
+        onClose={() => setIsInviteModalOpen(false)}
+        token={token ?? ""}
+        onSuccess={() => setError("")}
+      />
 
       {error ? <p style={{ color: "var(--color-error)", marginBottom: "var(--spacing-4)" }}>{error}</p> : null}
       {loading ? <DashboardInfo text="Mise à jour des données..." /> : null}

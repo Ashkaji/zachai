@@ -1,5 +1,5 @@
 # generated: 2026-03-19
-# last_updated: 2026-04-16 (Story 16-5 ready-for-dev)
+# last_updated: 2026-04-16 (Story 16-5 review)
 # project: zachai
 # project_key: NOKEY
 # tracking_system: file-system
@@ -162,7 +162,7 @@ development_status:
   16-2-manager-scope-membership-model: done
   16-3-api-user-provisioning-and-rbac: done
   16-4-ui-admin-create-managers: done
-  16-5-ui-manager-invite-transcripteur-expert: ready-for-dev
+  16-5-ui-manager-invite-transcripteur-expert: review
   16-6-expert-label-studio-project-access: backlog
   epic-16-retrospective: optional
 

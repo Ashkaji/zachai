@@ -1,6 +1,6 @@
 # Story 16.5: UI Manager — invite Transcripteur / Expert
 
-Status: ready-for-dev
+Status: review
 
 <!-- Ultimate context engine analysis completed — comprehensive developer guide created. -->
 
@@ -44,14 +44,14 @@ Status: ready-for-dev
 
 ## Tasks / Subtasks
 
-- [ ] **Component** (AC: 2–5, 6)  
-  - [ ] Add `InviteTeamMemberModal.tsx` (or equivalent name) in `src/frontend/src/features/dashboard/`, modeled on `CreateManagerModal.tsx`: role control (radio or `<select>`), shared field layout, `createUser({ ...form, role }, token)`.
-- [ ] **Integration** (AC: 1)  
-  - [ ] Wire modal + trigger button into `ManagerDashboard` header in `RoleDashboards.tsx` (e.g. next to “+ Nouveau Projet” when `onCreateProject` is present, or in a sensible fixed position — avoid Admin-only code paths).
-- [ ] **Tests** (AC: 7)  
-  - [ ] `InviteTeamMemberModal.test.tsx` — mock `createUser`, assert payloads for `Transcripteur` and `Expert`, error display, disabled submit while loading.
-- [ ] **Copy / a11y** (AC: 5, 6)  
-  - [ ] Clear title (“Inviter un membre d’équipe” / similar), optional short note for Expert about LS access coming in 16.6, labels associated with inputs (`za-label` pattern).
+- [x] **Component** (AC: 2–5, 6)  
+  - [x] Add `InviteTeamMemberModal.tsx` (or equivalent name) in `src/frontend/src/features/dashboard/`, modeled on `CreateManagerModal.tsx`: role control (radio or `<select>`), shared field layout, `createUser({ ...form, role }, token)`.
+- [x] **Integration** (AC: 1)  
+  - [x] Wire modal + trigger button into `ManagerDashboard` header in `RoleDashboards.tsx` (e.g. next to “+ Nouveau Projet” when `onCreateProject` is present, or in a sensible fixed position — avoid Admin-only code paths).
+- [x] **Tests** (AC: 7)  
+  - [x] `InviteTeamMemberModal.test.tsx` — mock `createUser`, assert payloads for `Transcripteur` and `Expert`, error display, disabled submit while loading.
+- [x] **Copy / a11y** (AC: 5, 6)  
+  - [x] Clear title (“Inviter un membre d’équipe” / similar), optional short note for Expert about LS access coming in 16.6, labels associated with inputs (`za-label` pattern).
 
 ## Dev Notes
 
@@ -119,17 +119,31 @@ Status: ready-for-dev
 
 - No `project-context.md` found in repo; rely on artifacts above and in-repo sources.
 
+## Change Log
+
+- 2026-04-16: Implemented `InviteTeamMemberModal`, Manager dashboard integration, Vitest coverage; full frontend + API test suites green.
+
 ## Dev Agent Record
 
 ### Agent Model Used
 
-_(filled by dev agent)_
+Composer (Cursor agent)
 
 ### Debug Log References
 
 ### Completion Notes List
 
+- Manager dashboard header: “+ Inviter un membre” (`za-btn--ghost`) opens modal; “+ Nouveau Projet” unchanged when `onCreateProject` is provided.
+- Modal: radio roles Transcripteur / Expert, helper text for Expert → LS in story 16.6, `htmlFor` / ids on fields for a11y.
+- Tests: default role Transcripteur, Expert branch, no Admin/Manager in copy, API error surface, reopen clears state.
+
 ### File List
+
+- `src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx`
+- `src/frontend/src/features/dashboard/InviteTeamMemberModal.test.tsx`
+- `src/frontend/src/features/dashboard/RoleDashboards.tsx`
+- `.bmad-outputs/implementation-artifacts/sprint-status.yaml`
+- `.bmad-outputs/implementation-artifacts/16-5-ui-manager-invite-transcripteur-expert.md`
 
 ---
 
