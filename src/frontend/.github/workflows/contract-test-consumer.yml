@@ -1,0 +1,34 @@
+name: contract-test-consumer
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+env:
+  PACT_BROKER_BASE_URL: ${{ secrets.PACT_BROKER_BASE_URL }}
+  PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+  PACTICIPANT: zachai-frontend
+  PROVIDER: zachai-api
+
+jobs:
+  consumer-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect breaking change checkbox
+        uses: ./.github/actions/detect-breaking-change
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: 1) Run consumer contract tests
+        run: npm run test:pact:consumer
+      - name: 2) Publish pacts
+        run: npm run publish:pact
+      - name: 4) Check can-i-deploy
+        if: env.PACT_BREAKING_CHANGE != 'true'
+        run: npm run can:i:deploy:consumer

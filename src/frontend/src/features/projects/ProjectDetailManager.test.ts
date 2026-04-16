@@ -5,16 +5,18 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectDetailManager } from "./ProjectDetailManager";
 
-const { authState, fetchProjectStatusMock } = vi.hoisted(() => ({
+const { authState, fetchProjectStatusMock, fetchProjectDetailMock } = vi.hoisted(() => ({
   authState: {
     isLoading: false,
     user: { access_token: "token" } as { access_token: string } | null,
   },
   fetchProjectStatusMock: vi.fn(),
+  fetchProjectDetailMock: vi.fn(),
 }));
 
 vi.mock("../dashboard/dashboardApi", () => ({
   fetchProjectStatus: fetchProjectStatusMock,
+  fetchProjectDetail: fetchProjectDetailMock,
 }));
 
 vi.mock("react-oidc-context", () => ({
@@ -46,6 +48,20 @@ describe("ProjectDetailManager", () => {
     authState.isLoading = false;
     authState.user = { access_token: "token" };
     fetchProjectStatusMock.mockReset();
+    fetchProjectDetailMock.mockReset();
+    fetchProjectDetailMock.mockResolvedValue({
+      id: 1,
+      name: "Test Project",
+      description: null,
+      nature_id: 1,
+      nature_name: "General",
+      production_goal: null,
+      status: "active",
+      manager_id: "manager-1",
+      label_studio_project_id: null,
+      created_at: "2026-04-10T10:00:00Z",
+      labels: [],
+    });
   });
 
   afterEach(() => {
@@ -89,7 +105,7 @@ describe("ProjectDetailManager", () => {
       await fetchPromise;
     });
 
-    expect(container.textContent).toContain("Détail Projet #1");
+    expect(container.textContent).toContain("Test Project");
     expect(container.textContent).toContain("Aucun fichier audio n'a été ajouté à ce projet.");
   });
 

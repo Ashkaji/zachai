@@ -108,14 +108,17 @@ describe("ProjectDetailManager Bulk Actions", () => {
     });
     await flushEffects();
 
-    const assignBtn = Array.from(container.querySelectorAll("button")).find(b => b.textContent === "Assigner");
+    const assignBtn = Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.trim().includes("Assigner"),
+    );
+    expect(assignBtn).toBeDefined();
     await act(async () => {
       assignBtn?.click();
     });
     await flushEffects();
 
-    expect(container.textContent).toContain("Assignation Groupée");
-    expect(container.querySelector('input[placeholder*="ID Transcripteur"]')).not.toBeNull();
+    expect(document.body.textContent).toContain("Assignation Groupée");
+    expect(document.body.querySelector('input[placeholder*="ID Transcripteur"]')).not.toBeNull();
 
     const cancelBtn = Array.from(container.querySelectorAll("button")).find(b => b.textContent === "Annuler");
     await act(async () => {
@@ -123,14 +126,17 @@ describe("ProjectDetailManager Bulk Actions", () => {
     });
     await flushEffects();
 
-    const rejectBtn = Array.from(container.querySelectorAll("button")).find(b => b.textContent === "Rejeter");
+    const rejectBtn = Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.trim().includes("Rejeter"),
+    );
+    expect(rejectBtn).toBeDefined();
     await act(async () => {
       rejectBtn?.click();
     });
     await flushEffects();
 
-    expect(container.textContent).toContain("Rejet Groupé");
-    expect(container.querySelector('select')).not.toBeNull();
+    expect(document.body.textContent).toContain("Rejet Groupé");
+    expect(document.body.querySelector('select')).not.toBeNull();
   });
 
   it("selects only visible items when 'Select All' is clicked", async () => {

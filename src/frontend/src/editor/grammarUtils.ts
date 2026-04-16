@@ -55,33 +55,29 @@ export function docRangeForTextSlice(
 ): { from: number; to: number } | null {
   if (length <= 0 || offset < 0 || spans.length === 0) return null;
   const end = offset + length;
+  const textStart = spans[0]!.textStart;
+  const textEnd = spans[spans.length - 1]!.textEnd;
+  if (offset < textStart || end > textEnd) return null;
 
   let fromPos: number | null = null;
   let toPos: number | null = null;
+  let covered = 0;
 
   for (const s of spans) {
     const overlapStart = Math.max(offset, s.textStart);
     const overlapEnd = Math.min(end, s.textEnd);
-    
+
     if (overlapStart < overlapEnd) {
       const localFrom = s.from + (overlapStart - s.textStart);
       const localTo = s.from + (overlapEnd - s.textStart);
       if (fromPos === null || localFrom < fromPos) fromPos = localFrom;
       if (toPos === null || localTo > toPos) toPos = localTo;
+      covered += overlapEnd - overlapStart;
     }
   }
 
-  // If no overlap with actual text spans was found, check if it's a separator-only slice
-  if (fromPos === null || toPos === null) {
-    // Find the span immediately following the offset to get a fallback position
-    const nextSpan = spans.find(s => s.textStart >= offset);
-    if (nextSpan) {
-      return { from: nextSpan.from, to: nextSpan.from };
-    }
-    // Fallback to the end of the last span
-    const lastSpan = spans[spans.length - 1]!;
-    return { from: lastSpan.to, to: lastSpan.to };
-  }
+  // Require full coverage by text spans to prevent crossing artificial block separators.
+  if (fromPos === null || toPos === null || covered !== length) return null;
 
   return { from: fromPos, to: toPos };
 }

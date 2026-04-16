@@ -1,2 +1,6 @@
 node_modules/
 dist/
+/pacts/
+pact-logs/
+playwright-report/
+test-results/

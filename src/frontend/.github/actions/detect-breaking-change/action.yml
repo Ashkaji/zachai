@@ -1,0 +1,11 @@
+name: detect-breaking-change
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        if [[ "${{ github.event.pull_request.body || '' }}" == *"[x] Breaking contract change"* ]]; then
+          echo "PACT_BREAKING_CHANGE=true" >> "$GITHUB_ENV"
+        else
+          echo "PACT_BREAKING_CHANGE=false" >> "$GITHUB_ENV"
+        fi

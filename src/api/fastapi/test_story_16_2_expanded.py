@@ -48,7 +48,7 @@ async def test_post_membership_forbidden_non_admin(mock_db):
     })
     
     assert response.status_code == 403
-    assert "Admin role required" in response.json()["detail"]["error"]
+    assert "Admin role required" in response.json()["error"]
 
 @pytest.mark.asyncio
 async def test_post_membership_conflict_member_assigned_elsewhere(mock_db):
@@ -67,7 +67,7 @@ async def test_post_membership_conflict_member_assigned_elsewhere(mock_db):
     })
     
     assert response.status_code == 409
-    assert "already belongs to another manager" in response.json()["detail"]["error"]
+    assert "already belongs to another manager" in response.json()["error"]
 
 @pytest.mark.asyncio
 async def test_post_membership_idempotent_same_pair(mock_db):
@@ -100,7 +100,7 @@ async def test_post_membership_invalid_same_ids(mock_db):
     })
     
     assert response.status_code == 400
-    assert "must be different" in response.json()["detail"]["error"]
+    assert "must be different" in response.json()["error"]
 
 @pytest.mark.asyncio
 async def test_get_memberships_admin_visibility(mock_db):
@@ -140,7 +140,7 @@ async def test_get_memberships_manager_forbidden_other_perimeter(mock_db):
     response = client.get("/v1/iam/memberships/other-manager")
     
     assert response.status_code == 403
-    assert "Access denied" in response.json()["detail"]["error"]
+    assert "Access denied" in response.json()["error"]
 
 @pytest.mark.asyncio
 async def test_delete_membership_admin_success(mock_db):
@@ -167,4 +167,4 @@ async def test_delete_membership_not_found(mock_db):
     response = client.delete("/v1/iam/memberships/manager-1/user-missing")
     
     assert response.status_code == 404
-    assert "not found" in response.json()["detail"]["error"]
+    assert "not found" in response.json()["error"]
