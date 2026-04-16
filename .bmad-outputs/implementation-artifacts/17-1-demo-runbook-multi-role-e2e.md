@@ -26,6 +26,14 @@ Créez **plusieurs utilisateurs par rôle** (pas un seul compte « représentant
 
 ## 1. Préparation des Comptes (IAM)
 
+### Realm Keycloak : `zachai` (indispensable)
+
+Oui : **toute création ou correction manuelle dans l’admin Keycloak** doit être faite dans le **realm applicatif ZachAI**, pas dans **`master`**.
+
+- Dans la **console d’administration Keycloak**, le sélecteur de realm (en haut à gauche) doit afficher **`zachai`** avant de créer des utilisateurs ou d’assigner des **Realm roles** (`Admin`, `Manager`, etc.).
+- C’est le même realm que celui utilisé par le frontend : l’OIDC pointe vers `…/realms/zachai` (valeur par défaut `VITE_KEYCLOAK_REALM` = `zachai` dans le code du front).
+- Les comptes créés **via l’interface ZachAI** (Étape B : managers, transcripteurs, experts) sont provisionnés **dans ce realm** par l’API ; vous n’ouvrez Keycloak à la main surtout pour le **premier admin** (Étape A) ou pour **vérifier / corriger** des rôles.
+
 ### Matrice des capacités par rôle (référence démo)
 - **Admin** : crée les Managers, supervise globalement.
 - **Manager** : crée les membres d'équipe (`Transcripteur` / `Expert`) dans son périmètre.
@@ -33,9 +41,10 @@ Créez **plusieurs utilisateurs par rôle** (pas un seul compte « représentant
 - **Expert** : profil IAM composite (`Expert` + `Transcripteur`), accès aux workflows Expert ZachAI et aux projets Label Studio liés.
 
 ### Étape A : Admins (Console Keycloak)
-1. Accédez à votre instance Keycloak.
-2. Pour **chaque** admin du tableau (`zachai-a1`, `zachai-a2`) : créez l’utilisateur, mot de passe `ZachaiDemo2026!` (**Temporary = OFF** si vous évitez le changement imposé à la première connexion).
-3. **Role Mappings** : royaume **`Admin`** pour les deux.
+1. Accédez à votre instance Keycloak (console admin).
+2. **Sélectionnez le realm `zachai`** (pas `master`). Tant que ce sélecteur n’est pas sur `zachai`, les utilisateurs que vous créez ne seront **pas** ceux avec lesquels le frontend se connecte.
+3. Pour **chaque** admin du tableau (`zachai-a1`, `zachai-a2`) : créez l’utilisateur, mot de passe `ZachaiDemo2026!` (**Temporary = OFF** si vous évitez le changement imposé à la première connexion).
+4. **Role Mappings** : assignez le **Realm role** **`Admin`** pour les deux.
 
 *(Si vous ne créez qu’un admin au début, vous pouvez ajouter `zachai-a2` plus tard pour tester deux superviseurs.)*
 
