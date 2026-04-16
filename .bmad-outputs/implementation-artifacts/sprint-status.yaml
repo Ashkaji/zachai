@@ -164,7 +164,7 @@ development_status:
   16-4-ui-admin-create-managers: done
   16-5-ui-manager-invite-transcripteur-expert: done
   16-6-expert-label-studio-project-access: done
-  epic-16-retrospective: optional
+  epic-16-retrospective: done
 
   # ─── EPIC 17 — L7: Démo terrain & documentation produit ───────────────────
   epic-17: in-progress
