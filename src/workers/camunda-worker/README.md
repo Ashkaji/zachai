@@ -30,4 +30,4 @@ The eval split must contain **at least one row**; otherwise `lora-wer-eval` fail
 | `LORA_STUB_SOURCE_PREFIX` | Version prefix inside **models** bucket (with trailing `/`) |
 | `ENVIRONMENT` | `production` / `prod` forbids `LORA_TRAINING_STUB` |
 
-`compose.yml` defaults `LORA_TRAINING_STUB=true` and `LORA_STUB_SOURCE_PREFIX=whisper-base-ov/` so a copied `.env.example` can run the pipeline locally once that prefix exists in the **models** bucket. **Production** must set `ENVIRONMENT=production` (or `prod`) and `LORA_TRAINING_STUB=false` in `.env`; otherwise the worker exits at startup if stub is still enabled.
+`compose.yml` passes `LORA_STUB_SOURCE_PREFIX=whisper-base-ov/` by default. If **`LORA_TRAINING_STUB` is unset or empty**, `lora_pipeline.py` enables stub mode only when **`ENVIRONMENT` is not** `production`/`prod` (so production + forgotten stub does not crash the worker). A copied **`.env.example`** still sets `LORA_TRAINING_STUB=true` explicitly for local runs. **Production** with an **explicit** `LORA_TRAINING_STUB=true` still fails at startup (stub is forbidden in prod).

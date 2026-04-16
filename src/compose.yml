@@ -458,7 +458,8 @@ services:
       LORA_MAX_WER: ${LORA_MAX_WER:-0.02}
       LORA_EVAL_FRACTION: ${LORA_EVAL_FRACTION:-0.2}
       LORA_SPLIT_SEED: ${LORA_SPLIT_SEED:-42}
-      LORA_TRAINING_STUB: ${LORA_TRAINING_STUB:-true}
+      # Omit default so container can treat empty as "derive from ENVIRONMENT" (see lora_pipeline.py).
+      LORA_TRAINING_STUB: ${LORA_TRAINING_STUB:-}
       LORA_STUB_SOURCE_PREFIX: ${LORA_STUB_SOURCE_PREFIX:-whisper-base-ov/}
       ENVIRONMENT: ${ENVIRONMENT:-development}
     networks:

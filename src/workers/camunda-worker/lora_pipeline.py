@@ -63,13 +63,22 @@ try:
 except ValueError:
     LORA_SPLIT_SEED = 42
 
-LORA_TRAINING_STUB = os.environ.get("LORA_TRAINING_STUB", "false").lower() == "true"
-LORA_STUB_SOURCE_PREFIX = (os.environ.get("LORA_STUB_SOURCE_PREFIX") or "").strip()
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "development").lower().strip()
 
 
 def _is_production() -> bool:
     return ENVIRONMENT in ("production", "prod")
+
+
+_raw_stub = os.environ.get("LORA_TRAINING_STUB")
+if _raw_stub is None or str(_raw_stub).strip() == "":
+    # Unset/empty: stub in non-prod (local Docker), off in production — avoids ENVIRONMENT=production
+    # with a compose-only default of stub=true.
+    LORA_TRAINING_STUB = not _is_production()
+else:
+    LORA_TRAINING_STUB = _raw_stub.strip().lower() == "true"
+
+LORA_STUB_SOURCE_PREFIX = (os.environ.get("LORA_STUB_SOURCE_PREFIX") or "").strip()
 
 
 def _validate_worker_env() -> None:
