@@ -1,0 +1,30 @@
+---
+description: Archive BMAD done/review artifacts while keeping discoverability
+alwaysApply: true
+---
+
+# BMAD artifact archiving convention
+
+Apply this convention to all BMAD implementation artifacts under `.bmad-outputs/implementation-artifacts`:
+
+1. **Archive when completed**  
+   When a story or retrospective is fully complete (typically `done` and post-review), move the corresponding markdown artifact to:
+   - `.bmad-outputs/implementation-artifacts/archive/`
+
+2. **Keep discoverability**  
+   Archiving must never mean "hidden" or "forgotten". Agents must still:
+   - search archived artifacts when gathering context,
+   - reference archived stories/retros in new work when relevant,
+   - treat `archive/` as active historical knowledge.
+
+3. **Keep sprint tracking authoritative**  
+   `sprint-status.yaml` remains the source of truth for status.  
+   Moving files to `archive/` must not break status updates, retrospective completion, or traceability.
+
+4. **Prefer deterministic names and git moves**  
+   Keep original filenames when archiving (for stable references) and perform path changes as git-tracked moves.
+
+5. **Default expectation for agents**  
+   Unless the user asks otherwise, agents should follow:
+   - `done + reviewed => archived`
+   - `active/in-progress/review => root implementation-artifacts`
