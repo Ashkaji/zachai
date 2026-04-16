@@ -116,7 +116,7 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
           </div>
           {role === "Expert" ? (
             <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
-              L’accès projet Label Studio pour les experts sera branché dans une prochaine livraison (story 16.6).
+              Les experts peuvent ouvrir leurs projets Label Studio depuis le tableau de bord Expert.
             </p>
           ) : null}
         </fieldset>
@@ -133,7 +133,6 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
             required
             className="za-input"
             disabled={loading}
-            autoComplete="off"
           />
         </div>
 
@@ -150,7 +149,6 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
             required
             className="za-input"
             disabled={loading}
-            autoComplete="off"
           />
         </div>
 
@@ -167,7 +165,6 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
               required
               className="za-input"
               disabled={loading}
-              autoComplete="off"
             />
           </div>
           <div style={{ display: "grid", gap: "var(--spacing-1)" }}>
@@ -182,7 +179,6 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
               required
               className="za-input"
               disabled={loading}
-              autoComplete="off"
             />
           </div>
         </div>
