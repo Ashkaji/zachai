@@ -167,8 +167,8 @@ development_status:
   epic-16-retrospective: optional
 
   # ─── EPIC 17 — L7: Démo terrain & documentation produit ───────────────────
-  epic-17: backlog
-  17-1-demo-runbook-multi-role-e2e: backlog
+  epic-17: in-progress
+  17-1-demo-runbook-multi-role-e2e: review
   17-2-readme-roadmap-and-bible-demo-pointers: backlog
   epic-17-retrospective: optional
 

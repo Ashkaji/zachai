@@ -309,6 +309,6 @@ Mis à jour automatiquement au commit (hook Git `scripts/git-hooks/` ou outil pr
 | 14 | terminé | terminé | `14-1-restore-failure-signal-review-hardening` terminé |
 | 15 | terminé | terminé | `15-1-bible-sources-licensing-and-provenance` terminé<br>`15-2-bible-extract-to-zachai-json` terminé<br>`15-3-bible-ingest-smoke-and-operator-docs` terminé |
 | 16 | en cours | optionnel | `16-1-keycloak-admin-client-and-service-account` terminé<br>`16-2-manager-scope-membership-model` terminé<br>`16-3-api-user-provisioning-and-rbac` terminé<br>`16-4-ui-admin-create-managers` terminé<br>`16-5-ui-manager-invite-transcripteur-expert` terminé<br>`16-6-expert-label-studio-project-access` backlog |
-| 17 | backlog | optionnel | `17-1-demo-runbook-multi-role-e2e` backlog<br>`17-2-readme-roadmap-and-bible-demo-pointers` backlog |
+| 17 | en cours | optionnel | `17-1-demo-runbook-multi-role-e2e` revue<br>`17-2-readme-roadmap-and-bible-demo-pointers` backlog |
 | 18 | backlog | optionnel | `18-1-smtp-infra-and-mailpit` backlog<br>`18-2-welcome-and-initial-reset-emails` backlog<br>`18-3-iam-support-manager-reset-and-forgot-password` backlog<br>`18-4-assignment-notifications` backlog<br>`18-5-ui-preference-center-notifications` backlog |
 <!-- sync-epic-docs:end -->
