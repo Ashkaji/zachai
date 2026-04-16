@@ -253,6 +253,9 @@ services:
       DB_PASSWORD: ${DB_CAMUNDA_PASSWORD:-camunda_pass}
       WAIT_FOR: postgres:5432
       WAIT_FOR_TIMEOUT: 60
+      # Camunda Run “Invoice” demo — disable auto-deploy + sample instances (Spring Boot relaxed binding).
+      # Existing deployments in the DB are not removed; use Cockpit / REST delete or recreate the camunda DB volume.
+      CAMUNDA_BPM_RUN_EXAMPLE_ENABLED: "false"
     networks:
       - zachai-network
     depends_on:
