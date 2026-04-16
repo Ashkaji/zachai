@@ -205,7 +205,7 @@ def normalize_expert_validation_payload(body: dict[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError):
         task_id_i = None
 
-    if annotation is None and isinstance(body.get("annotation"), dict) is False:
+    if annotation is None:
         annotation = body if "result" in body else {}
 
     annotation = annotation if isinstance(annotation, dict) else {}

@@ -47,4 +47,8 @@ async def consume_wss_ticket(redis: Any, ticket_id: str) -> dict[str, Any] | Non
         return None
     if isinstance(raw, (bytes, bytearray)):
         raw = raw.decode("utf-8")
-    return json.loads(raw)
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        # Treat corrupted/non-JSON data as invalid ticket (fail closed)
+        return None

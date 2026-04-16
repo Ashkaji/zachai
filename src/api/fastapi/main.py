@@ -1016,6 +1016,48 @@ async def get_current_user(
     return payload
 
 
+async def get_current_user_roles(payload: Annotated[dict, Depends(get_current_user)]) -> list[str]:
+    """Dependency: extract roles from the current user's JWT payload."""
+    return get_roles(payload)
+
+
+def require_roles(allowed_roles: set[str]):
+    """Dependency factory: enforce that the current user has at least one of the specified roles."""
+    async def _require(roles: Annotated[list[str], Depends(get_current_user_roles)]):
+        if not set(allowed_roles).intersection(roles):
+            raise HTTPException(
+                status_code=403, 
+                detail={"error": f"{' or '.join(sorted(allowed_roles))} role required"}
+            )
+        return roles
+    return _require
+
+
+async def _safe_minio_read(bucket: str, object_name: str, max_bytes: int = 10 * 1024 * 1024) -> bytes:
+    """Read an object from MinIO with a size limit to prevent OOM (Story 8.1 Hardening)."""
+    try:
+        stat = internal_client.stat_object(bucket, object_name)
+        if stat.size > max_bytes:
+            logger.error("object_too_large bucket=%s key=%s size=%s max=%s", bucket, object_name, stat.size, max_bytes)
+            raise HTTPException(
+                status_code=413, 
+                detail={"error": f"Object too large to process in memory (max {max_bytes // (1024*1024)}MB)"}
+            )
+        
+        resp = internal_client.get_object(bucket, object_name)
+        try:
+            data = resp.read()
+            return data
+        finally:
+            resp.close()
+            resp.release_conn()
+    except S3Error as exc:
+        if exc.code == "NoSuchKey":
+             raise HTTPException(status_code=404, detail={"error": "Object not found in storage"})
+        logger.error("minio_read_error bucket=%s key=%s error=%s", bucket, object_name, exc)
+        raise HTTPException(status_code=503, detail={"error": "Storage unavailable"})
+
+
 # ─── Schemas ──────────────────────────────────────────────────────────────────
 
 
@@ -1776,12 +1818,9 @@ async def _load_latest_snapshot_payload(db: AsyncSession, audio_id: int) -> tupl
 
     bucket, obj = _parse_bucket_and_object(snap.json_object_key)
     try:
-        resp = internal_client.get_object(bucket, obj)
-        data = resp.read()
-        resp.close()
-        resp.release_conn()
-    except S3Error:
-        raise HTTPException(status_code=503, detail={"error": "MinIO unavailable"})
+        data = await _safe_minio_read(bucket, obj)
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(status_code=502, detail={"error": "Snapshot JSON fetch failed"})
 
@@ -2451,7 +2490,7 @@ async def persist_golden_set_entry(
             select(Project).where(Project.label_studio_project_id == label_studio_project_id_for_verify)
         )
         proj = pr.scalar_one_or_none()
-        if proj is not None and proj.id != af.project_id:
+        if proj is None or proj.id != af.project_id:
             raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
 
     ts_prefix = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -2827,11 +2866,8 @@ async def create_nature(
     body: NatureCreateRequest,
     payload: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    _roles: Annotated[list[str], Depends(require_roles({"Manager", "Admin"}))],
 ) -> dict:
-    roles = get_roles(payload)
-    if not {"Manager", "Admin"}.intersection(roles):
-        raise HTTPException(status_code=403, detail={"error": "Manager or Admin role required"})
-
     if len({lb.name for lb in body.labels}) != len(body.labels):
         raise HTTPException(status_code=400, detail={"error": "Duplicate label names provided"})
 
@@ -2871,13 +2907,9 @@ async def create_nature(
 
 @app.get("/v1/natures", tags=["Natures"])
 async def list_natures(
-    payload: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    _roles: Annotated[list[str], Depends(require_roles({"Manager", "Admin"}))],
 ) -> list:
-    roles = get_roles(payload)
-    if not {"Manager", "Admin"}.intersection(roles):
-        raise HTTPException(status_code=403, detail={"error": "Manager or Admin role required"})
-
     # Optimization (Story 8.1): Single JOIN + count() instead of N+1 (or selectinload)
     # Accessing n.labels in a loop triggers separate queries.
     stmt = (
@@ -2904,13 +2936,9 @@ async def list_natures(
 @app.get("/v1/natures/{nature_id}", tags=["Natures"])
 async def get_nature(
     nature_id: int,
-    payload: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    _roles: Annotated[list[str], Depends(require_roles({"Manager", "Admin"}))],
 ) -> dict:
-    roles = get_roles(payload)
-    if not {"Manager", "Admin"}.intersection(roles):
-        raise HTTPException(status_code=403, detail={"error": "Manager or Admin role required"})
-
     result = await db.execute(select(Nature).where(Nature.id == nature_id))
     nature = result.scalar_one_or_none()
     if not nature:
@@ -2923,13 +2951,9 @@ async def get_nature(
 async def update_nature_labels(
     nature_id: int,
     body: LabelsUpdateRequest,
-    payload: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    _roles: Annotated[list[str], Depends(require_roles({"Manager", "Admin"}))],
 ) -> dict:
-    roles = get_roles(payload)
-    if not {"Manager", "Admin"}.intersection(roles):
-        raise HTTPException(status_code=403, detail={"error": "Manager or Admin role required"})
-
     if len({lb.name for lb in body.labels}) != len(body.labels):
         raise HTTPException(status_code=400, detail={"error": "Duplicate label names provided"})
 
@@ -3783,11 +3807,15 @@ async def post_iam_user(
         try:
             db.add(ManagerMembership(manager_id=sub, member_id=new_user_id))
             await db.commit()
-        except IntegrityError:
-            await db.rollback()
-            raise HTTPException(status_code=409, detail={"error": "Member already mapped to a manager"})
         except Exception as exc:
             await db.rollback()
+            # COMPENSATING ACTION: delete from Keycloak to prevent orphaned users
+            logger.warning("Cleaning up Keycloak user %s due to DB persistence failure", new_user_id)
+            await keycloak_admin.delete_keycloak_user(new_user_id)
+            
+            if isinstance(exc, IntegrityError):
+                 raise HTTPException(status_code=409, detail={"error": "Member already mapped to a manager"})
+            
             logger.error("Failed to persist ManagerMembership for new user %s: %s", new_user_id, exc)
             raise HTTPException(status_code=500, detail={"error": "Failed to persist manager mapping"})
 
@@ -4291,8 +4319,8 @@ async def _restore_document_from_snapshot_core(
             object_key = object_key[len(bucket) + 1 :]
 
         try:
-            resp = internal_client.get_object(bucket, object_key)
-            data = json.loads(resp.read().decode("utf-8"))
+            data_raw = await _safe_minio_read(bucket, object_key)
+            data = json.loads(data_raw.decode("utf-8"))
             yjs_b64 = data.get("yjs_state_binary")
             if not yjs_b64:
                 raise HTTPException(
@@ -4303,19 +4331,10 @@ async def _restore_document_from_snapshot_core(
                     },
                 )
             yjs_raw = base64.b64decode(yjs_b64.encode("ascii"), validate=True)
-        except S3Error as exc:
-            logger.error("minio_error snapshot_id=%s error=%s", snapshot_id, exc)
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "error": "Failed to fetch snapshot from storage",
-                    "code": DocumentRestoreFailureCode.SNAPSHOT_FETCH_FAILED,
-                },
-            )
         except HTTPException:
             raise
         except Exception as exc:
-            logger.error("snapshot_yjs_error snapshot_id=%s error=%s", snapshot_id, exc)
+            logger.error("snapshot_read_error snapshot_id=%s error=%s", snapshot_id, exc)
             raise HTTPException(
                 status_code=502,
                 detail={
@@ -5158,12 +5177,9 @@ async def export_transcript(
     filename = f"{stem}_{audio_id}.docx"
     bucket, obj = _parse_bucket_and_object(snap.docx_object_key)
     try:
-        resp = internal_client.get_object(bucket, obj)
-        docx_bytes = resp.read()
-        resp.close()
-        resp.release_conn()
-    except S3Error:
-        raise HTTPException(status_code=503, detail={"error": "MinIO unavailable"})
+        docx_bytes = await _safe_minio_read(bucket, obj)
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(status_code=502, detail={"error": "Snapshot DOCX fetch failed"})
     return Response(
