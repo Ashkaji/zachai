@@ -16,6 +16,7 @@ Status: done
     *   **Auth**: Admin or Manager role required. Transcripteur/Expert denied (403).
     *   **Admin Scope**: Can create any user with any role (`Admin`, `Manager`, `Transcripteur`, `Expert`).
     *   **Manager Scope**: Can only create users with roles `Transcripteur` or `Expert`. Any attempt to create an `Admin` or `Manager` returns **403 Forbidden**.
+    *   **Expert Role Expansion**: When `role="Expert"` is requested, the provisioned Keycloak user must receive both realm roles `Expert` and `Transcripteur` (Expert is a superset profile).
     *   **Manager Persistence**: If a Manager creates a user, a `ManagerMembership` row (from Story 16.2) must be automatically created in PostgreSQL to map the new user to this manager.
     *   **Keycloak Integration**: Calls the Keycloak Admin API `POST /admin/realms/{realm}/users` using the service account token from Story 16.1.
     *   **Body**: `username`, `email`, `firstName`, `lastName`, `enabled` (default true), `role` (one of the four roles).
@@ -30,6 +31,7 @@ Status: done
     *   **Not found**: If Keycloak has no user for `user_id`, return **404 Not Found** (for both Admin and Manager once the caller is authorized to hit the route).
 3.  **Role Mapping**:
     *   The API must map ZachAI roles (`Admin`, `Manager`, `Transcripteur`, `Expert`) to their corresponding Keycloak realm roles.
+    *   `Expert` mapping is composite: assign both `Expert` and `Transcripteur` realm roles at creation time.
     *   Roles are assigned during creation or via a separate `POST /v1/iam/users/{user_id}/roles` (optional if handled in create, but must be robust). **Decision:** Handle initial role assignment in `POST /v1/iam/users` for efficiency.
 4.  **Error Handling**:
     *   **400 Bad Request**: Invalid email format or missing fields.

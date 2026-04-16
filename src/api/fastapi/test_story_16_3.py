@@ -53,6 +53,31 @@ async def test_post_user_manager_success(mock_db):
         assert membership.manager_id == MANAGER_PAYLOAD["sub"]
         assert membership.member_id == "member-uuid"
 
+
+@pytest.mark.asyncio
+async def test_post_user_manager_expert_assigns_expert_and_transcripteur_roles(mock_db):
+    """Manager-created Expert gets both Expert and Transcripteur Keycloak roles."""
+    main.app.dependency_overrides[main.get_current_user] = lambda: MANAGER_PAYLOAD
+
+    with patch("main.keycloak_admin.create_keycloak_user", new_callable=AsyncMock) as mock_create:
+        mock_create.return_value = "expert-member-uuid"
+
+        response = client.post(
+            "/v1/iam/users",
+            json={
+                "username": "expert-member",
+                "email": "expert.member@example.com",
+                "firstName": "Expert",
+                "lastName": "Member",
+                "role": "Expert",
+            },
+        )
+
+        assert response.status_code == 201
+        mock_create.assert_called_once()
+        _, kwargs = mock_create.call_args
+        assert kwargs["role_names"] == ["Expert", "Transcripteur"]
+
 @pytest.mark.asyncio
 async def test_post_user_manager_forbidden_escalation(mock_db):
     """Manager cannot create another Manager or Admin."""

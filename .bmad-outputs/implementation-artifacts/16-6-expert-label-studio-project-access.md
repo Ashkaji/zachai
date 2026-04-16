@@ -59,6 +59,7 @@ Status: done
 
 ### Technical requirements
 
+- **Expert identity model (Epic 16):** Expert accounts are provisioned with both Keycloak realm roles `Expert` and `Transcripteur` (defined in Story 16.3), so Expert users keep transcription-level capabilities while gaining LS bridge actions.
 - **Public URL source of truth for this story:** Use `LABEL_STUDIO_PUBLIC_URL` to build browser-facing links (`http://localhost:8090` by default).
 - **Do not introduce internal URL behavior in this scope:** This story does not require `LABEL_STUDIO_URL` changes in `main.py`; internal worker/compose behavior remains out of scope here.
 - **Expert Scope:** Ensure the Expert only sees tasks assigned to them (already implemented in `us-05`, but verify during join).

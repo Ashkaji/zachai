@@ -116,10 +116,14 @@ def _get_keycloak_admin_urls():
     return realm, f"{admin_base}/realms/{realm}"
 
 
-async def create_keycloak_user(user_data: dict, role: str | None = None) -> str:
+async def create_keycloak_user(
+    user_data: dict,
+    role: str | None = None,
+    role_names: list[str] | None = None,
+) -> str:
     """
     Create a user in Keycloak and return their new ID (sub).
-    If role is provided, it is assigned immediately after creation.
+    If role or role_names are provided, they are assigned immediately after creation.
     Raises HTTPException 409 if user already exists, or 502 on Keycloak error.
     """
     from fastapi import HTTPException
@@ -148,11 +152,19 @@ async def create_keycloak_user(user_data: dict, role: str | None = None) -> str:
             else:
                 user_id = location.split("/")[-1]
             
-            # Assign role if requested
+            # Assign requested realm roles (single role kept for backward compatibility).
+            requested_roles: list[str] = []
+            if role_names:
+                requested_roles.extend(role_names)
             if role:
-                role_obj = await get_realm_role(role)
+                requested_roles.append(role)
+            for role_name in sorted(set(requested_roles)):
+                role_obj = await get_realm_role(role_name)
                 if not role_obj:
-                    raise HTTPException(status_code=500, detail={"error": f"Role {role} configuration mismatch"})
+                    raise HTTPException(
+                        status_code=500,
+                        detail={"error": f"Role {role_name} configuration mismatch"},
+                    )
                 await add_realm_role_to_user(user_id, role_obj)
             
             return user_id

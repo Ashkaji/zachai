@@ -19,7 +19,7 @@ Status: done
    **Fr:** Le point d’entrée « inviter un membre » n’apparaît que sur le tableau de bord **Manager**, pas sur Admin / Transcripteur / Expert.
 
 2. **Role choice (Transcripteur | Expert)**  
-   **En:** The manager selects **one** role: `Transcripteur` or `Expert`. The UI must **not** offer `Admin` or `Manager` (API would return 403 if attempted — avoid useless calls).  
+   **En:** The manager selects **one** role: `Transcripteur` or `Expert`. The UI must **not** offer `Admin` or `Manager` (API would return 403 if attempted — avoid useless calls). Backend provisioning rule: selecting `Expert` provisions a composite IAM profile (`Expert` + `Transcripteur` realm roles).  
    **Fr:** Choix d’un seul rôle : Transcripteur ou Expert ; pas Admin ni Manager.
 
 3. **Form contract**  
@@ -59,6 +59,7 @@ Status: done
 
 - **Reuse, don’t fork API:** `createUser` already posts to `/v1/iam/users`. Do not add a second client for the same endpoint.
 - **RBAC is server-side:** Manager can only create `Transcripteur`/`Expert` (Story 16.3). UI must not send other roles.
+- **Expert semantics:** In IAM, `Expert` is a superset profile and receives both `Expert` and `Transcripteur` realm roles at account creation.
 - **Errors:** Expect `400`, `403`, `409`, `502` — surface `Error.message` from `apiJson` like `CreateManagerModal` (same user-visible pattern).
 - **Membership:** Successful create from a Manager JWT must already persist `ManagerMembership` (16.3); no extra frontend call.
 

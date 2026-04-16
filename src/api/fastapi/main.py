@@ -3816,8 +3816,10 @@ async def post_iam_user(
         "enabled": body.enabled,
     }
 
-    # Create in Keycloak + Role mapping (AC 1, 3)
-    new_user_id = await keycloak_admin.create_keycloak_user(user_data, role=body.role)
+    # Create in Keycloak + Role mapping (AC 1, 3).
+    # Business rule: Expert is also Transcripteur at IAM level.
+    roles_to_assign = ["Expert", "Transcripteur"] if body.role == "Expert" else [body.role]
+    new_user_id = await keycloak_admin.create_keycloak_user(user_data, role_names=roles_to_assign)
 
     # Manager Persistence (Story 16.3 AC 1)
     if "Admin" not in roles:
