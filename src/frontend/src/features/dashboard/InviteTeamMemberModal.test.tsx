@@ -211,4 +211,50 @@ describe("InviteTeamMemberModal", () => {
     expect(document.body.textContent).not.toContain("fail");
     expect(document.body.querySelector<HTMLInputElement>('input[name="username"]')?.value).toBe("");
   });
+
+  it("trims input fields before submission", async () => {
+    createUserMock.mockResolvedValueOnce(undefined);
+
+    await act(async () => {
+      root.render(
+        createElement(InviteTeamMemberModal, {
+          isOpen: true,
+          onClose,
+          onSuccess,
+          token: "bearer-token",
+        }),
+      );
+    });
+
+    const usernameInput = document.body.querySelector<HTMLInputElement>('input[name="username"]');
+    const emailInput = document.body.querySelector<HTMLInputElement>('input[name="email"]');
+    const firstNameInput = document.body.querySelector<HTMLInputElement>('input[name="firstName"]');
+    const lastNameInput = document.body.querySelector<HTMLInputElement>('input[name="lastName"]');
+
+    await act(async () => {
+      usernameInput!.value = "  user123  ";
+      usernameInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      emailInput!.value = "  test@example.com  ";
+      emailInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      firstNameInput!.value = "  John  ";
+      firstNameInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      lastNameInput!.value = "  Doe  ";
+      lastNameInput!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const form = document.body.querySelector("form");
+    await act(async () => {
+      form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(createUserMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        username: "user123",
+        email: "test@example.com",
+        firstName: "John",
+        lastName: "Doe",
+      }),
+      "bearer-token",
+    );
+  });
 });

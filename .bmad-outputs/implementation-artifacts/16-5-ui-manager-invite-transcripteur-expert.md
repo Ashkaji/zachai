@@ -147,16 +147,17 @@ Composer (Cursor agent)
 
 ### Review Findings
 
-- [ ] [Review][Decision] Success Feedback — Should we use the `NotificationProvider` to show a success toast? AC 5 mentions "clear parent error banners", but not success toasts.
-- [ ] [Review][Patch] Redundant State Reset [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx:64]
-- [ ] [Review][Patch] Unauthenticated API Call Potential [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx:162]
-- [ ] [Review][Patch] Accessibility: Missing Fieldset for Radios [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx:75]
-- [ ] [Review][Patch] Aggressive autoComplete="off" [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx:109]
-- [ ] [Review][Patch] Internal Object Allocation [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx:15]
-- [ ] [Review][Patch] Race Condition: Close while in-flight [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx:159]
-- [ ] [Review][Patch] Input Sanitation: Missing Trimming [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx:39]
+- [x] [Review][Decision] Success Feedback — Resolved: NotificationProvider is used to show a success toast.
+- [x] [Review][Patch] Redundant State Reset — Resolved: Consolidated into resetForm callback and removed redundant finally block.
+- [x] [Review][Patch] Unauthenticated API Call Potential — Resolved: Added disabled prop and guard clause for token.
+- [x] [Review][Patch] Accessibility: Missing Fieldset for Radios — Resolved: Added fieldset and legend to role selection.
+- [x] [Review][Patch] Aggressive autoComplete="off" — Resolved: Removed and verified clean behavior.
+- [x] [Review][Patch] Internal Object Allocation — Resolved: Used lazy initializer function for useState.
+- [x] [Review][Patch] Race Condition: Close while in-flight — Resolved: handleClose now checks loading state.
+- [x] [Review][Patch] Input Sanitation: Missing Trimming — Resolved: Added trim() to all submitted string fields.
 - [x] [Review][Defer] Hardcoded Localization [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx] — deferred, pre-existing pattern
 - [x] [Review][Defer] Extensive Inline Styles [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx] — deferred, pre-existing pattern
+
 
 ---
 

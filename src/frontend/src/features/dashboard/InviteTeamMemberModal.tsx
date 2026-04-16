@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { GlassModal } from "../../shared/ui/Modals";
 import { createUser, type UserCreate } from "./dashboardApi";
 import { useNotifications } from "../../shared/notifications/NotificationContext";
@@ -22,19 +22,23 @@ const initialFormData: Omit<UserCreate, "role"> = {
 
 export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: InviteTeamMemberModalProps) {
   const { notify } = useNotifications();
-  const [formData, setFormData] = useState<Omit<UserCreate, "role">>({ ...initialFormData });
+  const [formData, setFormData] = useState<Omit<UserCreate, "role">>(() => ({ ...initialFormData }));
   const [role, setRole] = useState<TeamRole>("Transcripteur");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const resetForm = useCallback(() => {
+    setFormData({ ...initialFormData });
+    setRole("Transcripteur");
+    setError("");
+    setLoading(false);
+  }, []);
+
   useEffect(() => {
     if (!isOpen) {
-      setFormData(initialFormData);
-      setRole("Transcripteur");
-      setError("");
-      setLoading(false);
+      resetForm();
     }
-  }, [isOpen]);
+  }, [isOpen, resetForm]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,7 +47,6 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
     setLoading(true);
     setError("");
 
-    // Trim all string fields
     const sanitizedData = {
       username: formData.username.trim(),
       email: formData.email.trim(),
@@ -63,9 +66,10 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
       onClose();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Erreur lors de la création");
-    } finally {
       setLoading(false);
     }
+    // Note: finally { setLoading(false) } is omitted because resetForm or setError handle it, 
+    // avoiding redundant state updates after onClose().
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -129,6 +133,7 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
             required
             className="za-input"
             disabled={loading}
+            autoComplete="off"
           />
         </div>
 
@@ -145,6 +150,7 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
             required
             className="za-input"
             disabled={loading}
+            autoComplete="off"
           />
         </div>
 
@@ -161,6 +167,7 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
               required
               className="za-input"
               disabled={loading}
+              autoComplete="off"
             />
           </div>
           <div style={{ display: "grid", gap: "var(--spacing-1)" }}>
@@ -175,6 +182,7 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
               required
               className="za-input"
               disabled={loading}
+              autoComplete="off"
             />
           </div>
         </div>
