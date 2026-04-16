@@ -18,6 +18,12 @@ function formatCreateUserError(err: unknown): string {
     if (err.status === 403) {
       return err.message || "Action interdite (droits insuffisants ou compte déjà lié à un autre manager).";
     }
+    if (err.status === 502) {
+      return (
+        err.message ||
+        "Keycloak ou la passerelle a renvoyé une erreur (502). Vérifiez les logs des conteneurs fastapi et keycloak."
+      );
+    }
   }
   return err instanceof Error ? err.message : "Erreur lors de la création";
 }
@@ -107,7 +113,20 @@ export function CreateManagerModal({ isOpen, onClose, token, onSuccess }: Create
   return (
     <GlassModal isOpen={isOpen} onClose={handleClose} title="Créer un nouveau Manager">
       <form onSubmit={handleSubmit} style={{ display: "grid", gap: "var(--spacing-4)" }}>
-        {error && <p style={{ color: "var(--color-error)", fontSize: "0.85rem", margin: 0 }}>{error}</p>}
+        {error ? (
+          <p
+            style={{
+              color: "var(--color-error)",
+              fontSize: "0.85rem",
+              margin: 0,
+              whiteSpace: "pre-wrap",
+              maxHeight: "14rem",
+              overflowY: "auto",
+            }}
+          >
+            {error}
+          </p>
+        ) : null}
         
         <div style={{ display: "grid", gap: "var(--spacing-1)" }}>
           <label className="za-label">Nom d'utilisateur</label>

@@ -116,6 +116,55 @@ def _get_keycloak_admin_urls():
     return realm, f"{admin_base}/realms/{realm}"
 
 
+def _keycloak_user_create_http_exception(status_code: int, body: str):
+    """
+    Map Keycloak Admin API failures on POST /users to a 502 with an actionable French message.
+    FastAPI remains the single entrypoint;502 = erreur amont (Keycloak).
+    """
+    from fastapi import HTTPException
+
+    client_id = os.environ.get("KEYCLOAK_ADMIN_CLIENT_ID", "zachai-admin-cli")
+
+    if status_code == 401:
+        return HTTPException(
+            status_code=502,
+            detail={
+                "error": (
+                    "Keycloak a rejeté le jeton utilisé pour l’API d’administration (HTTP 401). "
+                    f"Vérifiez KEYCLOAK_ADMIN_CLIENT_ID / KEYCLOAK_ADMIN_CLIENT_SECRET pour le client "
+                    f"« {client_id} » (secret identique à celui du realm, issu de l’import realm)."
+                ),
+                "keycloak_status": 401,
+            },
+        )
+
+    if status_code == 403:
+        return HTTPException(
+            status_code=502,
+            detail={
+                "error": (
+                    "Keycloak refuse la création d’utilisateur via l’API admin (HTTP 403) : le compte de service "
+                    f"du client confidentiel « {client_id} » n’a probablement pas les bons droits. "
+                    "Dans Keycloak (realm cible) : Clients → ce client → Onglet « Service accounts roles » → "
+                    "« realm-management » : assigner au minimum « manage-users » et « view-users » (voir "
+                    "import `zachai-realm.json`). Vérifiez aussi que KEYCLOAK_ISSUER pointe vers le bon realm."
+                ),
+                "keycloak_status": 403,
+            },
+        )
+
+    return HTTPException(
+        status_code=502,
+        detail={
+            "error": (
+                f"Échec Keycloak lors de la création d’utilisateur (HTTP {status_code}). "
+                "Consultez les logs du conteneur `fastapi` et `keycloak` pour le corps de réponse détaillé."
+            ),
+            "keycloak_status": status_code,
+        },
+    )
+
+
 async def create_keycloak_user(
     user_data: dict,
     role: str | None = None,
@@ -124,7 +173,8 @@ async def create_keycloak_user(
     """
     Create a user in Keycloak and return their new ID (sub).
     If role or role_names are provided, they are assigned immediately after creation.
-    Raises HTTPException 409 if user already exists, or 502 on Keycloak error.
+    Raises HTTPException 409 if user already exists, or 502 with un message explicite si Keycloak
+    refuse (401/403 droits compte de service, ou autre code).
     """
     from fastapi import HTTPException
 
@@ -202,11 +252,16 @@ async def create_keycloak_user(
                     },
                 )
 
+        if resp.status_code in (401, 403):
+            logger.error(
+                "Keycloak user creation forbidden/unauthorized: %s %s",
+                resp.status_code,
+                resp.text,
+            )
+            raise _keycloak_user_create_http_exception(resp.status_code, resp.text)
+
         logger.error("Keycloak user creation failed: %s %s", resp.status_code, resp.text)
-        raise HTTPException(
-            status_code=502,
-            detail={"error": f"Keycloak error during user creation: {resp.status_code}"},
-        )
+        raise _keycloak_user_create_http_exception(resp.status_code, resp.text)
 
 
 async def get_keycloak_role_id(role_name: str) -> str:

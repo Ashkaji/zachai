@@ -5,6 +5,7 @@ import httpx
 from unittest.mock import patch, AsyncMock
 from jose import jwt
 
+import keycloak_admin
 from keycloak_admin import (
     get_admin_token,
     KeycloakAdminTokenError,
@@ -116,3 +117,93 @@ async def test_get_admin_token_error_handling():
             await get_admin_token()
 
         assert "Keycloak token request failed" in str(excinfo.value)
+
+
+class _MockAsyncClient403:
+    def __init__(self, *a, **k):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return None
+
+    async def post(self, *a, **k):
+        return httpx.Response(403, text='{"error":"HTTP 403 Forbidden"}')
+
+
+class _MockAsyncClient401(_MockAsyncClient403):
+    async def post(self, *a, **k):
+        return httpx.Response(401, text="Unauthorized")
+
+
+class _MockAsyncClient418(_MockAsyncClient403):
+    async def post(self, *a, **k):
+        return httpx.Response(418, text="teapot")
+
+
+@pytest.mark.asyncio
+async def test_create_keycloak_user_keycloak_403_actionable_502(setup_env):
+    from fastapi import HTTPException
+
+    with patch.object(keycloak_admin, "get_admin_token", new_callable=AsyncMock, return_value="tok"):
+        with patch.object(keycloak_admin.httpx, "AsyncClient", _MockAsyncClient403):
+            with pytest.raises(HTTPException) as exc_info:
+                await keycloak_admin.create_keycloak_user(
+                    {
+                        "username": "u1",
+                        "email": "u1@test.local",
+                        "firstName": "A",
+                        "lastName": "B",
+                        "enabled": True,
+                    }
+                )
+    assert exc_info.value.status_code == 502
+    d = exc_info.value.detail
+    assert isinstance(d, dict)
+    assert d["keycloak_status"] == 403
+    assert "manage-users" in d["error"]
+    assert "zachai-admin-cli" in d["error"] or "test-client" in d["error"]
+
+
+@pytest.mark.asyncio
+async def test_create_keycloak_user_keycloak_401_actionable_502(setup_env):
+    from fastapi import HTTPException
+
+    with patch.object(keycloak_admin, "get_admin_token", new_callable=AsyncMock, return_value="tok"):
+        with patch.object(keycloak_admin.httpx, "AsyncClient", _MockAsyncClient401):
+            with pytest.raises(HTTPException) as exc_info:
+                await keycloak_admin.create_keycloak_user(
+                    {
+                        "username": "u2",
+                        "email": "u2@test.local",
+                        "firstName": "A",
+                        "lastName": "B",
+                        "enabled": True,
+                    }
+                )
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail["keycloak_status"] == 401
+    assert "KEYCLOAK_ADMIN_CLIENT_SECRET" in exc_info.value.detail["error"]
+
+
+@pytest.mark.asyncio
+async def test_create_keycloak_user_keycloak_other_status_generic_502(setup_env):
+    from fastapi import HTTPException
+
+    with patch.object(keycloak_admin, "get_admin_token", new_callable=AsyncMock, return_value="tok"):
+        with patch.object(keycloak_admin.httpx, "AsyncClient", _MockAsyncClient418):
+            with pytest.raises(HTTPException) as exc_info:
+                await keycloak_admin.create_keycloak_user(
+                    {
+                        "username": "u3",
+                        "email": "u3@test.local",
+                        "firstName": "A",
+                        "lastName": "B",
+                        "enabled": True,
+                    }
+                )
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail["keycloak_status"] == 418
+    assert "418" in exc_info.value.detail["error"]

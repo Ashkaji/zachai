@@ -18,6 +18,12 @@ function formatCreateUserError(err: unknown): string {
     if (err.status === 403) {
       return err.message || "Action interdite (droits insuffisants ou périmètre manager).";
     }
+    if (err.status === 502) {
+      return (
+        err.message ||
+        "Keycloak ou la passerelle a renvoyé une erreur (502). Vérifiez les logs des conteneurs fastapi et keycloak."
+      );
+    }
   }
   return err instanceof Error ? err.message : "Erreur lors de la création";
 }
@@ -113,7 +119,20 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
   return (
     <GlassModal isOpen={isOpen} onClose={handleClose} title="Inviter un membre d'équipe">
       <form onSubmit={handleSubmit} style={{ display: "grid", gap: "var(--spacing-4)" }}>
-        {error ? <p style={{ color: "var(--color-error)", fontSize: "0.85rem", margin: 0 }}>{error}</p> : null}
+        {error ? (
+          <p
+            style={{
+              color: "var(--color-error)",
+              fontSize: "0.85rem",
+              margin: 0,
+              whiteSpace: "pre-wrap",
+              maxHeight: "14rem",
+              overflowY: "auto",
+            }}
+          >
+            {error}
+          </p>
+        ) : null}
 
         <fieldset style={{ border: "none", padding: 0, margin: 0, display: "grid", gap: "var(--spacing-2)" }}>
           <legend className="za-label" style={{ marginBottom: "var(--spacing-2)" }}>Rôle</legend>
