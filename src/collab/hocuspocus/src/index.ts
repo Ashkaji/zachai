@@ -310,6 +310,7 @@ redisSignals.on("message", async (channel, message) => {
         schema_version?: number;
         code?: string;
         message?: string;
+        restore_id?: string;
       };
       const documentId = data.document_id;
       const documentName =
