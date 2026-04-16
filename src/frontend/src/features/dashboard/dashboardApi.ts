@@ -78,6 +78,8 @@ export type ExpertTask = {
   expert_id: string | null;
   source: string;
   priority: string | null;
+  label_studio_project_id: number | null;
+  label_studio_url: string | null;
 };
 
 export type GoldenSetStatus = {

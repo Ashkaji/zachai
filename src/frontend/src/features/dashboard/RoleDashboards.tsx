@@ -38,8 +38,9 @@ export function ExpertDashboardStateContent(input: {
   viewState: ExpertDashboardViewState;
   error: string;
   tasks: ExpertTask[];
+  onReconcile?: (id: number) => void;
 }): ReactNode {
-  const { viewState, error, tasks } = input;
+  const { viewState, error, tasks, onReconcile } = input;
   if (viewState === "loading") {
     return <DashboardInfo text="Chargement dashboard expert..." />;
   }
@@ -51,13 +52,50 @@ export function ExpertDashboardStateContent(input: {
   }
   return (
     <DataTable
-      columns={["Audio", "Projet", "Statut", "Source", "Assigne le"]}
+      columns={["Audio", "Projet", "Statut", "Source", "Action"]}
       rows={tasks.slice(0, 12).map((t) => [
-        t.filename,
+        <div style={{ fontWeight: 700 }}>{t.filename}</div>,
         t.project_name,
-        t.status,
+        <span style={{ 
+          padding: "2px 6px", 
+          borderRadius: "4px", 
+          fontSize: "0.7rem", 
+          fontWeight: 800,
+          background: t.status === "validated" ? "var(--color-primary-soft)" : "var(--color-surface-hi)",
+          color: t.status === "validated" ? "var(--color-primary)" : "var(--color-text-muted)"
+        }}>{t.status.toUpperCase()}</span>,
         t.source,
-        t.assigned_at ? formatIso(t.assigned_at) : "--",
+        <div style={{ display: "flex", gap: "var(--spacing-2)" }}>
+          {onReconcile && (
+            <button 
+              onClick={() => onReconcile(t.audio_id)}
+              className="za-btn za-btn--ghost" 
+              style={{ padding: "4px 8px", fontSize: "0.75rem", border: "none", background: "var(--color-surface-hi)" }}
+            >
+              Réconcilier →
+            </button>
+          )}
+          {t.source === "label_studio" && t.label_studio_url && t.label_studio_project_id && (
+            <a
+              href={`${t.label_studio_url}/projects/${t.label_studio_project_id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="za-btn za-btn--ghost"
+              style={{ 
+                padding: "4px 8px", 
+                fontSize: "0.75rem", 
+                border: "1px solid var(--color-outline-ghost)", 
+                background: "transparent",
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center"
+              }}
+              title="Ouvrir dans Label Studio"
+            >
+              Label Studio →
+            </a>
+          )}
+        </div>
       ])}
     />
   );
@@ -468,6 +506,9 @@ export function ExpertDashboard({ onReconcile }: { onReconcile?: (audioId: numbe
         <p style={{ margin: 0, color: "var(--color-text-muted)", fontSize: "0.95rem" }}>
           Réconciliation des segments et validation de la qualité finale.
         </p>
+        <p style={{ margin: "var(--spacing-2) 0 0 0", color: "var(--color-text-muted)", fontSize: "0.8rem", fontStyle: "italic" }}>
+          Note : Pour les tâches Label Studio, assurez-vous d'être connecté à Label Studio avec vos identifiants experts.
+        </p>
       </header>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "var(--spacing-4)", marginBottom: "var(--spacing-8)" }}>
@@ -500,15 +541,37 @@ export function ExpertDashboard({ onReconcile }: { onReconcile?: (audioId: numbe
                   color: t.status === "validated" ? "var(--color-primary)" : "var(--color-text-muted)"
                 }}>{t.status.toUpperCase()}</span>,
                 t.source,
-                onReconcile ? (
-                  <button 
-                    onClick={() => onReconcile(t.audio_id)}
-                    className="za-btn za-btn--ghost" 
-                    style={{ padding: "4px 8px", fontSize: "0.75rem", border: "none", background: "var(--color-surface-hi)" }}
-                  >
-                    Réconcilier →
-                  </button>
-                ) : "--"
+                <div style={{ display: "flex", gap: "var(--spacing-2)" }}>
+                  {onReconcile && (
+                    <button 
+                      onClick={() => onReconcile(t.audio_id)}
+                      className="za-btn za-btn--ghost" 
+                      style={{ padding: "4px 8px", fontSize: "0.75rem", border: "none", background: "var(--color-surface-hi)" }}
+                    >
+                      Réconcilier →
+                    </button>
+                  )}
+                  {t.source === "label_studio" && t.label_studio_url && t.label_studio_project_id && (
+                    <a
+                      href={`${t.label_studio_url}/projects/${t.label_studio_project_id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="za-btn za-btn--ghost"
+                      style={{ 
+                        padding: "4px 8px", 
+                        fontSize: "0.75rem", 
+                        border: "1px solid var(--color-outline-ghost)", 
+                        background: "transparent",
+                        textDecoration: "none",
+                        display: "inline-flex",
+                        alignItems: "center"
+                      }}
+                      title="Ouvrir dans Label Studio"
+                    >
+                      Label Studio →
+                    </a>
+                  )}
+                </div>
               ])}
             />
           )}

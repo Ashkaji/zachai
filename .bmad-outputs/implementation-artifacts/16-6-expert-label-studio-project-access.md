@@ -1,6 +1,6 @@
 # Story 16.6: Expert — UI ZachAI & accès projet Label Studio
 
-Status: ready-for-dev
+Status: done
 
 <!-- Ultimate context engine analysis completed — comprehensive developer guide created. -->
 
@@ -41,19 +41,19 @@ Status: ready-for-dev
 
 ## Tasks / Subtasks
 
-- [ ] **Backend** (AC: 1, 2)
-  - [ ] Update `ExpertTaskResponse` pydantic model in `src/api/fastapi/main.py`.
-  - [ ] Update `list_expert_tasks` to join `Project` (if not already there) and return `label_studio_project_id`.
-  - [ ] Implement `label_studio_url` logic using `LABEL_STUDIO_PUBLIC_URL` env var.
-- [ ] **Frontend API** (AC: 3)
-  - [ ] Update `ExpertTask` interface in `src/frontend/src/features/dashboard/dashboardApi.ts`.
-- [ ] **Frontend UI** (AC: 4, 5, 6)
-  - [ ] Update `ExpertDashboard` in `src/frontend/src/features/dashboard/RoleDashboards.tsx`.
-  - [ ] Add the "Label Studio →" button next to "Réconcilier →".
-  - [ ] Style the button using Azure Flow ghost/outline variants.
-- [ ] **Tests**
-  - [ ] Add backend test case in `src/api/fastapi/test_main.py` verifying new fields in `/v1/expert/tasks`.
-  - [ ] Update Vitest tests for `ExpertDashboard` to assert the presence and href of the new link.
+- [x] **Backend** (AC: 1, 2)
+  - [x] Update `ExpertTaskResponse` pydantic model in `src/api/fastapi/main.py`.
+  - [x] Update `list_expert_tasks` to join `Project` (if not already there) and return `label_studio_project_id`.
+  - [x] Implement `label_studio_url` logic using `LABEL_STUDIO_PUBLIC_URL` env var.
+- [x] **Frontend API** (AC: 3)
+  - [x] Update `ExpertTask` interface in `src/frontend/src/features/dashboard/dashboardApi.ts`.
+- [x] **Frontend UI** (AC: 4, 5, 6)
+  - [x] Update `ExpertDashboard` in `src/frontend/src/features/dashboard/RoleDashboards.tsx`.
+  - [x] Add the "Label Studio →" button next to "Réconcilier →".
+  - [x] Style the button using Azure Flow ghost/outline variants.
+- [x] **Tests**
+  - [x] Add backend test case in `src/api/fastapi/test_main.py` verifying new fields in `/v1/expert/tasks`.
+  - [x] Update Vitest tests for `ExpertDashboard` to assert the presence and href of the new link.
 
 ## Dev Notes
 

@@ -67,7 +67,7 @@ describe("ExpertDashboard rendered state content", () => {
     expect(html).toContain("Aucune tache experte pour le moment.");
   });
 
-  it("renders success table with task row", () => {
+  it("renders success table with task row and Label Studio link", () => {
     const html = renderToStaticMarkup(
       createElement(
         "div",
@@ -86,6 +86,8 @@ describe("ExpertDashboard rendered state content", () => {
               expert_id: "user-1",
               source: "label_studio",
               priority: "high",
+              label_studio_project_id: 42,
+              label_studio_url: "http://localhost:8090",
             },
           ],
         }),
@@ -94,5 +96,7 @@ describe("ExpertDashboard rendered state content", () => {
     expect(html).toContain("audio.wav");
     expect(html).toContain("Project A");
     expect(html).toContain("label_studio");
+    expect(html).toContain('href="http://localhost:8090/projects/42"');
+    expect(html).toContain("Label Studio");
   });
 });

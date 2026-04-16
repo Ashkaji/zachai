@@ -163,7 +163,7 @@ development_status:
   16-3-api-user-provisioning-and-rbac: done
   16-4-ui-admin-create-managers: done
   16-5-ui-manager-invite-transcripteur-expert: done
-  16-6-expert-label-studio-project-access: ready-for-dev
+  16-6-expert-label-studio-project-access: done
   epic-16-retrospective: optional
 
   # ─── EPIC 17 — L7: Démo terrain & documentation produit ───────────────────

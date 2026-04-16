@@ -162,6 +162,8 @@ _SNAPSHOT_CALLBACK_SECRET: str = (os.environ.get("SNAPSHOT_CALLBACK_SECRET") or 
 _WHISPER_OPEN_API_KEY: str = (os.environ.get("WHISPER_OPEN_API_KEY") or "").strip()
 EXPORT_WORKER_URL: str = (os.environ.get("EXPORT_WORKER_URL") or "http://export-worker:8780").rstrip("/")
 OPENVINO_WORKER_URL: str = (os.environ.get("OPENVINO_WORKER_URL") or "http://openvino-worker:8770").rstrip("/")
+# Story 16.6: Label Studio public URL for browser deep-links (AC 2).
+LABEL_STUDIO_PUBLIC_URL: str = (os.environ.get("LABEL_STUDIO_PUBLIC_URL") or "http://localhost:8090").strip().rstrip("/")
 _CHANGEME_PREFIXES = ("changeme",)
 if _LABEL_STUDIO_WEBHOOK_SECRET and _LABEL_STUDIO_WEBHOOK_SECRET.startswith(_CHANGEME_PREFIXES):
     logger.warning("LABEL_STUDIO_WEBHOOK_SECRET uses a default 'changeme' value — override in production")
@@ -1161,6 +1163,8 @@ class ExpertTaskResponse(BaseModel):
     expert_id: str | None
     source: str
     priority: str | None = None
+    label_studio_project_id: int | None = None
+    label_studio_url: str | None = None
 
 
 class GoldenSetEntryRequest(BaseModel):
@@ -4640,6 +4644,8 @@ async def list_expert_tasks(
                 "expert_id": (str(asg.transcripteur_id) if asg else None),
                 "source": gse.source,
                 "priority": "high" if gse.weight == "high" else "standard",
+                "label_studio_project_id": proj.label_studio_project_id,
+                "label_studio_url": LABEL_STUDIO_PUBLIC_URL,
             }
         )
     return output

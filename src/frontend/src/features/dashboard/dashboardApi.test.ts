@@ -29,6 +29,8 @@ describe("dashboardApi.fetchExpertTasks", () => {
         expert_id: null,
         source: "label_studio",
         priority: null,
+        label_studio_project_id: 42,
+        label_studio_url: "http://localhost:8090",
       },
     ];
     apiJsonMock.mockResolvedValueOnce(payload);
