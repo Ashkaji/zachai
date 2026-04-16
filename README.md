@@ -52,23 +52,40 @@ Voir [`docs/architecture.md`](docs/architecture.md) pour le diagramme de flux co
 
 ## Structure du Projet
 
+Arborescence alignée sur le dépôt : la **racine** du repo (`zachai/`) contient la doc et les scripts transverses ; le **stack Docker et le code applicatif** vivent sous `src/` (c’est là que `docker compose` est lancé).
+
 ```
-zachai/
-├── docs/                        ← Documentation (PRD, Architecture, UX, API, Epics)
-│   └── bible/                   ← Bible sources, licenses & provenance (Story 15.1)
-├── src/
-│   ├── compose.yml              ← Orchestration Docker (point d'entrée du stack)
-│   ├── .env.example             ← Variables d'environnement (copier en .env)
-│   ├── bpmn/                    ← Workflows BPMN Camunda 7
-│   ├── api/                     ← FastAPI Gateway
-│   ├── collab/hocuspocus/       ← Serveur Hocuspocus + Yjs (Story 5.1)
-│   ├── docker/                  ← Images Postgres, Keycloak, …
-│   ├── frontend/                ← Interface React + Tiptap
-│   ├── scripts/                 ← Amorçage Model Registry (HF, mc)
-│   ├── workers/                 ← FFmpeg, OpenVINO, Camunda, Label Studio ML bridge, …
-│   └── …                        ← Autres services (compose relatif à src/)
-└── .gitignore
+zachai/ ← racine Git
+├── .github/workflows/                  ← CI (ex. qualité frontend + contrats Pact)
+├── docs/                               ← Documentation (PRD, Architecture, UX, API, Epics)
+│   └── bible/                          ← Bible sources, licences & provenance (Story 15.1)
+├── scripts/                            ← Scripts repo (ex. pytest API : run-api-pytest.sh)
+├── samples/                            ← Échantillons / fichiers d’exemple (si présents)
+├── README.md
+└── src/                                ← Point d’entrée Docker Compose + code
+    ├── compose.yml                     ← Orchestration Docker (lancer depuis src/)
+    ├── .env.example                    ← Variables d’environnement (copier en src/.env)
+    ├── bpmn/                           ← Workflows BPMN Camunda 7
+    ├── api/
+    │   └── fastapi/                    ← Gateway FastAPI (main.py, tests pytest, requirements)
+    ├── collab/
+    │   └── hocuspocus/                 ← Serveur Hocuspocus + Yjs (Story 5.1)
+    ├── config/                         ← Realm Keycloak, init Postgres, …
+    ├── docker/                         ← Dockerfiles / assets images (Postgres, Keycloak, …)
+    ├── frontend/                       ← Interface React + Vite + Tiptap (tests Vitest / Playwright sous frontend/tests/)
+    ├── models/                         ← Cache / artefacts modèles OpenVINO local (voir .gitignore)
+    ├── scripts/                        ← Scripts Python & shell côté stack (bootstrap, seed MinIO, …)
+    ├── services/                       ← Dossier réservé (vide) — logique serveur dans api/fastapi et workers/
+    └── workers/                        ← Services workers (réseau Docker)
+        ├── camunda-worker/
+        ├── diarization-worker/
+        ├── export-worker/
+        ├── ffmpeg-worker/
+        ├── label-studio-ml-bridge/
+        └── openvino-worker/
 ```
+
+**Convention réseau (rappel)** : depuis le navigateur ou l’hôte, on utilise en général `http://localhost:<port>` ; entre conteneurs, les URLs utilisent les **noms de service** Docker (`fastapi:8000`, `keycloak:8080`, etc.). Voir `src/.env.example` pour le détail.
 
 ---
 
