@@ -6,19 +6,19 @@ Ce document est votre guide pas-à-pas pour tester l'intégralité de la platefo
 
 ### Comptes d'exemple (démo E2E)
 
-Créez **plusieurs utilisateurs par rôle** (pas un seul compte « représentant » par rôle) : cela permet de tester les flux IAM, les permissions, et surtout **l’édition collaborative** entre plusieurs transcripteurs. **Même mot de passe** pour tous en démo locale uniquement — **ne pas réutiliser en production**.
+Créez **plusieurs utilisateurs par rôle** (pas un seul compte « représentant » par rôle) : cela permet de tester les flux IAM, les permissions, et surtout **l’édition collaborative** entre plusieurs transcripteurs. **Même mot de passe** pour tous les comptes du tableau : **`zachai`** (simple, démo locale uniquement — **ne pas réutiliser en production**). *Ce mot de passe n’est pas le « nom du realm » : le realm Keycloak s’appelle aussi `zachai`, mais là il s’agit du **secret de connexion** des utilisateurs.*
 
 | Rôle | Utilisateur | Mot de passe | E-mail |
 |------|-------------|--------------|--------|
-| Admin | `zachai-a1` | `ZachaiDemo2026!` | `a1@zachai.local` |
-| Admin | `zachai-a2` | `ZachaiDemo2026!` | `a2@zachai.local` |
-| Manager | `zachai-m1` | `ZachaiDemo2026!` | `m1@zachai.local` |
-| Manager | `zachai-m2` | `ZachaiDemo2026!` | `m2@zachai.local` |
-| Transcripteur | `zachai-t1` | `ZachaiDemo2026!` | `t1@zachai.local` |
-| Transcripteur | `zachai-t2` | `ZachaiDemo2026!` | `t2@zachai.local` |
-| Transcripteur | `zachai-t3` | `ZachaiDemo2026!` | `t3@zachai.local` |
-| Expert | `zachai-e1` | `ZachaiDemo2026!` | `e1@zachai.local` |
-| Expert | `zachai-e2` | `ZachaiDemo2026!` | `e2@zachai.local` |
+| Admin | `zachai-a1` | `zachai` | `a1@zachai.local` |
+| Admin | `zachai-a2` | `zachai` | `a2@zachai.local` |
+| Manager | `zachai-m1` | `zachai` | `m1@zachai.local` |
+| Manager | `zachai-m2` | `zachai` | `m2@zachai.local` |
+| Transcripteur | `zachai-t1` | `zachai` | `t1@zachai.local` |
+| Transcripteur | `zachai-t2` | `zachai` | `t2@zachai.local` |
+| Transcripteur | `zachai-t3` | `zachai` | `t3@zachai.local` |
+| Expert | `zachai-e1` | `zachai` | `e1@zachai.local` |
+| Expert | `zachai-e2` | `zachai` | `e2@zachai.local` |
 
 *Minimum utile pour la collab temps réel : au moins **deux** transcripteurs (`zachai-t1` + `zachai-t2`). Le troisième (`zachai-t3`) sert à valider qu’un troisième participant rejoint une session déjà ouverte.*
 
@@ -43,13 +43,13 @@ Oui : **toute création ou correction manuelle dans l’admin Keycloak** doit ê
 ### Étape A : Admins (Console Keycloak)
 1. Accédez à votre instance Keycloak (console admin).
 2. **Sélectionnez le realm `zachai`** (pas `master`). Tant que ce sélecteur n’est pas sur `zachai`, les utilisateurs que vous créez ne seront **pas** ceux avec lesquels le frontend se connecte.
-3. Pour **chaque** admin du tableau (`zachai-a1`, `zachai-a2`) : créez l’utilisateur, mot de passe `ZachaiDemo2026!` (**Temporary = OFF** si vous évitez le changement imposé à la première connexion).
+3. Pour **chaque** admin du tableau (`zachai-a1`, `zachai-a2`) : créez l’utilisateur, mot de passe `zachai` (**Temporary = OFF** si vous évitez le changement imposé à la première connexion).
 4. **Role Mappings** : assignez le **Realm role** **`Admin`** pour les deux.
 
 *(Si vous ne créez qu’un admin au début, vous pouvez ajouter `zachai-a2` plus tard pour tester deux superviseurs.)*
 
 ### Étape B : Managers, transcripteurs, experts (Interface ZachAI + Keycloak si besoin)
-1. **Connectez-vous en tant qu’Admin** (`zachai-a1` / `ZachaiDemo2026!`) sur le frontend ZachAI.
+1. **Connectez-vous en tant qu’Admin** (`zachai-a1` / `zachai`) sur le frontend ZachAI.
 2. **"+ Créer Manager"** : créez **`zachai-m1`** (`m1@zachai.local`), puis recommencez pour **`zachai-m2`** (`m2@zachai.local`) (ou créez `m2` depuis **`zachai-a2`** pour varier la démo).
 3. **Déconnectez-vous**, connectez-vous en **Manager** (`zachai-m1`).
 4. **"+ Inviter un membre"** : provisionnez **trois transcripteurs** — **`zachai-t1`**, **`zachai-t2`**, **`zachai-t3`** — et **deux experts** — **`zachai-e1`**, **`zachai-e2`** (e-mails `t1`…`t3`, `e1`, `e2` @ `zachai.local`).
@@ -80,7 +80,7 @@ Oui : **toute création ou correction manuelle dans l’admin Keycloak** doit ê
 
 ### 3.1 — Parcours solo (`zachai-t1`)
 
-1. **Déconnectez-vous**, puis connectez-vous en **`zachai-t1`** / `ZachaiDemo2026!`.
+1. **Déconnectez-vous**, puis connectez-vous en **`zachai-t1`** / `zachai`.
 2. Sur le dashboard : la tâche assignée au § 2 doit apparaître.
 3. **"Éditer →"**.
 4. **Workspace :**
@@ -104,7 +104,7 @@ Objectif : vérifier que **plusieurs transcripteurs** voient les modifications *
 
 ## 4. Réconciliation et Qualité (Le flux "Expert")
 
-1. **Déconnectez-vous**, puis connectez-vous en **Expert** (`zachai-e1` / `ZachaiDemo2026!`). *(Vous pouvez refaire une passe avec `zachai-e2` pour vérifier qu’un second expert voit les mêmes tâches / projets selon votre périmètre.)*
+1. **Déconnectez-vous**, puis connectez-vous en **Expert** (`zachai-e1` / `zachai`). *(Vous pouvez refaire une passe avec `zachai-e2` pour vérifier qu’un second expert voit les mêmes tâches / projets selon votre périmètre.)*
 2. Sur votre dashboard, repérez la tâche dans "Réconciliation Experte".
 3. Vérifiez la présence du bouton **"Label Studio →"** pour les tâches source `label_studio`.
 4. Cliquez sur **"Label Studio →"**.
@@ -119,7 +119,7 @@ Objectif : vérifier que **plusieurs transcripteurs** voient les modifications *
 
 ## 5. Clôture et Supervision (Retour au "Manager")
 
-1. **Connectez-vous en tant que Manager** (`zachai-m1` / `ZachaiDemo2026!`).
+1. **Connectez-vous en tant que Manager** (`zachai-m1` / `zachai`).
 2. Sur votre dashboard, la barre de progression du projet doit avoir avancé.
 3. Allez dans les **Détails du projet**.
 4. Vérifiez que l'audio est maintenant au statut **"Validated"**.
@@ -129,7 +129,7 @@ Objectif : vérifier que **plusieurs transcripteurs** voient les modifications *
 
 ## 6. Maintenance (Le flux "Admin")
 
-1. **Connectez-vous en tant qu'Admin** (`zachai-a1` / `ZachaiDemo2026!`).
+1. **Connectez-vous en tant qu'Admin** (`zachai-a1` / `zachai`).
 2. Observez les graphiques de santé système (simulation de charge).
 3. Allez dans le **Centre de Profil** (en haut à droite).
 4. Testez le changement de thème (Clair / Sombre).
