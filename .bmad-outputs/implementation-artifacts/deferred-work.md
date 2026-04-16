@@ -101,3 +101,7 @@
 ## Deferred from: code review of 16-3-api-user-provisioning-and-rbac.md (2026-04-14)
 - Keycloak/DB Transactionality Gap [src/api/fastapi/main.py:3766]: If Keycloak user creation succeeds but PostgreSQL ManagerMembership persistence fails, an orphaned user is created in Keycloak. Acceptable for v1 but needs future hardening.
 - Missing Configuration Guard for Keycloak Issuer [src/api/fastapi/keycloak_admin.py:100]: KEYCLOAK_ISSUER environment variable might be missing or malformed, leading to KeyError or malformed URLs. Needs global config validation.
+
+## Deferred from: code review of 16-5-ui-manager-invite-transcripteur-expert.md (2026-04-16)
+- Hardcoded Localization: UI strings are hardcoded in French (consistent with project pattern but technically deferred technical debt).
+- Extensive Inline Styles: Component relies heavily on style prop (consistent with Azure Flow pattern in project).

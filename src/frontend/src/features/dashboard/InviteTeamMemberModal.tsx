@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { GlassModal } from "../../shared/ui/Modals";
 import { createUser, type UserCreate } from "./dashboardApi";
+import { useNotifications } from "../../shared/notifications/NotificationContext";
 
 type TeamRole = "Transcripteur" | "Expert";
 
@@ -11,14 +12,16 @@ interface InviteTeamMemberModalProps {
   onSuccess: () => void;
 }
 
+const initialFormData: Omit<UserCreate, "role"> = {
+  username: "",
+  email: "",
+  firstName: "",
+  lastName: "",
+  enabled: true,
+};
+
 export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: InviteTeamMemberModalProps) {
-  const initialFormData: Omit<UserCreate, "role"> = {
-    username: "",
-    email: "",
-    firstName: "",
-    lastName: "",
-    enabled: true,
-  };
+  const { notify } = useNotifications();
   const [formData, setFormData] = useState<Omit<UserCreate, "role">>({ ...initialFormData });
   const [role, setRole] = useState<TeamRole>("Transcripteur");
   const [loading, setLoading] = useState(false);
@@ -35,10 +38,27 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!token || loading) return;
+
     setLoading(true);
     setError("");
+
+    // Trim all string fields
+    const sanitizedData = {
+      username: formData.username.trim(),
+      email: formData.email.trim(),
+      firstName: formData.firstName.trim(),
+      lastName: formData.lastName.trim(),
+      enabled: formData.enabled,
+    };
+
     try {
-      await createUser({ ...formData, role }, token);
+      await createUser({ ...sanitizedData, role }, token);
+      notify({
+        tier: "informational",
+        title: "Succès",
+        body: `Utilisateur ${sanitizedData.username} (${role}) invité avec succès.`,
+      });
       onSuccess();
       onClose();
     } catch (err: unknown) {
@@ -57,10 +77,7 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
   };
 
   const handleClose = () => {
-    setFormData(initialFormData);
-    setRole("Transcripteur");
-    setError("");
-    setLoading(false);
+    if (loading) return;
     onClose();
   };
 
@@ -69,8 +86,8 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
       <form onSubmit={handleSubmit} style={{ display: "grid", gap: "var(--spacing-4)" }}>
         {error ? <p style={{ color: "var(--color-error)", fontSize: "0.85rem", margin: 0 }}>{error}</p> : null}
 
-        <div style={{ display: "grid", gap: "var(--spacing-2)" }}>
-          <span className="za-label">Rôle</span>
+        <fieldset style={{ border: "none", padding: 0, margin: 0, display: "grid", gap: "var(--spacing-2)" }}>
+          <legend className="za-label" style={{ marginBottom: "var(--spacing-2)" }}>Rôle</legend>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--spacing-4)" }}>
             <label style={{ display: "inline-flex", alignItems: "center", gap: "var(--spacing-2)", cursor: "pointer" }}>
               <input
@@ -78,11 +95,18 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
                 name="teamRole"
                 checked={role === "Transcripteur"}
                 onChange={() => setRole("Transcripteur")}
+                disabled={loading}
               />
               Transcripteur
             </label>
             <label style={{ display: "inline-flex", alignItems: "center", gap: "var(--spacing-2)", cursor: "pointer" }}>
-              <input type="radio" name="teamRole" checked={role === "Expert"} onChange={() => setRole("Expert")} />
+              <input 
+                type="radio" 
+                name="teamRole" 
+                checked={role === "Expert"} 
+                onChange={() => setRole("Expert")}
+                disabled={loading}
+              />
               Expert
             </label>
           </div>
@@ -91,7 +115,7 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
               L’accès projet Label Studio pour les experts sera branché dans une prochaine livraison (story 16.6).
             </p>
           ) : null}
-        </div>
+        </fieldset>
 
         <div style={{ display: "grid", gap: "var(--spacing-1)" }}>
           <label className="za-label" htmlFor="invite-username">
@@ -104,7 +128,7 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
             onChange={handleChange}
             required
             className="za-input"
-            autoComplete="off"
+            disabled={loading}
           />
         </div>
 
@@ -120,7 +144,7 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
             onChange={handleChange}
             required
             className="za-input"
-            autoComplete="off"
+            disabled={loading}
           />
         </div>
 
@@ -136,7 +160,7 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
               onChange={handleChange}
               required
               className="za-input"
-              autoComplete="off"
+              disabled={loading}
             />
           </div>
           <div style={{ display: "grid", gap: "var(--spacing-1)" }}>
@@ -150,7 +174,7 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
               onChange={handleChange}
               required
               className="za-input"
-              autoComplete="off"
+              disabled={loading}
             />
           </div>
         </div>
@@ -159,7 +183,7 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
           <button type="button" onClick={handleClose} className="za-btn za-btn--ghost" disabled={loading}>
             Annuler
           </button>
-          <button type="submit" className="za-btn za-btn--primary" disabled={loading}>
+          <button type="submit" className="za-btn za-btn--primary" disabled={loading || !token}>
             {loading ? "Création..." : "Créer le compte"}
           </button>
         </div>

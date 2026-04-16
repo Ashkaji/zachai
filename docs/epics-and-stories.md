@@ -1,6 +1,6 @@
 # ZachAI: Epics et User Stories
 
-**Dernière mise à jour :** 2026-04-13
+**Dernière mise à jour :** 2026-04-16
 **Sprint plan :** `.bmad-outputs/implementation-artifacts/sprint-status.yaml`  
 **Détail PRD / critères :** `.bmad-outputs/planning-artifacts/epics.md` (même périmètre ; ce fichier reste la vue lisible « epics + stories »).  
 **Synchronisation :** le tableau automatique en bas est régénéré au **commit** par le hook Git (`./scripts/install-git-hooks.sh` une fois par clone ; pas besoin de pip). La CI vérifie la cohérence. Le texte narratif (goals, stories) et les nouvelles sections dans `epics.md` restent manuels.
@@ -308,6 +308,6 @@ Mis à jour automatiquement au commit (hook Git `scripts/git-hooks/` ou outil pr
 | 13 | terminé | terminé | `13-1-restore-failure-broadcast-collaborators` terminé<br>`13-2-bible-verse-redis-cache-opt-in` terminé<br>`13-3-api-mapping-openapi-alignment` terminé |
 | 14 | terminé | terminé | `14-1-restore-failure-signal-review-hardening` terminé |
 | 15 | terminé | terminé | `15-1-bible-sources-licensing-and-provenance` terminé<br>`15-2-bible-extract-to-zachai-json` terminé<br>`15-3-bible-ingest-smoke-and-operator-docs` terminé |
-| 16 | en cours | optionnel | `16-1-keycloak-admin-client-and-service-account` terminé<br>`16-2-manager-scope-membership-model` terminé<br>`16-3-api-user-provisioning-and-rbac` terminé<br>`16-4-ui-admin-create-managers` terminé<br>`16-5-ui-manager-invite-transcripteur-expert` revue<br>`16-6-expert-label-studio-project-access` backlog |
+| 16 | en cours | optionnel | `16-1-keycloak-admin-client-and-service-account` terminé<br>`16-2-manager-scope-membership-model` terminé<br>`16-3-api-user-provisioning-and-rbac` terminé<br>`16-4-ui-admin-create-managers` terminé<br>`16-5-ui-manager-invite-transcripteur-expert` terminé<br>`16-6-expert-label-studio-project-access` backlog |
 | 17 | backlog | optionnel | `17-1-demo-runbook-multi-role-e2e` backlog<br>`17-2-readme-roadmap-and-bible-demo-pointers` backlog |
 <!-- sync-epic-docs:end -->

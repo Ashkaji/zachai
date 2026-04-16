@@ -1,6 +1,6 @@
 # Story 16.5: UI Manager — invite Transcripteur / Expert
 
-Status: review
+Status: done
 
 <!-- Ultimate context engine analysis completed — comprehensive developer guide created. -->
 
@@ -144,6 +144,19 @@ Composer (Cursor agent)
 - `src/frontend/src/features/dashboard/RoleDashboards.tsx`
 - `.bmad-outputs/implementation-artifacts/sprint-status.yaml`
 - `.bmad-outputs/implementation-artifacts/16-5-ui-manager-invite-transcripteur-expert.md`
+
+### Review Findings
+
+- [ ] [Review][Decision] Success Feedback — Should we use the `NotificationProvider` to show a success toast? AC 5 mentions "clear parent error banners", but not success toasts.
+- [ ] [Review][Patch] Redundant State Reset [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx:64]
+- [ ] [Review][Patch] Unauthenticated API Call Potential [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx:162]
+- [ ] [Review][Patch] Accessibility: Missing Fieldset for Radios [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx:75]
+- [ ] [Review][Patch] Aggressive autoComplete="off" [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx:109]
+- [ ] [Review][Patch] Internal Object Allocation [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx:15]
+- [ ] [Review][Patch] Race Condition: Close while in-flight [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx:159]
+- [ ] [Review][Patch] Input Sanitation: Missing Trimming [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx:39]
+- [x] [Review][Defer] Hardcoded Localization [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx] — deferred, pre-existing pattern
+- [x] [Review][Defer] Extensive Inline Styles [src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx] — deferred, pre-existing pattern
 
 ---
 

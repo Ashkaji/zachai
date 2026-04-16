@@ -1,5 +1,5 @@
 # generated: 2026-03-19
-# last_updated: 2026-04-16 (Story 16-5 review)
+# last_updated: 2026-04-16
 # project: zachai
 # project_key: NOKEY
 # tracking_system: file-system
@@ -34,7 +34,7 @@
 #   - done: Retrospective has been completed
 
 generated: 2026-03-19
-last_updated: 2026-04-13
+last_updated: 2026-04-16
 project: zachai
 project_key: NOKEY
 tracking_system: file-system
@@ -162,7 +162,7 @@ development_status:
   16-2-manager-scope-membership-model: done
   16-3-api-user-provisioning-and-rbac: done
   16-4-ui-admin-create-managers: done
-  16-5-ui-manager-invite-transcripteur-expert: review
+  16-5-ui-manager-invite-transcripteur-expert: done
   16-6-expert-label-studio-project-access: backlog
   epic-16-retrospective: optional
 
@@ -171,5 +171,3 @@ development_status:
   17-1-demo-runbook-multi-role-e2e: backlog
   17-2-readme-roadmap-and-bible-demo-pointers: backlog
   epic-17-retrospective: optional
-
-last_updated: 2026-04-16

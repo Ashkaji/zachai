@@ -5,8 +5,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { InviteTeamMemberModal } from "./InviteTeamMemberModal";
 
-const { createUserMock } = vi.hoisted(() => ({
+const { createUserMock, notifyMock } = vi.hoisted(() => ({
   createUserMock: vi.fn(),
+  notifyMock: vi.fn(),
 }));
 
 vi.mock("./dashboardApi", async () => {
@@ -16,6 +17,12 @@ vi.mock("./dashboardApi", async () => {
     createUser: createUserMock,
   };
 });
+
+vi.mock("../../shared/notifications/NotificationContext", () => ({
+  useNotifications: () => ({
+    notify: notifyMock,
+  }),
+}));
 
 beforeAll(() => {
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

@@ -290,7 +290,16 @@ export function ManagerDashboard({
         isOpen={isInviteModalOpen}
         onClose={() => setIsInviteModalOpen(false)}
         token={token ?? ""}
-        onSuccess={() => setError("")}
+        onSuccess={() => {
+          setError("");
+          // Note: refreshKey is already supported by the dashboard effect
+          // but we need a way to increment it from inside onSuccess if it's passed down.
+          // Since refreshKey is a prop, we need the parent to handle the increment 
+          // or we can just rely on the fact that if a manager is using the dashboard,
+          // they might want to see the new user in a list (though no list exists yet).
+          // For now, clearing the error is correct per spec, but we'll add 
+          // the pattern for future list integration.
+        }}
       />
 
       {error ? <p style={{ color: "var(--color-error)", marginBottom: "var(--spacing-4)" }}>{error}</p> : null}
