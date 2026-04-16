@@ -171,3 +171,12 @@ development_status:
   17-1-demo-runbook-multi-role-e2e: backlog
   17-2-readme-roadmap-and-bible-demo-pointers: backlog
   epic-17-retrospective: optional
+
+  # ─── EPIC 18 — Notification Engine & User Preferences ─────────────────────
+  epic-18: backlog
+  18-1-smtp-infra-and-mailpit: backlog
+  18-2-welcome-and-initial-reset-emails: backlog
+  18-3-iam-support-manager-reset-and-forgot-password: backlog
+  18-4-assignment-notifications: backlog
+  18-5-ui-preference-center-notifications: backlog
+  epic-18-retrospective: optional

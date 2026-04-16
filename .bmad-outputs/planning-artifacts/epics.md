@@ -401,6 +401,64 @@ As a New Contributor,
 I can read an accurate epic/story count in README, find pointers to Bible ingestion and demo runbook,
 So onboarding matches `docs/epics-and-stories.md`.
 
+### Epic 18: Notification Engine & User Preferences
+Mettre en place un système d'envoi de mails automatique et un centre de gestion des notifications par utilisateur.
+**Outcome:** Service SMTP intégré (Mailpit pour le dev), notifications automatiques (création de compte, assignation), et interface de préférences dans le profil utilisateur.
+**FRs covered:** FR1, UX-DR12 (extension).
+
+#### Story 18.1: Infrastructure SMTP & Mailpit (Dev)
+As a Developer,
+I want an integrated SMTP client in the backend and a Mailpit container in Docker Compose,
+So that I can send and preview emails during development without an external provider.
+
+**Acceptance Criteria:**
+- **Given** les variables d'environnement SMTP configurées
+- **When** le backend appelle le service `EmailService`,
+- **Then** le mail est capturé par l'interface web de Mailpit (port 8025)
+- **And** le corps du mail supporte le format HTML/CSS avec le thème Azure Flow.
+
+#### Story 18.2: Mails de Bienvenue & Réinitialisation Initiale
+As a New User,
+I want to receive an email when my account is created with a link to set my password,
+So that I can access the platform securely without the manager seeing my credentials.
+
+**Acceptance Criteria:**
+- **Given** un compte créé via Story 16.5
+- **When** la création Keycloak réussit,
+- **Then** un mail de bienvenue est envoyé à l'adresse fournie
+- **And** le mail contient un lien "Set Password" (action Keycloak `UPDATE_PASSWORD`) valide 24h.
+
+#### Story 18.3: Support IAM — Reset par Manager & Mot de passe oublié
+As a User or Manager,
+I want to trigger a password reset email (either for myself or for a team member),
+So that access can be recovered securely via email verification.
+
+**Acceptance Criteria:**
+- **Manager side:** Bouton "Réinitialiser" dans la liste des membres (Story 16.5+) déclenchant un mail de reset Keycloak.
+- **User side:** Lien "Mot de passe oublié ?" activé sur la mire de connexion Keycloak (nécessite SMTP configuré).
+- **Security:** Aucun mot de passe n'est envoyé en clair ; uniquement des jetons de réinitialisation temporaires.
+
+#### Story 18.4: Notifications d'Assignation de Projet
+As a Transcripteur,
+I want to be notified by email when I am assigned to a new audio file or project,
+So that I can start working without checking the dashboard constantly.
+
+**Acceptance Criteria:**
+- **Given** une nouvelle assignation effectuée par un Manager
+- **When** l'assignation est persistée en base,
+- **Then** si l'utilisateur a activé l'option, un mail est envoyé avec le nom du projet et un lien direct vers le fichier.
+
+#### Story 18.5: UI Centre de Préférences (Profil RGPD)
+As a User,
+I want to select which types of notifications I want to receive (Account, Assignment, System Updates),
+So that I only receive relevant information according to my role.
+
+**Acceptance Criteria:**
+- **Given** la page "Centre de Profil" (Story 12.1)
+- **When** j'accède à l'onglet "Notifications",
+- **Then** je vois une liste de boutons toggle (On/Off) pour chaque type de notification
+- **And** mes choix sont persistés en base de données et respectés par le backend.
+
 ## 3. Requirements Coverage Map
 
 ### FR Coverage Map
