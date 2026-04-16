@@ -11,7 +11,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("bpmn-deployer")
 
 CAMUNDA_REST_URL = os.environ.get("CAMUNDA_REST_URL", "http://camunda7:8080/engine-rest")
-BPMN_DIR = pathlib.Path(__file__).parent.parent.parent / "bpmn"
+_default_bpmn_dir = pathlib.Path(__file__).resolve().parent / "bpmn"
+BPMN_DIR = pathlib.Path(os.environ.get("BPMN_DIR", str(_default_bpmn_dir)))
 
 def deploy_all():
     if not BPMN_DIR.exists():

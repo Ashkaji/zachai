@@ -434,7 +434,8 @@ services:
 
   camunda-worker:
     build:
-      context: ./workers/camunda-worker
+      context: .
+      dockerfile: workers/camunda-worker/Dockerfile
     container_name: zachai-camunda-worker
     environment:
       CAMUNDA_REST_URL: http://camunda7:8080/engine-rest
@@ -474,7 +475,11 @@ services:
       label-studio:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "ps aux | grep '[r]un_workers' || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"from pathlib import Path; cmd = Path('/proc/1/cmdline').read_text(errors='ignore'); raise SystemExit(0 if 'run_workers.py' in cmd else 1)\"",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
