@@ -1,6 +1,10 @@
+import { lazy, Suspense } from "react";
 import { useAuth } from "react-oidc-context";
-import { TranscriptionEditor } from "./editor/TranscriptionEditor";
 import { AppShell } from "./app/AppShell";
+
+const TranscriptionEditor = lazy(() =>
+  import("./editor/TranscriptionEditor").then((m) => ({ default: m.TranscriptionEditor })),
+);
 import { ThemeProvider } from "./theme/ThemeContext";
 import { NotificationProvider } from "./shared/notifications/NotificationContext";
 import { resolveAppRole } from "./types/rbac";
@@ -41,7 +45,11 @@ export function App() {
           role={role}
           username={String(username)}
           onSignout={() => auth.signoutRedirect()}
-          legacyEditor={<TranscriptionEditor />}
+          legacyEditor={
+            <Suspense fallback={<p style={{ padding: "2rem" }}>Chargement de l'éditeur…</p>}>
+              <TranscriptionEditor />
+            </Suspense>
+          }
         />
       </NotificationProvider>
     </ThemeProvider>

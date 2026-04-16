@@ -1,21 +1,44 @@
-import { useMemo, useState, useEffect } from "react";
+import { lazy, Suspense, useMemo, useState, useEffect } from "react";
 import type { ReactNode } from "react";
 import { useTheme } from "../theme/ThemeContext";
 import type { AppRole } from "../types/rbac";
 import { ROLE_NAVIGATION, type AppRouteId } from "./navigation";
 import { useNotifications } from "../shared/notifications/NotificationContext";
 import { ChevronLeft, ChevronRight, LogOut, Moon, Sun } from "lucide-react";
-import {
-  AdminDashboard,
-  ExpertDashboard,
-  ManagerDashboard,
-  TranscriberDashboard,
-} from "../features/dashboard/RoleDashboards";
-import { NewProjectWizard } from "../features/project-wizard/NewProjectWizard";
-import { ProjectDetailManager } from "../features/projects/ProjectDetailManager";
-import { Playground } from "../dev/Playground";
-import { ReconciliationWorkspace } from "../features/reconciliation/ReconciliationWorkspace";
-import { ProfileCenter } from "../features/profile/ProfileCenter";
+
+const AdminDashboard = lazy(() =>
+  import("../features/dashboard/RoleDashboards").then((m) => ({ default: m.AdminDashboard })),
+);
+const ExpertDashboard = lazy(() =>
+  import("../features/dashboard/RoleDashboards").then((m) => ({ default: m.ExpertDashboard })),
+);
+const ManagerDashboard = lazy(() =>
+  import("../features/dashboard/RoleDashboards").then((m) => ({ default: m.ManagerDashboard })),
+);
+const TranscriberDashboard = lazy(() =>
+  import("../features/dashboard/RoleDashboards").then((m) => ({ default: m.TranscriberDashboard })),
+);
+const NewProjectWizard = lazy(() =>
+  import("../features/project-wizard/NewProjectWizard").then((m) => ({ default: m.NewProjectWizard })),
+);
+const ProjectDetailManager = lazy(() =>
+  import("../features/projects/ProjectDetailManager").then((m) => ({ default: m.ProjectDetailManager })),
+);
+const Playground = lazy(() => import("../dev/Playground").then((m) => ({ default: m.Playground })));
+const ReconciliationWorkspace = lazy(() =>
+  import("../features/reconciliation/ReconciliationWorkspace").then((m) => ({
+    default: m.ReconciliationWorkspace,
+  })),
+);
+const ProfileCenter = lazy(() =>
+  import("../features/profile/ProfileCenter").then((m) => ({ default: m.ProfileCenter })),
+);
+
+function RouteFallback() {
+  return (
+    <p style={{ padding: "2rem", margin: 0, color: "var(--color-text-muted)" }}>Chargement de la page…</p>
+  );
+}
 
 function roleTitle(role: AppRole): string {
   if (role === "admin") return "Admin";
@@ -280,51 +303,46 @@ export function AppShell({
         </header>
 
         <section>
-          {/* Unified route mapping */}
-          {activeRoute === "dashboard-admin" && role === "admin" ? <AdminDashboard /> : null}
-          
-          {activeRoute === "dashboard-manager" && role === "manager" ? (
-            <ManagerDashboard
-              onCreateProject={() => setActiveRoute("project-wizard" as AppRouteId)}
-              onViewProject={handleViewProject}
-              refreshKey={managerRefreshKey}
-            />
-          ) : null}
+          <Suspense fallback={<RouteFallback />}>
+            {/* Unified route mapping — lazy chunks load on first visit */}
+            {activeRoute === "dashboard-admin" && role === "admin" ? <AdminDashboard /> : null}
 
-          {activeRoute === "project-wizard" && role === "manager" ? (
-            <NewProjectWizard
-              onCancel={handleBackToDashboard}
-              onComplete={handleBackToDashboard}
-            />
-          ) : null}
+            {activeRoute === "dashboard-manager" && role === "manager" ? (
+              <ManagerDashboard
+                onCreateProject={() => setActiveRoute("project-wizard" as AppRouteId)}
+                onViewProject={handleViewProject}
+                refreshKey={managerRefreshKey}
+              />
+            ) : null}
 
-          {activeRoute === "project-detail" && selectedProjectId ? (
-            <ProjectDetailManager
-              projectId={selectedProjectId}
-              onBack={handleBackToDashboard}
-            />
-          ) : null}
+            {activeRoute === "project-wizard" && role === "manager" ? (
+              <NewProjectWizard onCancel={handleBackToDashboard} onComplete={handleBackToDashboard} />
+            ) : null}
 
-          {activeRoute === "dashboard-expert" && role === "expert" ? (
-            <ExpertDashboard 
-              onReconcile={(audioId) => {
-                setSelectedProjectId(audioId); // Reusing as Audio ID for now
-                setActiveRoute("reconciliation-workspace");
-              }}
-            />
-          ) : null}
+            {activeRoute === "project-detail" && selectedProjectId ? (
+              <ProjectDetailManager projectId={selectedProjectId} onBack={handleBackToDashboard} />
+            ) : null}
 
-          {activeRoute === "reconciliation-workspace" && (role === "expert" || role === "admin") ? (
-            <ReconciliationWorkspace
-              audioId={selectedProjectId!}
-              onBack={handleBackToDashboard}
-            />
-          ) : null}
-          {activeRoute === "dashboard-transcriber" && role === "transcriber" ? <TranscriberDashboard /> : null}
+            {activeRoute === "dashboard-expert" && role === "expert" ? (
+              <ExpertDashboard
+                onReconcile={(audioId) => {
+                  setSelectedProjectId(audioId); // Reusing as Audio ID for now
+                  setActiveRoute("reconciliation-workspace");
+                }}
+              />
+            ) : null}
 
-          {activeRoute === "profile" ? <ProfileCenter /> : null}
-          {activeRoute === "legacy-editor" ? legacyEditor : null}
-          {activeRoute === "playground" ? <Playground /> : null}
+            {activeRoute === "reconciliation-workspace" && (role === "expert" || role === "admin") ? (
+              <ReconciliationWorkspace audioId={selectedProjectId!} onBack={handleBackToDashboard} />
+            ) : null}
+            {activeRoute === "dashboard-transcriber" && role === "transcriber" ? (
+              <TranscriberDashboard />
+            ) : null}
+
+            {activeRoute === "profile" ? <ProfileCenter /> : null}
+            {activeRoute === "legacy-editor" ? legacyEditor : null}
+            {activeRoute === "playground" ? <Playground /> : null}
+          </Suspense>
         </section>
       </main>
 
