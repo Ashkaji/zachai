@@ -2,6 +2,25 @@ import { useEffect, useState, useCallback } from "react";
 import { GlassModal } from "../../shared/ui/Modals";
 import { createUser, type UserCreate } from "./dashboardApi";
 import { useNotifications } from "../../shared/notifications/NotificationContext";
+import { ApiError } from "../../shared/api/zachaiApi";
+
+function suggestPassword(): string {
+  const buf = new Uint8Array(12);
+  crypto.getRandomValues(buf);
+  return Array.from(buf, (b) => b.toString(36)).join("").slice(0, 16);
+}
+
+function formatCreateUserError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 409) {
+      return err.message || "Ce nom d’utilisateur ou cet e-mail existe déjà.";
+    }
+    if (err.status === 403) {
+      return err.message || "Action interdite (droits insuffisants ou périmètre manager).";
+    }
+  }
+  return err instanceof Error ? err.message : "Erreur lors de la création";
+}
 
 type TeamRole = "Transcripteur" | "Expert";
 
@@ -18,6 +37,7 @@ const initialFormData: Omit<UserCreate, "role"> = {
   firstName: "",
   lastName: "",
   enabled: true,
+  password: "",
 };
 
 export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: InviteTeamMemberModalProps) {
@@ -56,16 +76,21 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
     };
 
     try {
-      await createUser({ ...sanitizedData, role }, token);
+      const pwd = formData.password?.trim();
+      const res = await createUser({ ...sanitizedData, role, password: pwd || undefined }, token);
+      const pwdHint = res.initial_password
+        ? ` Mot de passe initial : ${res.initial_password}`
+        : "";
       notify({
         tier: "informational",
         title: "Succès",
-        body: `Utilisateur ${sanitizedData.username} (${role}) invité avec succès.`,
+        body: `Utilisateur ${sanitizedData.username} (${role}) créé.${pwdHint}`,
       });
+      setLoading(false);
       onSuccess();
       onClose();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Erreur lors de la création");
+      setError(formatCreateUserError(err));
       setLoading(false);
     }
     // Note: finally { setLoading(false) } is omitted because resetForm or setError handle it, 
@@ -149,6 +174,39 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
             required
             className="za-input"
             disabled={loading}
+          />
+        </div>
+
+        <div style={{ display: "grid", gap: "var(--spacing-1)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--spacing-2)" }}>
+            <label className="za-label" htmlFor="invite-password" style={{ margin: 0 }}>
+              Mot de passe initial
+            </label>
+            <button
+              type="button"
+              className="za-btn za-btn--ghost"
+              style={{ fontSize: "0.8rem", padding: "4px 8px" }}
+              onClick={() =>
+                setFormData((prev) => ({
+                  ...prev,
+                  password: suggestPassword(),
+                }))
+              }
+              disabled={loading}
+            >
+              Générer
+            </button>
+          </div>
+          <input
+            id="invite-password"
+            name="password"
+            type="password"
+            value={formData.password ?? ""}
+            onChange={handleChange}
+            className="za-input"
+            disabled={loading}
+            autoComplete="new-password"
+            placeholder="Vide = généré par le serveur (affiché dans la notification)"
           />
         </div>
 

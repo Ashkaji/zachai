@@ -192,7 +192,10 @@ export function AdminDashboard() {
         onSuccess={() => setError("")} 
       />
 
-      <h3 style={{ fontFamily: "var(--font-headline)", fontSize: "1.25rem", fontWeight: 800, marginBottom: "var(--spacing-4)" }}>Santé Système</h3>
+      <h3 style={{ fontFamily: "var(--font-headline)", fontSize: "1.25rem", fontWeight: 800, marginBottom: "var(--spacing-2)" }}>Santé Système</h3>
+      <p style={{ margin: "0 0 var(--spacing-4)", fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+        Indicateurs ci-dessous : <strong>données de démo</strong> (placeholders UI — pas branchés sur Prometheus / métriques réelles).
+      </p>
       <StatGrid>
         <HealthIndicator label="Charge CPU" value="42%" percent={42} />
         <HealthIndicator label="Mémoire RAM" value="6.2 / 16 GB" percent={38} />
@@ -204,7 +207,7 @@ export function AdminDashboard() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "var(--spacing-4)", marginBottom: "var(--spacing-8)" }}>
         <Metric label="Total Projets" value={String(projects.length)} />
         <Metric label="Projets Actifs" value={String(activeProjects)} tone="success" />
-        <Metric label="Heures Transcrites" value="428h" />
+        <Metric label="Heures Transcrites (placeholder)" value="—" />
         <Metric label="Golden Set" value={golden ? `${golden.count}/${golden.threshold}` : "--"} />
       </div>
 
@@ -228,7 +231,7 @@ export function AdminDashboard() {
           />
         </Card>
 
-        <Card title="Logs Critiques" subtitle="Alertes temps-réel">
+        <Card title="Logs Critiques" subtitle="Exemples statiques (pas le vrai flux d’alertes)">
           <div style={{ display: "grid", gap: "12px" }}>
             {[
               { id: 1, type: "error", msg: "Worker ASR timeout on proj_42", time: "2m ago" },

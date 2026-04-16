@@ -22,10 +22,42 @@ async def test_post_user_admin_success(mock_db):
         })
         
         assert response.status_code == 201
-        assert response.json()["id"] == "new-uuid"
+        body = response.json()
+        assert body["id"] == "new-uuid"
+        assert "initial_password" in body
+        assert len(body["initial_password"]) >= 8
         mock_create.assert_called_once()
+        user_payload = mock_create.call_args[0][0]
+        assert "credentials" in user_payload
+        assert user_payload["credentials"][0]["value"] == body["initial_password"]
         # Admin doesn't create ManagerMembership entries (they are the root)
         mock_db.add.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_post_user_admin_with_explicit_password_no_initial_in_response(mock_db):
+    """Supplied password is applied in Keycloak payload but not echoed in JSON."""
+    main.app.dependency_overrides[main.get_current_user] = lambda: ADMIN_PAYLOAD
+
+    with patch("main.keycloak_admin.create_keycloak_user", new_callable=AsyncMock) as mock_create:
+        mock_create.return_value = "uuid-pw"
+
+        response = client.post(
+            "/v1/iam/users",
+            json={
+                "username": "u1",
+                "email": "u1@example.com",
+                "firstName": "A",
+                "lastName": "B",
+                "role": "Manager",
+                "password": "my-secret-pass",
+            },
+        )
+
+        assert response.status_code == 201
+        assert response.json() == {"status": "created", "id": "uuid-pw"}
+        user_payload = mock_create.call_args[0][0]
+        assert user_payload["credentials"][0]["value"] == "my-secret-pass"
+
 
 @pytest.mark.asyncio
 async def test_post_user_manager_success(mock_db):
@@ -44,7 +76,9 @@ async def test_post_user_manager_success(mock_db):
         })
         
         assert response.status_code == 201
-        assert response.json()["id"] == "member-uuid"
+        res = response.json()
+        assert res["id"] == "member-uuid"
+        assert "initial_password" in res
         
         # Verify ManagerMembership persistence
         mock_db.add.assert_called_once()
@@ -74,6 +108,7 @@ async def test_post_user_manager_expert_assigns_expert_and_transcripteur_roles(m
         )
 
         assert response.status_code == 201
+        assert "initial_password" in response.json()
         mock_create.assert_called_once()
         _, kwargs = mock_create.call_args
         assert kwargs["role_names"] == ["Expert", "Transcripteur"]

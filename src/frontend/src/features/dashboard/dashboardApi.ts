@@ -104,6 +104,14 @@ export type UserCreate = {
   lastName: string;
   role: "Admin" | "Manager" | "Transcripteur" | "Expert";
   enabled?: boolean;
+  /** Si absent, l’API génère un mot de passe et le renvoie dans la réponse (`initial_password`). */
+  password?: string;
+};
+
+export type UserCreateResponse = {
+  status: string;
+  id: string;
+  initial_password?: string;
 };
 
 export function fetchManagerProjects(token: string): Promise<ProjectSummary[]> {
@@ -150,10 +158,21 @@ export function validateAudio(audioId: number, approved: boolean, comment: strin
   });
 }
 
-export function createUser(userData: UserCreate, token: string): Promise<void> {
-  return apiJson<void>("/v1/iam/users", token, {
+export function createUser(userData: UserCreate, token: string): Promise<UserCreateResponse> {
+  const body: Record<string, unknown> = {
+    username: userData.username,
+    email: userData.email,
+    firstName: userData.firstName,
+    lastName: userData.lastName,
+    role: userData.role,
+    enabled: userData.enabled ?? true,
+  };
+  if (userData.password != null && String(userData.password).trim() !== "") {
+    body.password = userData.password;
+  }
+  return apiJson<UserCreateResponse>("/v1/iam/users", token, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(userData),
+    body: JSON.stringify(body),
   });
 }

@@ -69,7 +69,7 @@ describe("InviteTeamMemberModal", () => {
   });
 
   it("submits Transcripteur creation by default", async () => {
-    createUserMock.mockResolvedValueOnce(undefined);
+    createUserMock.mockResolvedValueOnce({ status: "created", id: "tid", initial_password: "gen-pw" });
 
     await act(async () => {
       root.render(
@@ -95,6 +95,7 @@ describe("InviteTeamMemberModal", () => {
         firstName: "",
         lastName: "",
         enabled: true,
+        password: undefined,
         role: "Transcripteur",
       },
       "bearer-token",
@@ -104,7 +105,7 @@ describe("InviteTeamMemberModal", () => {
   });
 
   it("submits Expert when Expert role is selected", async () => {
-    createUserMock.mockResolvedValueOnce(undefined);
+    createUserMock.mockResolvedValueOnce({ status: "created", id: "eid" });
 
     await act(async () => {
       root.render(
@@ -227,7 +228,7 @@ describe("InviteTeamMemberModal", () => {
   });
 
   it("trims input fields before submission", async () => {
-    createUserMock.mockResolvedValueOnce(undefined);
+    createUserMock.mockResolvedValueOnce({ status: "created", id: "tid" });
 
     await act(async () => {
       root.render(

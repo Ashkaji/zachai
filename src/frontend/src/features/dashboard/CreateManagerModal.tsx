@@ -1,6 +1,26 @@
 import { useEffect, useState } from "react";
 import { GlassModal } from "../../shared/ui/Modals";
 import { createUser, type UserCreate } from "./dashboardApi";
+import { useNotifications } from "../../shared/notifications/NotificationContext";
+import { ApiError } from "../../shared/api/zachaiApi";
+
+function suggestPassword(): string {
+  const buf = new Uint8Array(12);
+  crypto.getRandomValues(buf);
+  return Array.from(buf, (b) => b.toString(36)).join("").slice(0, 16);
+}
+
+function formatCreateUserError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 409) {
+      return err.message || "Ce nom d’utilisateur ou cet e-mail existe déjà.";
+    }
+    if (err.status === 403) {
+      return err.message || "Action interdite (droits insuffisants ou compte déjà lié à un autre manager).";
+    }
+  }
+  return err instanceof Error ? err.message : "Erreur lors de la création";
+}
 
 interface CreateManagerModalProps {
   isOpen: boolean;
@@ -10,12 +30,14 @@ interface CreateManagerModalProps {
 }
 
 export function CreateManagerModal({ isOpen, onClose, token, onSuccess }: CreateManagerModalProps) {
+  const { notify } = useNotifications();
   const initialFormData: Omit<UserCreate, "role"> = {
     username: "",
     email: "",
     firstName: "",
     lastName: "",
     enabled: true,
+    password: "",
   };
   const [formData, setFormData] = useState<Omit<UserCreate, "role">>({
     ...initialFormData,
@@ -36,11 +58,32 @@ export function CreateManagerModal({ isOpen, onClose, token, onSuccess }: Create
     setLoading(true);
     setError("");
     try {
-      await createUser({ ...formData, role: "Manager" }, token);
+      const pwd = formData.password?.trim();
+      const res = await createUser(
+        {
+          ...formData,
+          role: "Manager",
+          password: pwd || undefined,
+        },
+        token,
+      );
+      if (res.initial_password) {
+        notify({
+          tier: "informational",
+          title: "Manager créé",
+          body: `Mot de passe initial (copiez-le, aucun e-mail envoyé) : ${res.initial_password}`,
+        });
+      } else {
+        notify({
+          tier: "informational",
+          title: "Manager créé",
+          body: `Compte ${formData.username} prêt avec le mot de passe que vous avez défini.`,
+        });
+      }
       onSuccess();
       onClose();
-    } catch (err: any) {
-      setError(err instanceof Error ? err.message : "Erreur lors de la création");
+    } catch (err: unknown) {
+      setError(formatCreateUserError(err));
     } finally {
       setLoading(false);
     }
@@ -89,6 +132,40 @@ export function CreateManagerModal({ isOpen, onClose, token, onSuccess }: Create
             className="za-input"
             autoComplete="off"
           />
+        </div>
+
+        <div style={{ display: "grid", gap: "var(--spacing-1)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--spacing-2)" }}>
+            <label className="za-label" style={{ margin: 0 }}>
+              Mot de passe initial
+            </label>
+            <button
+              type="button"
+              className="za-btn za-btn--ghost"
+              style={{ fontSize: "0.8rem", padding: "4px 8px" }}
+              onClick={() =>
+                setFormData((prev) => ({
+                  ...prev,
+                  password: suggestPassword(),
+                }))
+              }
+              disabled={loading}
+            >
+              Générer
+            </button>
+          </div>
+          <input
+            name="password"
+            type="password"
+            value={formData.password ?? ""}
+            onChange={handleChange}
+            className="za-input"
+            autoComplete="new-password"
+            placeholder="Laisser vide = mot de passe généré par le serveur"
+          />
+          <p style={{ margin: 0, fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
+            Sans e-mail transactionnel, renseignez un mot de passe ou laissez vide : il sera affiché dans une notification après création.
+          </p>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--spacing-4)" }}>

@@ -126,30 +126,60 @@ export function AppShell({
           overflow: "hidden"
         }}
       >
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "var(--spacing-8)" }}>
-          <div style={{ opacity: isCollapsed ? 0 : 1, transition: "opacity 0.2s ease", whiteSpace: "nowrap" }}>
-            <h1
-              style={{
-                fontFamily: "var(--font-headline)",
-                fontSize: "1.5rem",
-                fontWeight: 900,
-                margin: 0,
-                color: "var(--color-primary)",
-                letterSpacing: "-0.02em",
-              }}
-            >
-              ZachAI
-            </h1>
-            <div style={{ fontSize: "0.75rem", fontWeight: 700, opacity: 0.6, textTransform: "uppercase", marginTop: "4px" }}>
-              {roleTitle(role)}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: isCollapsed ? "center" : "space-between",
+            marginBottom: "var(--spacing-8)",
+            width: "100%",
+            minHeight: "36px",
+            gap: "8px",
+          }}
+        >
+          {!isCollapsed ? (
+            <div style={{ whiteSpace: "nowrap", minWidth: 0 }}>
+              <h1
+                style={{
+                  fontFamily: "var(--font-headline)",
+                  fontSize: "1.5rem",
+                  fontWeight: 900,
+                  margin: 0,
+                  color: "var(--color-primary)",
+                  letterSpacing: "-0.02em",
+                }}
+              >
+                ZachAI
+              </h1>
+              <div
+                style={{
+                  fontSize: "0.75rem",
+                  fontWeight: 700,
+                  opacity: 0.6,
+                  textTransform: "uppercase",
+                  marginTop: "4px",
+                }}
+              >
+                {roleTitle(role)}
+              </div>
             </div>
-          </div>
-          
-          <button 
+          ) : null}
+
+          <button
+            type="button"
             onClick={() => setIsCollapsed(!isCollapsed)}
             className="za-btn za-btn--ghost"
-            style={{ padding: "4px", minWidth: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center", border: "none" }}
-            aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            style={{
+              flexShrink: 0,
+              padding: "4px",
+              minWidth: "32px",
+              height: "32px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              border: "none",
+            }}
+            aria-label={isCollapsed ? "Développer le menu" : "Replier le menu"}
           >
             {isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
           </button>

@@ -10,6 +10,7 @@ import io
 import json
 import re
 import hashlib
+import secrets
 import base64
 import uuid
 import hmac
@@ -1356,10 +1357,23 @@ class UserCreate(BaseModel):
     last_name: str = Field(..., alias="lastName", min_length=1, max_length=255)
     enabled: bool = True
     role: str = Field(..., pattern="^(Admin|Manager|Transcripteur|Expert)$")
+    password: str | None = Field(
+        None,
+        min_length=1,
+        max_length=256,
+        description="Mot de passe initial Keycloak. Si absent ou vide, le serveur en génère un et le renvoie une fois dans `initial_password`.",
+    )
 
     model_config = {
         "populate_by_name": True
     }
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def _empty_password_none(cls, v: object) -> object:
+        if v is None or v == "":
+            return None
+        return v
 
 
 class UserUpdate(BaseModel):
@@ -3807,13 +3821,22 @@ async def post_iam_user(
                 detail={"error": f"Manager cannot create users with role {body.role}"}
             )
 
-    # Prepare Keycloak user data
+    # Prepare Keycloak user data (credentials: explicit password or server-generated for e-mail-less onboarding).
+    password_plain = body.password
+    if password_plain:
+        initial_password: str | None = None
+        pw_set = password_plain
+    else:
+        initial_password = secrets.token_urlsafe(16)
+        pw_set = initial_password
+
     user_data = {
         "username": body.username,
         "email": body.email,
         "firstName": body.first_name,
         "lastName": body.last_name,
         "enabled": body.enabled,
+        "credentials": [{"type": "password", "value": pw_set, "temporary": False}],
     }
 
     # Create in Keycloak + Role mapping (AC 1, 3).
@@ -3838,7 +3861,10 @@ async def post_iam_user(
             logger.error("Failed to persist ManagerMembership for new user %s: %s", new_user_id, exc)
             raise HTTPException(status_code=500, detail={"error": "Failed to persist manager mapping"})
 
-    return {"status": "created", "id": new_user_id}
+    out: dict = {"status": "created", "id": new_user_id}
+    if initial_password is not None:
+        out["initial_password"] = initial_password
+    return out
 
 
 @app.patch("/v1/iam/users/{user_id}", tags=["IAM"], status_code=204)

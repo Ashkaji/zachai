@@ -174,6 +174,34 @@ async def create_keycloak_user(
                 status_code=409, detail={"error": "User already exists in Keycloak"}
             )
 
+        # Keycloak sometimes returns 400 with a body like "User exists with same username" / email.
+        if resp.status_code == 400:
+            try:
+                err_body = resp.json()
+            except Exception:
+                err_body = None
+            msg_l = ""
+            if isinstance(err_body, dict):
+                msg_l = str(err_body.get("errorMessage", "") or err_body.get("error", "") or "").lower()
+            text_l = (resp.text or "").lower()
+            combined = f"{msg_l} {text_l}"
+            if any(
+                x in combined
+                for x in (
+                    "already exists",
+                    "duplicate",
+                    "same username",
+                    "same email",
+                    "user exists",
+                )
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "Un utilisateur avec ce nom d’utilisateur ou cet e-mail existe déjà dans Keycloak."
+                    },
+                )
+
         logger.error("Keycloak user creation failed: %s %s", resp.status_code, resp.text)
         raise HTTPException(
             status_code=502,

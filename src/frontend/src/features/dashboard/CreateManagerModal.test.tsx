@@ -17,6 +17,10 @@ vi.mock("./dashboardApi", async () => {
   };
 });
 
+vi.mock("../../shared/notifications/NotificationContext", () => ({
+  useNotifications: () => ({ notify: vi.fn() }),
+}));
+
 beforeAll(() => {
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
@@ -56,7 +60,7 @@ describe("CreateManagerModal", () => {
   });
 
   it("submits manager creation request and calls success/close callbacks", async () => {
-    createUserMock.mockResolvedValueOnce(undefined);
+    createUserMock.mockResolvedValueOnce({ status: "created", id: "new-id" });
 
     await act(async () => {
       root.render(
@@ -82,6 +86,7 @@ describe("CreateManagerModal", () => {
         firstName: "",
         lastName: "",
         enabled: true,
+        password: undefined,
         role: "Manager",
       },
       "bearer-token",
@@ -144,5 +149,6 @@ describe("CreateManagerModal", () => {
     expect(document.body.querySelector<HTMLInputElement>('input[name="email"]')?.value).toBe("");
     expect(document.body.querySelector<HTMLInputElement>('input[name="firstName"]')?.value).toBe("");
     expect(document.body.querySelector<HTMLInputElement>('input[name="lastName"]')?.value).toBe("");
+    expect(document.body.querySelector<HTMLInputElement>('input[name="password"]')?.value).toBe("");
   });
 });
