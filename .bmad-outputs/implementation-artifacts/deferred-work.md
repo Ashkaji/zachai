@@ -105,3 +105,28 @@
 ## Deferred from: code review of 16-5-ui-manager-invite-transcripteur-expert.md (2026-04-16)
 - Hardcoded Localization: UI strings are hardcoded in French (consistent with project pattern but technically deferred technical debt).
 - Extensive Inline Styles: Component relies heavily on style prop (consistent with Azure Flow pattern in project).
+
+## Deferred from: code review of 17-1-demo-runbook-multi-role-e2e.md (2026-06-22)
+- **asyncio.Lock() created at module level** [`src/api/fastapi/keycloak_admin.py:18`] — Safe on Python 3.10+ (current stack 3.11); would break on Python 3.9. Low risk unless the base image is downgraded.
+- **Initial password plaintext in notification body** [`CreateManagerModal.tsx`, `InviteTeamMemberModal.tsx`] — Intentional design: no transactional email until Epic 18 (Notification Engine). Re-evaluate when Epic 18 is implemented.
+- **`_safe_minio_read` stat→read TOCTOU** [`src/api/fastapi/main.py`] — Pre-existing; noted in deferred-work from review of 14-1. Object can be replaced between stat and get_object calls.
+- **`_safe_minio_read` 413 size-guard path has no test coverage** [`src/api/fastapi/main.py`] — New safety feature added this story; the oversized-object rejection path is untested. Add a test that mocks stat_object returning a large size.
+- **"Label Studio →" button silently absent when `label_studio_project_id` is null** [`src/frontend/src/features/dashboard/RoleDashboards.tsx`] — If a project was not provisioned to Label Studio, the button is hidden without diagnostic. This is a data integrity issue at provisioning; consider adding a tooltip or disabled state in a future UX story.
+
+## Deferred from: code review of uncommitted 17.1 implementation patches (2026-06-22)
+
+- **KA-5 — `list_keycloak_users` silent truncation** [`src/api/fastapi/keycloak_admin.py`] — Hard-coded `max=1000`; realms with >1000 users silently return incomplete data. Implement pagination (`first`/`max` loop) or raise when result set hits the cap.
+- **MA-4 — `list_iam_users` full Keycloak attribute exposure** [`src/api/fastapi/main.py`] — Admin/Manager path returns raw Keycloak user objects (email, phone, custom attrs) with no field projection. Project only the fields the API contract needs before returning.
+- **MA-8 — No Alembic migration for `assignments` schema change** — `Assignment` PK changed from auto-increment `id` to composite `(audio_id, transcripteur_id)`; `help_requested`/`help_message` columns added. No migration file exists. Write an Alembic migration before deploying against an existing DB.
+- **MA-9 — `assigned_at` now means "latest assignment time"** [`src/api/fastapi/main.py:_audio_row_for_project_status`] — Breaking API contract change; existing clients expecting a single user ID for `assigned_to` will break. Consider returning `assigned_to` as a JSON array and adding `last_assigned_at` vs `first_assigned_at` fields, or version the endpoint.
+- **MA-10 — Projects default to `ACTIVE` on creation** [`src/api/fastapi/main.py:create_project`] — Bypasses any draft→active promotion step; projects with zero valid audio files appear in task lists immediately. Revert to `DRAFT` default or add a readiness gate.
+- **TF-6 — `onReconcile` callback ID not verified in test** [`src/frontend/src/features/dashboard/RoleDashboards.test.ts`] — Test only checks text presence via static markup; doesn't assert `onReconcile` is called with the correct `audio_id`. Add a jsdom-environment test that simulates the button click.
+
+## Deferred from: code review of uncommitted 17.1 patches — round 3 (2026-06-22)
+
+- **R3MA-5 — `claim_audio_task` no project-status guard** [`src/api/fastapi/main.py`] — A Transcripteur can claim audio from COMPLETED/ARCHIVED projects. Policy decision: DRAFT claiming is intentional (mirrors `list_available_tasks`), but COMPLETED project claiming is unclear. Add `Project.status == ProjectStatus.ACTIVE` guard once the project lifecycle is finalised.
+- **R3TF-6 — Golden set webhook success-path test with `task.project` set** [`src/api/fastapi/test_api_sec_20_story_4_1_golden_set_label_studio_webhook_internal_ingest.py`] — No test covers the success path with a valid `task.project` that matches `af.project_id`. Add a positive test with `mock_db.execute = AsyncMock(side_effect=[dup_r, af_r, proj_r, ctr_r])` where `proj.id == af.project_id == 1`.
+
+## Deferred from: code review of uncommitted 17.1 patches — round 4 (2026-06-22)
+
+- **R4MA-3 — `claim_audio_task` selectinload outside lock scope** [`src/api/fastapi/main.py`] — `selectinload(AudioFile.assignment)` fires a separate SELECT not covered by `with_for_update()`. Concurrent callers can insert between the locked AudioFile read and the unlocked Assignment read. The `IntegrityError` handler catches the resulting conflict; this is accepted as the primary race guard for now. Replace with an explicit locked existence query if the claim endpoint becomes high-concurrency.

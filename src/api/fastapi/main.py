@@ -374,23 +374,22 @@ class AudioFile(Base):
         UniqueConstraint("project_id", "minio_path", name="uq_audio_files_project_minio_path"),
     )
 
-    assignment: Mapped["Assignment | None"] = relationship(
+    assignment: Mapped[list["Assignment"]] = relationship(
         "Assignment",
         back_populates="audio_file",
-        uselist=False,
+        uselist=True,
         cascade="all, delete-orphan",
     )
 
 
 class Assignment(Base):
-    """At most one active assignment row per audio (Story 2.4)."""
+    """Multiple assignments allowed per audio (Story Review)."""
 
     __tablename__ = "assignments"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     audio_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("audio_files.id", ondelete="CASCADE"), unique=True, nullable=False
+        Integer, ForeignKey("audio_files.id", ondelete="CASCADE"), primary_key=True
     )
-    transcripteur_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    transcripteur_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     assigned_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -398,6 +397,8 @@ class Assignment(Base):
     manager_validated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    help_requested: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    help_message: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     audio_file: Mapped["AudioFile"] = relationship("AudioFile", back_populates="assignment")
 
@@ -1151,7 +1152,7 @@ class AudioRegisterRequest(BaseModel):
 
 class AssignAudioRequest(BaseModel):
     audio_id: int = Field(..., gt=0)
-    transcripteur_id: str = Field(..., min_length=1, max_length=255)
+    transcripteur_ids: list[str] = Field(default_factory=list, max_length=50)
 
 
 class ExpertTaskResponse(BaseModel):
@@ -1939,9 +1940,18 @@ def _audio_file_to_dict(af: AudioFile) -> dict:
 
 def _audio_row_for_project_status(af: AudioFile) -> dict:
     row = _audio_file_to_dict(af)
-    asg = af.assignment
-    row["assigned_to"] = asg.transcripteur_id if asg else None
-    row["assigned_at"] = asg.assigned_at.isoformat() if asg else None
+    assignments = af.assignment or []
+    if assignments:
+        row["assigned_to"] = ",".join([asg.transcripteur_id for asg in assignments])
+        row["assigned_at"] = max(asg.assigned_at for asg in assignments).isoformat()
+        row["help_requested"] = any(asg.help_requested for asg in assignments)
+        # Use first non-null help message found
+        row["help_message"] = next((asg.help_message for asg in assignments if asg.help_message), None)
+    else:
+        row["assigned_to"] = None
+        row["assigned_at"] = None
+        row["help_requested"] = False
+        row["help_message"] = None
     return row
 
 
@@ -3062,7 +3072,7 @@ async def create_project(
                 nature_id=body.nature_id,
                 production_goal=body.production_goal,
                 manager_id=creator_id,
-                status=ProjectStatus.DRAFT,
+                status=ProjectStatus.ACTIVE,
             )
             db.add(project)
             await db.flush()  # populate project.id
@@ -3175,7 +3185,7 @@ async def list_projects(
             .where(
                 AudioFile.normalized_path.isnot(None),
                 AudioFile.validation_error.is_(None),
-                Assignment.id.is_(None),
+                Assignment.audio_id.is_(None),
             )
             .group_by(AudioFile.project_id)
         )
@@ -3477,6 +3487,7 @@ async def assign_audio_to_transcripteur(
 ) -> dict:
     """Create/update Assignment for an audio; Manager owner or Admin."""
     roles = get_roles(payload)
+    sub = payload.get("sub")
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
@@ -3487,6 +3498,7 @@ async def assign_audio_to_transcripteur(
         select(AudioFile)
         .where(AudioFile.id == body.audio_id, AudioFile.project_id == project_id)
         .options(selectinload(AudioFile.assignment))
+        .with_for_update()
     )
     audio = result.scalar_one_or_none()
     if not audio:
@@ -3508,20 +3520,32 @@ async def assign_audio_to_transcripteur(
             detail={"error": "Audio is not assignable until normalized without errors"},
         )
 
-    asg = audio.assignment
     now = datetime.now(timezone.utc)
-    if asg:
-        asg.transcripteur_id = body.transcripteur_id
-        asg.assigned_at = now
-    else:
-        db.add(
-            Assignment(
-                audio_id=audio.id,
-                transcripteur_id=body.transcripteur_id,
-                assigned_at=now,
+
+    # 1. Remove existing assignments for this audio
+    await db.execute(
+        delete(Assignment).where(Assignment.audio_id == audio.id)
+    )
+
+    # 2. Add new assignments
+    if body.transcripteur_ids:
+        for t_id in body.transcripteur_ids:
+            if not t_id: continue
+            db.add(
+                Assignment(
+                    audio_id=audio.id,
+                    transcripteur_id=t_id,
+                    assigned_at=now,
+                )
             )
-        )
-    audio.status = AudioFileStatus.ASSIGNED
+        audio.status = AudioFileStatus.ASSIGNED
+    else:
+        audio.status = AudioFileStatus.UPLOADED
+
+    await log_audit_action(
+        db, audio.project_id, sub, "AUDIO_ASSIGNED",
+        {"audio_id": body.audio_id, "transcripteur_ids": body.transcripteur_ids},
+    )
     try:
         await db.commit()
     except IntegrityError:
@@ -3530,7 +3554,8 @@ async def assign_audio_to_transcripteur(
             status_code=409,
             detail={"error": "Assignment conflict, retry the request"},
         )
-    await db.refresh(audio)
+    
+    # Refresh with new assignments
     result = await db.execute(
         select(AudioFile)
         .where(AudioFile.id == audio.id)
@@ -3802,6 +3827,153 @@ async def delete_membership(
     await db.commit()
 
 
+@app.get("/v1/iam/users", tags=["IAM"])
+async def list_iam_users(
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[dict]:
+    """List users reachable by the current user (Story 17.1).
+    - Admin: all users.
+    - Manager: all users in Keycloak (for assignment) or restricted to perimeter? 
+      Standard practice: list all for assignment, but ManagerMembership defines perimeter.
+      Let's allow all for now to facilitate assignments.
+    - Transcripteur/Expert: only members of their own manager's perimeter.
+    """
+    roles = get_roles(payload)
+    sub = payload.get("sub")
+
+    # 1. Fetch users from Keycloak
+    kc_users = await keycloak_admin.list_keycloak_users()
+    
+    # 2. Filter logic
+    if "Admin" in roles or "Manager" in roles:
+        # Managers can see everyone to allow assigning audio files to any Transcripteur.
+        return [{k: v for k, v in u.items() if k != "credentials"} for u in kc_users]
+
+    # Transcripteur / Expert: see colleagues in the same manager's perimeter
+    # First find our manager
+    mgr_r = await db.execute(select(ManagerMembership.manager_id).where(ManagerMembership.member_id == sub))
+    mgr_id = mgr_r.scalar_one_or_none()
+    
+    _strip = lambda u: {k: v for k, v in u.items() if k != "credentials"}
+    if not mgr_id:
+        # Isolated user, only sees themselves
+        return [_strip(u) for u in kc_users if u.get("id") == sub]
+
+    # Find all members of that manager
+    peers_r = await db.execute(select(ManagerMembership.member_id).where(ManagerMembership.manager_id == mgr_id))
+    peer_ids = set(peers_r.scalars().all())
+    peer_ids.add(mgr_id) # Include manager
+
+    return [_strip(u) for u in kc_users if u.get("id") in peer_ids]
+
+
+@app.post("/v1/audio-files/{audio_id}/claim", tags=["Tasks"])
+async def claim_audio_task(
+    audio_id: int,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Self-assign an unassigned normalized audio file (Story 17.1)."""
+    roles = get_roles(payload)
+    if "Transcripteur" not in roles and "Expert" not in roles:
+        raise HTTPException(status_code=403, detail={"error": "Transcripteur or Expert role required"})
+    sub = payload.get("sub")
+
+    # Lock audio row
+    result = await db.execute(
+        select(AudioFile)
+        .where(AudioFile.id == audio_id)
+        .options(selectinload(AudioFile.assignment))
+        .with_for_update()
+    )
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
+
+    # Verify audio belongs to a project within the user's manager perimeter.
+    # Users with no manager assignment are fully isolated and cannot claim.
+    # Note: on the auto-insert path (post_iam_user), Manager subs are never added as member_id.
+    # An Admin using POST /v1/iam/memberships could insert a Manager sub as member_id, bypassing
+    # this invariant. This is intentional flexibility for Admin-level overrides; a DB constraint
+    # is deliberately NOT added so Admins can model cross-perimeter delegation if needed.
+    mgr_r = await db.execute(
+        select(ManagerMembership.manager_id).where(ManagerMembership.member_id == sub)
+    )
+    mgr_id = mgr_r.scalar_one_or_none()
+    if not mgr_id:
+        raise HTTPException(status_code=403, detail={"error": "Not assigned to a manager perimeter"})
+    proj_check = await db.execute(
+        select(Project.id).where(Project.id == af.project_id, Project.manager_id == mgr_id)
+    )
+    if proj_check.scalar_one_or_none() is None:
+        raise HTTPException(status_code=403, detail={"error": "Audio is outside your manager's perimeter"})
+
+    if _assign_state_blocks_reassign(af):
+        raise HTTPException(status_code=409, detail={"error": "Audio has already been transcribed or validated"})
+
+    if af.assignment:
+        raise HTTPException(status_code=409, detail={"error": "Audio already assigned"})
+
+    if not _audio_normalized_eligible(af):
+        raise HTTPException(status_code=400, detail={"error": "Audio not ready for transcription"})
+
+    # Create assignment
+    db.add(Assignment(
+        audio_id=af.id,
+        transcripteur_id=sub,
+        assigned_at=datetime.now(timezone.utc)
+    ))
+    af.status = AudioFileStatus.ASSIGNED
+    await log_audit_action(db, af.project_id, sub, "AUDIO_CLAIMED", {"audio_id": audio_id})
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail={"error": "Audio already claimed, retry"})
+
+    return {"status": "claimed", "audio_id": audio_id}
+
+
+class HelpRequest(BaseModel):
+    requested: bool
+    message: str | None = Field(None, max_length=1000)
+
+@app.post("/v1/audio-files/{audio_id}/help", tags=["Tasks"])
+async def toggle_help_request(
+    audio_id: int,
+    body: HelpRequest,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Request or cancel help from peers (Story 17.1)."""
+    roles = get_roles(payload)
+    if "Transcripteur" not in roles and "Expert" not in roles:
+        raise HTTPException(status_code=403, detail={"error": "Transcripteur or Expert role required"})
+    sub = payload.get("sub")
+
+    result = await db.execute(
+        select(Assignment)
+        .where(Assignment.audio_id == audio_id, Assignment.transcripteur_id == sub)
+        .options(selectinload(Assignment.audio_file))
+    )
+    asg = result.scalar_one_or_none()
+    if not asg:
+        raise HTTPException(status_code=404, detail={"error": "Assignment not found"})
+
+    asg.help_requested = body.requested
+    asg.help_message = body.message if body.requested else None
+
+    await log_audit_action(db, asg.audio_file.project_id, sub, "HELP_TOGGLED",
+        {"audio_id": audio_id, "requested": body.requested, "message": asg.help_message})
+    await db.commit()
+    return {
+        "audio_id": audio_id,
+        "help_requested": asg.help_requested,
+        "help_message": asg.help_message
+    }
+
+
 @app.post("/v1/iam/users", tags=["IAM"], status_code=201)
 async def post_iam_user(
     body: UserCreate,
@@ -3851,13 +4023,22 @@ async def post_iam_user(
             await db.commit()
         except Exception as exc:
             await db.rollback()
-            # COMPENSATING ACTION: delete from Keycloak to prevent orphaned users
+            # COMPENSATING ACTION: delete from Keycloak to prevent orphaned users.
+            # Wrapped in its own try/except so token or network errors here don't
+            # mask the original DB exception or change the response status code.
             logger.warning("Cleaning up Keycloak user %s due to DB persistence failure", new_user_id)
-            await keycloak_admin.delete_keycloak_user(new_user_id)
-            
+            try:
+                await keycloak_admin.delete_keycloak_user(new_user_id)
+            except Exception as cleanup_exc:
+                logger.error(
+                    "Keycloak compensating delete failed for user %s — orphan may exist: %s",
+                    new_user_id,
+                    cleanup_exc,
+                )
+
             if isinstance(exc, IntegrityError):
                  raise HTTPException(status_code=409, detail={"error": "Member already mapped to a manager"})
-            
+
             logger.error("Failed to persist ManagerMembership for new user %s: %s", new_user_id, exc)
             raise HTTPException(status_code=500, detail={"error": "Failed to persist manager mapping"})
 
@@ -4613,8 +4794,59 @@ async def list_my_audio_tasks(
             "filename": af.filename,
             "status": af.status.value,
             "assigned_at": asg.assigned_at.isoformat(),
+            "help_requested": asg.help_requested,
+            "help_message": asg.help_message
         }
         for asg, af, proj in rows
+    ]
+
+
+@app.get("/v1/me/available-tasks", tags=["Tasks"])
+async def list_available_tasks(
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list:
+    """List unassigned normalized audios within the user's manager perimeter (Story 17.1)."""
+    roles = get_roles(payload)
+    if "Transcripteur" not in roles and "Expert" not in roles:
+        raise HTTPException(status_code=403, detail={"error": "Transcripteur or Expert role required"})
+    sub = payload.get("sub")
+
+    # 1. Find our manager
+    mgr_r = await db.execute(select(ManagerMembership.manager_id).where(ManagerMembership.member_id == sub))
+    mgr_id = mgr_r.scalar_one_or_none()
+    
+    # 2. Find normalized unassigned audios
+    if mgr_id:
+        # Filter by projects owned by our manager
+        stmt = (
+            select(AudioFile, Project)
+            .join(Project, AudioFile.project_id == Project.id)
+            .outerjoin(Assignment, AudioFile.id == Assignment.audio_id)
+            .where(
+                Project.manager_id == mgr_id,
+                Project.status.in_([ProjectStatus.ACTIVE, ProjectStatus.DRAFT]),
+                AudioFile.normalized_path.isnot(None),
+                AudioFile.validation_error.is_(None),
+                Assignment.audio_id.is_(None)
+            )
+            .order_by(AudioFile.uploaded_at.desc())
+        )
+    else:
+        return []  # user not assigned to a manager perimeter — no tasks visible
+    result = await db.execute(stmt)
+    rows = result.all()
+    
+    return [
+        {
+            "audio_id": af.id,
+            "project_id": proj.id,
+            "project_name": proj.name,
+            "filename": af.filename,
+            "status": af.status.value,
+            "uploaded_at": af.uploaded_at.isoformat()
+        }
+        for af, proj in rows
     ]
 
 

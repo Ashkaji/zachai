@@ -32,10 +32,6 @@ def _validate_config():
          raise RuntimeError(f"KEYCLOAK_ISSUER must contain '/realms/{{realm}}': {issuer}")
 
 
-# Validate on module import
-_validate_config()
-
-
 async def get_admin_token() -> str:
     """
     Retrieve a Keycloak Admin REST API token using client_credentials flow.
@@ -45,6 +41,7 @@ async def get_admin_token() -> str:
     global _admin_token_cache
 
     async with _admin_token_lock:
+        _validate_config()  # Fast env-var guard; raises RuntimeError at first use, inside the lock so concurrent callers don't pile on
         now = time.time()
 
         # Check cache (refresh 30 seconds before expiration)
@@ -146,7 +143,7 @@ def _keycloak_user_create_http_exception(status_code: int, body: str):
                     "Keycloak refuse la création d’utilisateur via l’API admin (HTTP 403) : le compte de service "
                     f"du client confidentiel « {client_id} » n’a probablement pas les bons droits. "
                     "Dans Keycloak (realm cible) : Clients → ce client → Onglet « Service accounts roles » → "
-                    "« realm-management » : assigner au minimum « manage-users » et « view-users » (voir "
+                    "« realm-management » : assigner au minimum « manage-users », « view-users » et « query-users » (voir "
                     "import `zachai-realm.json`). Vérifiez aussi que KEYCLOAK_ISSUER pointe vers le bon realm."
                 ),
                 "keycloak_status": 403,
@@ -165,6 +162,45 @@ def _keycloak_user_create_http_exception(status_code: int, body: str):
     )
 
 
+async def get_user_id_by_email(email: str) -> str | None:
+    """Helper to find user ID by exact email search."""
+    from fastapi import HTTPException
+
+    token = await get_admin_token()
+    _, base_url = _get_keycloak_admin_urls()
+    search_url = f"{base_url}/users"
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(
+                search_url,
+                params={"email": email, "exact": "true"},
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10.0,
+            )
+        except httpx.RequestError as exc:
+            logger.error("Keycloak connection error: %s", exc)
+            raise HTTPException(status_code=502, detail={"error": "Keycloak unreachable"})
+
+        if resp.status_code == 200:
+            try:
+                users = resp.json()
+            except ValueError as exc:
+                logger.error("Keycloak email search response not valid JSON: %s", exc)
+                raise HTTPException(status_code=502, detail={"error": "Keycloak returned invalid JSON for email search"})
+            if len(users) == 1:
+                uid = users[0].get("id")
+                if not uid:
+                    raise HTTPException(status_code=502, detail={"error": "Keycloak user object missing id field"})
+                return uid
+            if len(users) > 1:
+                logger.error("Keycloak returned multiple users for exact email '%s'", email)
+                raise HTTPException(status_code=502, detail={"error": "Ambiguous user ID returned by Keycloak for email"})
+            return None  # 0 results = not found, not a Keycloak fault
+        logger.error("Keycloak email search failed: %s %s", resp.status_code, resp.text)
+        raise HTTPException(status_code=502, detail={"error": f"Keycloak email search failed: {resp.status_code}"})
+
+
 async def create_keycloak_user(
     user_data: dict,
     role: str | None = None,
@@ -173,8 +209,7 @@ async def create_keycloak_user(
     """
     Create a user in Keycloak and return their new ID (sub).
     If role or role_names are provided, they are assigned immediately after creation.
-    Raises HTTPException 409 if user already exists, or 502 with un message explicite si Keycloak
-    refuse (401/403 droits compte de service, ou autre code).
+    Raises HTTPException 409 with PRECISE message if user/email already exists.
     """
     from fastapi import HTTPException
 
@@ -202,7 +237,7 @@ async def create_keycloak_user(
             else:
                 user_id = location.split("/")[-1]
             
-            # Assign requested realm roles (single role kept for backward compatibility).
+            # Assign requested realm roles
             requested_roles: list[str] = []
             if role_names:
                 requested_roles.extend(role_names)
@@ -219,38 +254,45 @@ async def create_keycloak_user(
             
             return user_id
 
-        if resp.status_code == 409:
-            raise HTTPException(
-                status_code=409, detail={"error": "User already exists in Keycloak"}
-            )
+        # If 409 (Conflict) or 400 (Bad Request usually due to duplicate), 
+        # we perform targeted checks to give a precise message.
+        if resp.status_code in (400, 409):
+            username = user_data.get("username")
+            email = user_data.get("email")
 
-        # Keycloak sometimes returns 400 with a body like "User exists with same username" / email.
-        if resp.status_code == 400:
-            try:
-                err_body = resp.json()
-            except Exception:
-                err_body = None
-            msg_l = ""
-            if isinstance(err_body, dict):
-                msg_l = str(err_body.get("errorMessage", "") or err_body.get("error", "") or "").lower()
-            text_l = (resp.text or "").lower()
-            combined = f"{msg_l} {text_l}"
-            if any(
-                x in combined
-                for x in (
-                    "already exists",
-                    "duplicate",
-                    "same username",
-                    "same email",
-                    "user exists",
-                )
-            ):
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "error": "Un utilisateur avec ce nom d’utilisateur ou cet e-mail existe déjà dans Keycloak."
-                    },
-                )
+            if username:
+                try:
+                    if await get_user_id_by_username(username):
+                        raise HTTPException(
+                            status_code=409,
+                            detail={"error": f"Le nom d’utilisateur « {username} » est déjà utilisé."}
+                        )
+                except HTTPException as e:
+                    if e.status_code == 409: raise e
+                    logger.warning("Keycloak username lookup returned %s during conflict diagnosis; falling back to generic 409", e.status_code)
+                except KeycloakAdminTokenError as e:
+                    logger.error("Keycloak admin token error during conflict diagnosis; falling back to generic 409: %s", e)
+                except Exception: pass
+
+            if email:
+                try:
+                    if await get_user_id_by_email(email):
+                        raise HTTPException(
+                            status_code=409,
+                            detail={"error": f"L’adresse e-mail « {email} » est déjà utilisée."}
+                        )
+                except HTTPException as e:
+                    if e.status_code == 409: raise e
+                    logger.warning("Keycloak email lookup returned %s during conflict diagnosis; falling back to generic 409", e.status_code)
+                except KeycloakAdminTokenError as e:
+                    logger.error("Keycloak admin token error during conflict diagnosis; falling back to generic 409: %s", e)
+                except Exception: pass
+
+            # Fallback for generic 409
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "Un utilisateur avec ce nom ou cet e-mail existe déjà."}
+            )
 
         if resp.status_code in (401, 403):
             logger.error(
@@ -291,13 +333,21 @@ async def get_user_id_by_username(username: str) -> str:
             raise HTTPException(status_code=502, detail={"error": "Keycloak unreachable"})
 
         if resp.status_code == 200:
-            users = resp.json()
+            try:
+                users = resp.json()
+            except ValueError as exc:
+                logger.error("Keycloak username search response not valid JSON: %s", exc)
+                raise HTTPException(status_code=502, detail={"error": "Keycloak returned invalid JSON for username search"})
             if len(users) == 1:
-                return users[0]["id"]
+                uid = users[0].get("id")
+                if not uid:
+                    raise HTTPException(status_code=502, detail={"error": "Keycloak user object missing id field"})
+                return uid
             if len(users) > 1:
                 logger.error("Keycloak returned multiple users for exact username '%s'", username)
                 raise HTTPException(status_code=502, detail={"error": "Ambiguous user ID returned by Keycloak"})
-
+            return None  # 0 results = user not found, not a Keycloak fault
+        logger.error("Keycloak username search failed: %s %s", resp.status_code, resp.text)
     raise HTTPException(status_code=502, detail={"error": "Failed to retrieve user ID from Keycloak"})
 
 
@@ -399,6 +449,37 @@ async def update_keycloak_user(user_id: str, update_data: dict):
             status_code=502,
             detail={"error": f"Keycloak error during user update: {resp.status_code}"},
         )
+
+
+async def list_keycloak_users() -> list[dict]:
+    """Fetch all users from Keycloak."""
+    from fastapi import HTTPException
+
+    token = await get_admin_token()
+    _, base_url = _get_keycloak_admin_urls()
+    users_url = f"{base_url}/users"
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(
+                users_url,
+                params={"max": 1000},
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10.0,
+            )
+        except httpx.RequestError as exc:
+            logger.error("Keycloak connection error: %s", exc)
+            raise HTTPException(status_code=502, detail={"error": "Keycloak unreachable"})
+
+        if resp.status_code == 200:
+            try:
+                return resp.json()
+            except ValueError as exc:
+                logger.error("Keycloak users response not valid JSON: %s", exc)
+                raise HTTPException(status_code=502, detail={"error": "Keycloak returned invalid JSON for user list"})
+
+    logger.error("Keycloak user list failed: %s %s", resp.status_code, resp.text)
+    raise HTTPException(status_code=502, detail={"error": "Failed to list users from Keycloak"})
 
 
 async def delete_keycloak_user(user_id: str):

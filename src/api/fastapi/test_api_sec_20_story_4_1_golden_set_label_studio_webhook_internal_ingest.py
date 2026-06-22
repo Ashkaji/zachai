@@ -89,6 +89,64 @@ def test_expert_validation_webhook_missing_audio(mock_db):
     mock_put.assert_not_called()
 
 
+def test_expert_validation_webhook_unregistered_ls_project_returns_404(mock_db):
+    """Webhook from a Label Studio project not registered in local DB → 404 (security guard)."""
+    body_with_project = {
+        **LS_WEBHOOK_BODY_ONE_SEGMENT,
+        "task": {
+            **LS_WEBHOOK_BODY_ONE_SEGMENT["task"],
+            "project": 99,  # LS project ID not in local DB
+        },
+    }
+    dup_r = MagicMock()
+    dup_r.scalar_one_or_none.return_value = None
+    mock_af = MagicMock()
+    mock_af.project_id = 1
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_af
+    proj_r = MagicMock()
+    proj_r.scalar_one_or_none.return_value = None  # no project has label_studio_project_id=99
+    mock_db.execute = AsyncMock(side_effect=[dup_r, af_r, proj_r])
+    with patch.object(main.internal_client, "put_object") as mock_put:
+        response = client.post(
+            "/v1/callback/expert-validation",
+            headers=_webhook_headers(),
+            json=body_with_project,
+        )
+    assert response.status_code == 404
+    mock_put.assert_not_called()
+
+
+def test_expert_validation_webhook_cross_project_forgery_returns_404(mock_db):
+    """Webhook for audio in project 1 but LS project registered to project 2 → 404 (proj.id != af.project_id)."""
+    body_with_project = {
+        **LS_WEBHOOK_BODY_ONE_SEGMENT,
+        "task": {
+            **LS_WEBHOOK_BODY_ONE_SEGMENT["task"],
+            "project": 77,
+        },
+    }
+    dup_r = MagicMock()
+    dup_r.scalar_one_or_none.return_value = None
+    mock_af = MagicMock()
+    mock_af.project_id = 1  # audio belongs to project 1
+    af_r = MagicMock()
+    af_r.scalar_one_or_none.return_value = mock_af
+    mock_proj = MagicMock()
+    mock_proj.id = 2  # but LS project 77 is registered to project 2 — mismatch
+    proj_r = MagicMock()
+    proj_r.scalar_one_or_none.return_value = mock_proj
+    mock_db.execute = AsyncMock(side_effect=[dup_r, af_r, proj_r])
+    with patch.object(main.internal_client, "put_object") as mock_put:
+        response = client.post(
+            "/v1/callback/expert-validation",
+            headers=_webhook_headers(),
+            json=body_with_project,
+        )
+    assert response.status_code == 404
+    mock_put.assert_not_called()
+
+
 def test_expert_validation_webhook_writes_golden_set(mock_db):
     """Valid webhook: MinIO put + DB commit path (mocked)."""
     dup_r = MagicMock()

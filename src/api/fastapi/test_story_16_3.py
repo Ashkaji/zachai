@@ -111,7 +111,13 @@ async def test_post_user_manager_expert_assigns_expert_and_transcripteur_roles(m
         assert "initial_password" in response.json()
         mock_create.assert_called_once()
         _, kwargs = mock_create.call_args
-        assert kwargs["role_names"] == ["Expert", "Transcripteur"]
+        # sorted(set(["Expert", "Transcripteur"])) == ["Expert", "Transcripteur"] alphabetically
+        assert sorted(kwargs["role_names"]) == ["Expert", "Transcripteur"]
+        mock_db.add.assert_called_once()
+        membership = mock_db.add.call_args[0][0]
+        assert isinstance(membership, ManagerMembership)
+        assert membership.member_id == "expert-member-uuid"
+        assert membership.manager_id == MANAGER_PAYLOAD["sub"]
 
 @pytest.mark.asyncio
 async def test_post_user_manager_forbidden_escalation(mock_db):

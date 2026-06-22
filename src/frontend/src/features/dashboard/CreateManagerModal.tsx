@@ -5,9 +5,9 @@ import { useNotifications } from "../../shared/notifications/NotificationContext
 import { ApiError } from "../../shared/api/zachaiApi";
 
 function suggestPassword(): string {
-  const buf = new Uint8Array(12);
+  const buf = new Uint8Array(24);
   crypto.getRandomValues(buf);
-  return Array.from(buf, (b) => b.toString(36)).join("").slice(0, 16);
+  return btoa(String.fromCharCode(...buf)).replace(/[+/=]/g, "").slice(0, 16);
 }
 
 function formatCreateUserError(err: unknown): string {
@@ -35,42 +35,49 @@ interface CreateManagerModalProps {
   onSuccess: () => void;
 }
 
+const _initialFormData: Omit<UserCreate, "role"> = {
+  username: "",
+  email: "",
+  firstName: "",
+  lastName: "",
+  enabled: true,
+  password: "",
+};
+
 export function CreateManagerModal({ isOpen, onClose, token, onSuccess }: CreateManagerModalProps) {
   const { notify } = useNotifications();
-  const initialFormData: Omit<UserCreate, "role"> = {
-    username: "",
-    email: "",
-    firstName: "",
-    lastName: "",
-    enabled: true,
-    password: "",
-  };
   const [formData, setFormData] = useState<Omit<UserCreate, "role">>({
-    ...initialFormData,
+    ..._initialFormData,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     if (!isOpen) {
-      setFormData(initialFormData);
+      setFormData({ ..._initialFormData });
       setError("");
       setLoading(false);
+      setShowPassword(false);
     }
   }, [isOpen]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!token || loading) return;
     setLoading(true);
     setError("");
+    const sanitizedData = {
+      username: formData.username.trim(),
+      email: formData.email.trim(),
+      firstName: formData.firstName.trim(),
+      lastName: formData.lastName.trim(),
+      enabled: formData.enabled,
+    };
     try {
       const pwd = formData.password?.trim();
       const res = await createUser(
-        {
-          ...formData,
-          role: "Manager",
-          password: pwd || undefined,
-        },
+        { ...sanitizedData, role: "Manager", password: pwd || undefined },
         token,
       );
       if (res.initial_password) {
@@ -104,7 +111,7 @@ export function CreateManagerModal({ isOpen, onClose, token, onSuccess }: Create
   };
 
   const handleClose = () => {
-    setFormData(initialFormData);
+    setFormData({ ..._initialFormData });
     setError("");
     setLoading(false);
     onClose();
@@ -173,15 +180,34 @@ export function CreateManagerModal({ isOpen, onClose, token, onSuccess }: Create
               Générer
             </button>
           </div>
-          <input
-            name="password"
-            type="password"
-            value={formData.password ?? ""}
-            onChange={handleChange}
-            className="za-input"
-            autoComplete="new-password"
-            placeholder="Laisser vide = mot de passe généré par le serveur"
-          />
+          <div style={{ position: "relative" }}>
+            <input
+              name="password"
+              type={showPassword ? "text" : "password"}
+              value={formData.password ?? ""}
+              onChange={handleChange}
+              className="za-input"
+              style={{ paddingRight: "4rem" }}
+              autoComplete="new-password"
+              placeholder="Laisser vide = mot de passe généré par le serveur"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="za-btn za-btn--ghost"
+              style={{
+                position: "absolute",
+                right: "4px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                fontSize: "0.7rem",
+                padding: "4px 8px",
+                height: "auto"
+              }}
+            >
+              {showPassword ? "Cacher" : "Afficher"}
+            </button>
+          </div>
           <p style={{ margin: 0, fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
             Sans e-mail transactionnel, renseignez un mot de passe ou laissez vide : il sera affiché dans une notification après création.
           </p>
@@ -216,7 +242,7 @@ export function CreateManagerModal({ isOpen, onClose, token, onSuccess }: Create
           <button type="button" onClick={handleClose} className="za-btn za-btn--ghost" disabled={loading}>
             Annuler
           </button>
-          <button type="submit" className="za-btn za-btn--primary" disabled={loading}>
+          <button type="submit" className="za-btn za-btn--primary" disabled={loading || !token}>
             {loading ? "Création..." : "Créer Manager"}
           </button>
         </div>

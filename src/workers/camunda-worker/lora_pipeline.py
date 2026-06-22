@@ -75,6 +75,12 @@ if _raw_stub is None or str(_raw_stub).strip() == "":
     # Unset/empty: stub in non-prod (local Docker), off in production — avoids ENVIRONMENT=production
     # with a compose-only default of stub=true.
     LORA_TRAINING_STUB = not _is_production()
+    if LORA_TRAINING_STUB:
+        logger.warning(
+            "LORA_TRAINING_STUB auto-enabled for non-production environment (%s). "
+            "Set LORA_TRAINING_STUB=false explicitly to suppress this warning.",
+            ENVIRONMENT,
+        )
 else:
     LORA_TRAINING_STUB = _raw_stub.strip().lower() == "true"
 

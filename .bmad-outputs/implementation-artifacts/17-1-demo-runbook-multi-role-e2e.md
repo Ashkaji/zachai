@@ -1,6 +1,6 @@
 # Story 17.1: Runbook de Démo Multi-Rôles E2E
 
-Status: in-progress
+Status: done
 
 Ce document est votre guide pas-à-pas pour tester l'intégralité de la plateforme ZachAI, du provisionnement des comptes jusqu'à la validation finale d'une transcription.
 
@@ -50,9 +50,9 @@ Oui : **toute création ou correction manuelle dans l’admin Keycloak** doit ê
 
 ### Étape B : Managers, transcripteurs, experts (Interface ZachAI + Keycloak si besoin)
 1. **Connectez-vous en tant qu’Admin** (`zachai-a1` / `zachai`) sur le frontend ZachAI.
-2. **"+ Créer Manager"** : créez **`zachai-m1`** (`m1@zachai.local`), puis recommencez pour **`zachai-m2`** (`m2@zachai.local`) (ou créez `m2` depuis **`zachai-a2`** pour varier la démo).
+2. **"+ Créer Manager"** : créez **`zachai-m1`** (`m1@zachai.local`). Dans le champ **"Mot de passe initial"**, saisissez **`zachai`**. Recommencez pour **`zachai-m2`** (`m2@zachai.local`) (ou créez `m2` depuis **`zachai-a2`** pour varier la démo).
 3. **Déconnectez-vous**, connectez-vous en **Manager** (`zachai-m1`).
-4. **"+ Inviter un membre"** : provisionnez **trois transcripteurs** — **`zachai-t1`**, **`zachai-t2`**, **`zachai-t3`** — et **deux experts** — **`zachai-e1`**, **`zachai-e2`** (e-mails `t1`…`t3`, `e1`, `e2` @ `zachai.local`).
+4. **"+ Inviter un membre"** : provisionnez **trois transcripteurs** — **`zachai-t1`**, **`zachai-t2`**, **`zachai-t3`** — et **deux experts** — **`zachai-e1`**, **`zachai-e2`** (e-mails `t1`…`t3`, `e1`, `e2` @ `zachai.local`). Pour chacun, saisissez **`zachai`** dans le champ **"Mot de passe initial"**.
 5. *Vérification IAM :* chaque **Expert** doit avoir les rôles Keycloak **`Expert`** et **`Transcripteur`** (profil composite attendu pour `zachai-e1` / `zachai-e2`).
 
 ---
@@ -139,3 +139,29 @@ Objectif : vérifier que **plusieurs transcripteurs** voient les modifications *
 
 **Guide généré le :** 16 Avril 2026
 **Version ZachAI :** 1.0.0-rc1
+
+---
+
+### Review Findings
+
+Code review of Story 17.1 (commit range `f76dbb3~1..HEAD`) — 2026-06-22.
+
+#### Patch (action required)
+
+- [x] [Review][Patch] **[HIGH] Compensating delete can raise `KeycloakAdminTokenError`, masking DB exception and leaving orphan user** [`src/api/fastapi/main.py:3995`, `keycloak_admin.py:475`] — `delete_keycloak_user` calls `get_admin_token()` which can raise `KeycloakAdminTokenError` (not caught inside the compensating block). If Keycloak is unreachable when the DB commit fails, the token error propagates uncaught, replaces the original `IntegrityError → 409` / generic `500` response, and leaves the Keycloak user permanently orphaned. Fix: wrap the `await keycloak_admin.delete_keycloak_user(new_user_id)` call in its own `try/except Exception`.
+- [x] [Review][Patch] **[HIGH] `_validate_config()` called at module import — breaks isolated test runs** [`src/api/fastapi/keycloak_admin.py:62`] — If `test_keycloak_admin.py` is run in isolation (without `conftest.py`/`fastapi_test_app.py` setting env vars first), the bare `import keycloak_admin` at line 8 triggers `_validate_config()` at collection time and raises `RuntimeError`, aborting the entire suite. Fix: move the module-level `_validate_config()` call inside a lazy-init guard, or ensure the test conftest sets env vars before any keycloak_admin import.
+- [x] [Review][Patch] **[MAJOR] Runbook §1 Étape B does not instruct operator to type `zachai` into the new password field** [`.bmad-outputs/implementation-artifacts/17-1-demo-runbook-multi-role-e2e.md`] — The credentials table lists all accounts with password `zachai`, but steps 2 and 4 of Étape B say only to fill the form without specifying the password field. An operator following literally would leave it blank and receive a server-generated password — breaking the credential table. Fix: add explicit instruction "Dans le champ 'Mot de passe initial', saisissez `zachai`" to steps 2 and 4.
+- [x] [Review][Patch] **[MEDIUM] `persist_golden_set_entry` condition flip lacks test for `proj is None` rejection** [`src/api/fastapi/main.py:2498`] — The condition was changed from `proj is not None and proj.id != af.project_id` to `proj is None or proj.id != af.project_id`. The new `proj is None` rejection path (correct security fix) has no test coverage. Fix: add a test case where a webhook arrives with a `label_studio_project_id` that has no matching project row and assert it returns 404.
+- [x] [Review][Patch] **[MEDIUM] `suggestPassword()` has non-uniform entropy via base36 encoding** [`src/frontend/src/features/dashboard/CreateManagerModal.tsx`, `InviteTeamMemberModal.tsx`] — `b.toString(36)` produces 1 char for bytes 0–35, 2 chars for 36–255; after `slice(0, 16)` low bytes under-contribute. Replace with a uniform-alphabet approach (e.g. `btoa(String.fromCharCode(...buf)).replace(/[+/=]/g, '').slice(0, 16)`).
+- [x] [Review][Patch] **[LOW] `InviteTeamMemberModal` drops `finally { setLoading(false) }` — inconsistent with sibling and fragile** [`src/frontend/src/features/dashboard/InviteTeamMemberModal.tsx:97`] — If `notify()` throws before the explicit `setLoading(false)` on the success path, loading is permanently stuck. `CreateManagerModal` keeps `finally`. Restore `finally { setLoading(false) }` for consistency.
+- [x] [Review][Patch] **[LOW] Test `role_names`: missing `mock_create.assert_called_once()`** [`src/api/fastapi/test_story_16_3.py:868`] — The assertion `_, kwargs = mock_create.call_args` without `assert_called_once()` silently passes if `create_keycloak_user` is called more than once (the last call may not be the Expert creation). Add `mock_create.assert_called_once()`.
+- [x] [Review][Patch] **[LOW] `LORA_TRAINING_STUB` auto-derive from ENVIRONMENT emits no warning log** [`src/workers/camunda-worker/lora_pipeline.py:73`] — When the var is empty and ENVIRONMENT is not production, stub silently activates. A staging environment with `ENVIRONMENT=staging` silently runs stubs. Add a `logger.warning("LORA_TRAINING_STUB auto-set to True for non-production environment …")` in the auto-derive branch.
+- [x] [Review][Patch] **[LOW] `ExpertDashboardStateContent` test never passes `onReconcile`** [`src/frontend/src/features/dashboard/RoleDashboards.test.ts:86`] — Simultaneous "Réconcilier →" + "Label Studio →" button rendering is untested. Add a test variant that passes an `onReconcile` callback and asserts both buttons render.
+
+#### Defer
+
+- [x] [Review][Defer] `asyncio.Lock()` created at module level [`src/api/fastapi/keycloak_admin.py:18`] — safe on Python 3.10+ (current stack: 3.11); pre-existing pattern concern.
+- [x] [Review][Defer] Initial password plaintext in notification body [`CreateManagerModal.tsx`, `InviteTeamMemberModal.tsx`] — intentional design; no transactional email until Epic 18 (Notification Engine).
+- [x] [Review][Defer] `_safe_minio_read` stat→read TOCTOU [`src/api/fastapi/main.py`] — pre-existing deferred from review of 14-1.
+- [x] [Review][Defer] `_safe_minio_read` 413 size-guard path has no test coverage [`src/api/fastapi/main.py`] — new safety feature; test gap deferred.
+- [x] [Review][Defer] "Label Studio →" button silently absent when `label_studio_project_id` is null [`src/frontend/src/features/dashboard/RoleDashboards.tsx`] — data integrity concern at project provisioning level, not a UI bug.

@@ -99,4 +99,36 @@ describe("ExpertDashboard rendered state content", () => {
     expect(html).toContain('href="http://localhost:8090/projects/42"');
     expect(html).toContain("Label Studio");
   });
+
+  it("renders both Réconcilier and Label Studio buttons when onReconcile is provided", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        "div",
+        null,
+        ExpertDashboardStateContent({
+          viewState: "success",
+          error: "",
+          tasks: [
+            {
+              audio_id: 1,
+              project_id: 2,
+              project_name: "Project A",
+              filename: "audio.wav",
+              status: "transcribed",
+              assigned_at: null,
+              expert_id: "user-1",
+              source: "label_studio",
+              priority: "high",
+              label_studio_project_id: 42,
+              label_studio_url: "http://localhost:8090",
+            },
+          ],
+          onReconcile: (_id: number) => undefined,
+        }),
+      ),
+    );
+    expect(html).toContain("Réconcilier");
+    expect(html).toContain('href="http://localhost:8090/projects/42"');
+    expect(html).toContain("Label Studio");
+  });
 });

@@ -1,5 +1,5 @@
 # generated: 2026-03-19
-# last_updated: 2026-04-16
+# last_updated: 2026-06-22
 # project: zachai
 # project_key: NOKEY
 # tracking_system: file-system
@@ -34,7 +34,7 @@
 #   - done: Retrospective has been completed
 
 generated: 2026-03-19
-last_updated: 2026-04-16
+last_updated: 2026-06-22
 project: zachai
 project_key: NOKEY
 tracking_system: file-system
@@ -168,7 +168,7 @@ development_status:
 
   # ─── EPIC 17 — L7: Démo terrain & documentation produit ───────────────────
   epic-17: in-progress
-  17-1-demo-runbook-multi-role-e2e: review
+  17-1-demo-runbook-multi-role-e2e: done
   17-2-readme-roadmap-and-bible-demo-pointers: backlog
   epic-17-retrospective: optional
 

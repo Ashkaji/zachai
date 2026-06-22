@@ -5,9 +5,9 @@ import { useNotifications } from "../../shared/notifications/NotificationContext
 import { ApiError } from "../../shared/api/zachaiApi";
 
 function suggestPassword(): string {
-  const buf = new Uint8Array(12);
+  const buf = new Uint8Array(24);
   crypto.getRandomValues(buf);
-  return Array.from(buf, (b) => b.toString(36)).join("").slice(0, 16);
+  return btoa(String.fromCharCode(...buf)).replace(/[+/=]/g, "").slice(0, 16);
 }
 
 function formatCreateUserError(err: unknown): string {
@@ -52,12 +52,14 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
   const [role, setRole] = useState<TeamRole>("Transcripteur");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   const resetForm = useCallback(() => {
     setFormData({ ...initialFormData });
     setRole("Transcripteur");
     setError("");
     setLoading(false);
+    setShowPassword(false);
   }, []);
 
   useEffect(() => {
@@ -92,15 +94,13 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
         title: "Succès",
         body: `Utilisateur ${sanitizedData.username} (${role}) créé.${pwdHint}`,
       });
-      setLoading(false);
       onSuccess();
       onClose();
     } catch (err: unknown) {
       setError(formatCreateUserError(err));
+    } finally {
       setLoading(false);
     }
-    // Note: finally { setLoading(false) } is omitted because resetForm or setError handle it, 
-    // avoiding redundant state updates after onClose().
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -216,17 +216,36 @@ export function InviteTeamMemberModal({ isOpen, onClose, token, onSuccess }: Inv
               Générer
             </button>
           </div>
-          <input
-            id="invite-password"
-            name="password"
-            type="password"
-            value={formData.password ?? ""}
-            onChange={handleChange}
-            className="za-input"
-            disabled={loading}
-            autoComplete="new-password"
-            placeholder="Vide = généré par le serveur (affiché dans la notification)"
-          />
+          <div style={{ position: "relative" }}>
+            <input
+              id="invite-password"
+              name="password"
+              type={showPassword ? "text" : "password"}
+              value={formData.password ?? ""}
+              onChange={handleChange}
+              className="za-input"
+              style={{ paddingRight: "4rem" }}
+              disabled={loading}
+              autoComplete="new-password"
+              placeholder="Vide = généré par le serveur (affiché dans la notification)"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="za-btn za-btn--ghost"
+              style={{
+                position: "absolute",
+                right: "4px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                fontSize: "0.7rem",
+                padding: "4px 8px",
+                height: "auto"
+              }}
+            >
+              {showPassword ? "Cacher" : "Afficher"}
+            </button>
+          </div>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--spacing-4)" }}>
