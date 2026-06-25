@@ -45,6 +45,8 @@ export type AudioTask = {
   filename: string;
   status: string;
   assigned_at: string;
+  help_requested?: boolean;
+  help_message?: string | null;
 };
 
 export type AudioRow = {
@@ -61,6 +63,8 @@ export type AudioRow = {
   updated_at: string;
   assigned_to: string | null;
   assigned_at: string | null;
+  help_requested?: boolean;
+  help_message?: string | null;
 };
 
 export type ProjectStatusResponse = {
@@ -97,6 +101,14 @@ export type AuditLogEntry = {
   created_at: string;
 };
 
+export type User = {
+  id: string;
+  username: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+};
+
 export type UserCreate = {
   username: string;
   email: string;
@@ -122,6 +134,24 @@ export function fetchMyAudioTasks(token: string): Promise<AudioTask[]> {
   return apiJson<AudioTask[]>("/v1/me/audio-tasks", token);
 }
 
+export function fetchAvailableTasks(token: string): Promise<AudioTask[]> {
+  return apiJson<AudioTask[]>("/v1/me/available-tasks", token);
+}
+
+export function claimTask(audioId: number, token: string): Promise<void> {
+  return apiJson<void>(`/v1/audio-files/${audioId}/claim`, token, {
+    method: "POST",
+  });
+}
+
+export function toggleHelp(audioId: number, requested: boolean, message: string | null, token: string): Promise<void> {
+  return apiJson<void>(`/v1/audio-files/${audioId}/help`, token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ requested, message }),
+  });
+}
+
 export function fetchProjectStatus(id: number, token: string): Promise<ProjectStatusResponse> {
   return apiJson<ProjectStatusResponse>(`/v1/projects/${id}/status`, token);
 }
@@ -142,11 +172,15 @@ export function fetchProjectAuditTrail(id: number, token: string): Promise<Audit
   return apiJson<AuditLogEntry[]>(`/v1/projects/${id}/audit-trail`, token);
 }
 
-export function assignAudio(projectId: number, audioId: number, transcripteurId: string, token: string): Promise<void> {
+export function listUsers(token: string): Promise<User[]> {
+  return apiJson<User[]>("/v1/iam/users", token);
+}
+
+export function assignAudio(projectId: number, audioId: number, transcripteurIds: string[], token: string): Promise<void> {
   return apiJson<void>(`/v1/projects/${projectId}/assign`, token, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ audio_id: audioId, transcripteur_id: transcripteurId }),
+    body: JSON.stringify({ audio_id: audioId, transcripteur_ids: transcripteurIds }),
   });
 }
 
@@ -155,6 +189,25 @@ export function validateAudio(audioId: number, approved: boolean, comment: strin
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ approved, comment }),
+  });
+}
+
+// Audio/project management actions
+export function deleteAudio(projectId: number, audioId: number, token: string): Promise<void> {
+  return apiJson<void>(`/v1/projects/${projectId}/audio-files/${audioId}`, token, {
+    method: "DELETE",
+  });
+}
+
+export function retryNormalization(projectId: number, audioId: number, token: string): Promise<void> {
+  return apiJson<void>(`/v1/projects/${projectId}/audio-files/${audioId}/normalize`, token, {
+    method: "POST",
+  });
+}
+
+export function deleteProject(projectId: number, token: string): Promise<void> {
+  return apiJson<void>(`/v1/projects/${projectId}`, token, {
+    method: "DELETE",
   });
 }
 

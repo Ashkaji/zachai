@@ -1,5 +1,5 @@
-import { 
-  LayoutDashboard, 
+import {
+  LayoutDashboard,
   Layers, 
   ListTodo, 
   CheckSquare, 
@@ -29,28 +29,28 @@ export type NavItem = {
   icon: React.ElementType;
 };
 
-const BASE_ITEMS: NavItem[] = [
-  { id: "profile", label: "Profil & Sécurité", description: "RGPD, préférences, export", icon: UserCircle },
-  { id: "legacy-editor", label: "Éditeur hérité", description: "Migration progressive", icon: FileEdit }
-];
+const PROFILE_ITEM: NavItem = { id: "profile", label: "Profil & Sécurité", description: "RGPD, préférences, export", icon: UserCircle };
+const EDITOR_ITEM: NavItem = { id: "legacy-editor", label: "Éditeur de transcription", description: "Workspace de transcription audio", icon: FileEdit };
 
 export const ROLE_NAVIGATION: Record<AppRole, NavItem[]> = {
   admin: [
     { id: "dashboard-admin", label: "Dashboard Admin", description: "Supervision globale", icon: LayoutDashboard },
     { id: "playground", label: "Playground UI", description: "Validation Design Tokens", icon: Palette },
-    ...BASE_ITEMS,
+    PROFILE_ITEM,
   ],
   manager: [
-    { id: "dashboard-manager", label: "Dashboard Manager", description: "Portefeuille projets", icon: Layers },
-    { id: "project-wizard", label: "Nouveau projet", description: "Nature, labels, audios, assignation", icon: FolderPlus },
-    ...BASE_ITEMS,
+    { id: "dashboard-manager", label: "Mes Projets", description: "Portefeuille projets", icon: Layers },
+    { id: "project-wizard", label: "Nouveau Projet", description: "Créer nature, labels, audios", icon: FolderPlus },
+    PROFILE_ITEM,
   ],
   transcriber: [
-    { id: "dashboard-transcriber", label: "Dashboard Transcripteur", description: "File de tâches assignées", icon: ListTodo },
-    ...BASE_ITEMS,
+    { id: "dashboard-transcriber", label: "Mes Tâches", description: "File de tâches assignées", icon: ListTodo },
+    EDITOR_ITEM,
+    PROFILE_ITEM,
   ],
   expert: [
-    { id: "dashboard-expert", label: "Dashboard Expert", description: "Réconciliation & Golden Set", icon: CheckSquare },
-    ...BASE_ITEMS,
+    { id: "dashboard-expert", label: "Réconciliation", description: "Réconciliation & Golden Set", icon: CheckSquare },
+    EDITOR_ITEM,
+    PROFILE_ITEM,
   ],
 };

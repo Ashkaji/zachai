@@ -1,59 +1,319 @@
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useAuth } from "react-oidc-context";
 import { bearerForApi } from "../../auth/api-client";
-import { fetchProjectStatus, fetchProjectDetail, type AudioRow, type ProjectDetail, assignAudio, validateAudio, fetchProjectAuditTrail, type AuditLogEntry } from "../dashboard/dashboardApi";
+import {
+  fetchProjectStatus,
+  fetchProjectDetail,
+  type AudioRow,
+  type ProjectDetail,
+  assignAudio,
+  listUsers,
+  type User,
+  deleteAudio,
+  retryNormalization,
+  deleteProject,
+} from "../dashboard/dashboardApi";
+import { 
+  registerAudio, 
+  requestAudioUpload 
+} from "../project-wizard/projectApi";
 import { Card, DataTable, Metric, Badge } from "../../shared/ui/Primitives";
-import { GlassModal } from "../../shared/ui/Modals";
 import { formatIso, formatDuration } from "../../shared/utils/dateUtils";
 import { useBatchAction } from "../../shared/hooks/useBatchAction";
 
-type ProjectDetailProps = {
+type ProjectDetailManagerProps = {
   projectId: number;
   onBack: () => void;
 };
 
-type ModalType = "none" | "assign" | "reject" | "report" | "settings" | "audit";
+// --- Sub-component: MultiUserSelect (Chip-based searchable select) ---
 
-export function ProjectDetailManager({ projectId, onBack }: ProjectDetailProps) {
+function MultiUserSelect({ 
+  users, 
+  selectedIds, 
+  onChange 
+}: { 
+  users: User[], 
+  selectedIds: string[], 
+  onChange: (ids: string[]) => void 
+}) {
+  const [search, setSearch] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const filteredUsers = useMemo(() => {
+    const s = search.toLowerCase();
+    return users.filter(u => 
+      !selectedIds.includes(u.id) && 
+      (u.username.toLowerCase().includes(s) || 
+       (u.firstName || "").toLowerCase().includes(s) || 
+       (u.lastName || "").toLowerCase().includes(s))
+    );
+  }, [users, selectedIds, search]);
+
+  const selectedUsers = useMemo(() => 
+    selectedIds.map(id => users.find(u => u.id === id)).filter(Boolean) as User[]
+  , [selectedIds, users]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  return (
+    <div ref={containerRef} style={{ position: "relative", width: "100%" }}>
+      <div 
+        style={{ 
+          display: "flex", 
+          flexWrap: "wrap", 
+          gap: "6px", 
+          padding: "8px", 
+          background: "var(--color-surface-hi)", 
+          borderRadius: "8px",
+          border: "1px solid var(--color-outline)",
+          minHeight: "44px",
+          cursor: "text"
+        }}
+        onClick={() => setIsOpen(true)}
+      >
+        {selectedUsers.map(u => (
+          <div 
+            key={u.id} 
+            style={{ 
+              display: "flex", 
+              alignItems: "center", 
+              gap: "6px", 
+              background: "var(--color-primary-soft)", 
+              color: "var(--color-primary)",
+              padding: "2px 8px",
+              borderRadius: "4px",
+              fontSize: "0.85rem",
+              fontWeight: 600
+            }}
+          >
+            {u.firstName || u.lastName ? `${u.firstName} ${u.lastName}` : u.username}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onChange(selectedIds.filter(id => id !== u.id));
+              }}
+              style={{ 
+                border: "none", 
+                background: "none", 
+                color: "inherit", 
+                cursor: "pointer", 
+                padding: "0 2px",
+                display: "flex",
+                alignItems: "center",
+                opacity: 0.7
+              }}
+              title="Retirer"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+          </div>
+        ))}
+        <input
+          type="text"
+          placeholder={selectedIds.length === 0 ? "Rechercher des collaborateurs..." : ""}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onFocus={() => setIsOpen(true)}
+          style={{ 
+            border: "none", 
+            background: "none", 
+            outline: "none", 
+            flex: 1, 
+            minWidth: "120px", 
+            color: "inherit",
+            fontSize: "0.85rem"
+          }}
+        />
+      </div>
+
+      {isOpen && filteredUsers.length > 0 && (
+        <div style={{ 
+          position: "absolute", 
+          top: "100%", 
+          left: 0, 
+          right: 0, 
+          zIndex: 300, 
+          background: "var(--color-surface-hi)", 
+          borderRadius: "8px", 
+          boxShadow: "0 10px 25px rgba(0,0,0,0.4)",
+          marginTop: "4px",
+          maxHeight: "200px",
+          overflowY: "auto",
+          border: "1px solid var(--color-outline-ghost)"
+        }}>
+          {filteredUsers.map(u => (
+            <div 
+              key={u.id}
+              onClick={() => {
+                onChange([...selectedIds, u.id]);
+                setSearch("");
+                setIsOpen(false);
+              }}
+              style={{ 
+                padding: "10px 15px", 
+                cursor: "pointer",
+                display: "flex",
+                flexDirection: "column",
+                borderBottom: "1px solid var(--color-outline-ghost)"
+              }}
+              className="za-row-hover"
+            >
+              <span style={{ fontWeight: 600 }}>{u.firstName || u.lastName ? `${u.firstName} ${u.lastName}` : u.username}</span>
+              <span style={{ fontSize: "0.75rem", opacity: 0.6 }}>@{u.username}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Main Component ---
+
+export function ProjectDetailManager({ projectId, onBack }: ProjectDetailManagerProps) {
   const auth = useAuth();
   const token = useMemo(() => bearerForApi(auth.user), [auth.user]);
   const [projectStatus, setProjectStatus] = useState<string>("");
   const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(null);
   const [audios, setAudios] = useState<AudioRow[]>([]);
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
-  const [auditLoading, setAuditLoading] = useState(false);
   const [error, setError] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [sortField, setSortField] = useState<"filename" | "uploaded_at">("uploaded_at");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
-
-  // Bulk Selection State
+  const [activeModal, setActiveModal] = useState<"none" | "import" | "assign" | "report" | "delete-project">("none");
+  const [importFiles, setImportFiles] = useState<File[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const [activeModal, setActiveModal] = useState<ModalType>("none");
-  const [transcripteurId, setTranscripteurId] = useState("");
-  const [rejectComment, setRejectComment] = useState("");
-  const [rejectMotif, setRejectMotif] = useState("");
-  const [pendingActionId, setPendingActionId] = useState<number | null>(null);
+  const [transcripteurIds, setTranscripteurIds] = useState<string[]>([]);
+  const [audioActionLoading, setAudioActionLoading] = useState<number | null>(null);
+  const [deleteProjectLoading, setDeleteProjectLoading] = useState(false);
 
-  const REJECTION_MOTIFS = [
-    "Qualité audio insuffisante",
-    "Erreurs de transcription majeures",
-    "Formatage / Ponctuation incorrecte",
-    "Citations bibliques manquantes",
-    "Autre (préciser...)"
-  ];
+  const assignBatch = useBatchAction<number>(async (id) => {
+    if (!token) return;
+    await assignAudio(projectId, id, transcripteurIds, token);
+  });
+
+  const uploadToMinio = (url: string, file: File, onProgress: (p: number) => void): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", url);
+      xhr.setRequestHeader("Content-Type", file.type || "audio/mpeg");
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          onProgress(Math.floor((e.loaded / e.total) * 100));
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error(`MinIO Error: ${xhr.status}`));
+      };
+      xhr.onerror = () => reject(new Error("Network error during MinIO upload"));
+      xhr.send(file);
+    });
+  };
+
+  const handleImportFiles = async () => {
+    if (!token || !importFiles || importFiles.length === 0) return;
+    setImporting(true);
+    setImportProgress(0);
+    let done = 0;
+    try {
+      for (const file of importFiles) {
+        const req = await requestAudioUpload(token, projectId, {
+          filename: file.name,
+          content_type: file.type || "audio/mpeg"
+        });
+        await uploadToMinio(req.presigned_url, file, (p) => {
+          const currentTotalProgress = Math.floor(((done + (p / 100)) / importFiles.length) * 100);
+          setImportProgress(currentTotalProgress);
+        });
+        await registerAudio(token, projectId, req.object_key);
+        done++;
+        setImportProgress(Math.floor((done / importFiles.length) * 100));
+      }
+      setImportFiles([]);
+      setActiveModal("none");
+      refreshData();
+    } catch (e: any) {
+      setError(e.message || "Erreur pendant l'importation");
+    } finally {
+      setImporting(false);
+      setImportProgress(0);
+    }
+  };
+
+  const executeAssign = async () => {
+    setActiveModal("report");
+    await assignBatch.runBatch(Array.from(selectedIds));
+    refreshData();
+    setSelectedIds(new Set());
+    setTranscripteurIds([]);
+  };
+
+  const handleRetryNormalization = async (audioId: number) => {
+    if (!token) return;
+    setAudioActionLoading(audioId);
+    try {
+      await retryNormalization(projectId, audioId, token);
+      refreshData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erreur lors de la relance de normalisation");
+    } finally {
+      setAudioActionLoading(null);
+    }
+  };
+
+  const handleDeleteAudio = async (audioId: number, filename: string) => {
+    if (!token) return;
+    if (!window.confirm(`Supprimer « ${filename} » ? Cette action est irréversible.`)) return;
+    setAudioActionLoading(audioId);
+    try {
+      await deleteAudio(projectId, audioId, token);
+      refreshData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erreur lors de la suppression de l'audio");
+    } finally {
+      setAudioActionLoading(null);
+    }
+  };
+
+  const handleDeleteProject = async () => {
+    if (!token) return;
+    setDeleteProjectLoading(true);
+    try {
+      await deleteProject(projectId, token);
+      onBack();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erreur lors de la suppression du projet");
+      setDeleteProjectLoading(false);
+      setActiveModal("none");
+    }
+  };
 
   const refreshData = useCallback(() => {
-    if (!token || !projectId) return;
+    if (!token || projectId === null || projectId === undefined) return;
+    setLoading(true);
     Promise.all([
       fetchProjectStatus(projectId, token),
-      fetchProjectDetail(projectId, token)
+      fetchProjectDetail(projectId, token),
+      listUsers(token)
     ])
-      .then(([statusRes, detailRes]) => {
+      .then(([statusRes, detailRes, userItems]) => {
         setProjectStatus(statusRes.project_status);
-        setAudios(statusRes.audios);
+        setAudios(statusRes.audios || []);
         setProjectDetail(detailRes);
+        setUsers(userItems || []);
+        setError("");
       })
       .catch((e: unknown) => {
         setError(e instanceof Error ? e.message : "Erreur lors de la récupération du projet");
@@ -64,691 +324,425 @@ export function ProjectDetailManager({ projectId, onBack }: ProjectDetailProps) 
   }, [projectId, token]);
 
   useEffect(() => {
-    if (auth.isLoading || !token || !projectId) return;
-    setLoading(true);
+    if (auth.isLoading || !token) return;
     refreshData();
-  }, [auth.isLoading, token, projectId, refreshData]);
+  }, [auth.isLoading, token, refreshData]);
 
-  // Reset selection on filter/sort change
-  useEffect(() => {
-    setSelectedIds(new Set());
-  }, [statusFilter, sortField, sortDirection]);
-
-  const filteredAndSortedAudios = useMemo(() => {
-    let result = audios;
-    if (statusFilter !== "all") {
-      result = result.filter((a) => a.status === statusFilter);
-    }
-    
-    return [...result].sort((a, b) => {
-      const valA = a[sortField] || "";
-      const valB = b[sortField] || "";
-      if (valA < valB) return sortDirection === "asc" ? -1 : 1;
-      if (valA > valB) return sortDirection === "asc" ? 1 : -1;
-      return 0;
-    });
-  }, [audios, statusFilter, sortField, sortDirection]);
-
-  // Analytics Calculations
   const analytics = useMemo(() => {
-    if (audios.length === 0) return { progress: 0, duration: 0, avgConfidence: 0 };
-    const validatedCount = audios.filter(a => a.status === "validated").length;
-    const totalDuration = audios.reduce((acc, a) => acc + (a.duration_s || 0), 0);
+    const safeAudios = audios || [];
+    if (safeAudios.length === 0) return { progress: 0, duration: 0 };
+    const validatedCount = safeAudios.filter(a => a && a.status === "validated").length;
+    const totalDuration = safeAudios.reduce((acc, a) => acc + ((a && a.duration_s) || 0), 0);
     return {
-      progress: (validatedCount / audios.length) * 100,
-      duration: totalDuration,
-      avgConfidence: 0 
+      progress: (validatedCount / safeAudios.length) * 100,
+      duration: totalDuration
     };
   }, [audios]);
 
-  // Batch Actions
-  const assignBatch = useBatchAction<number>(async (id) => {
-    if (!token) return;
-    await assignAudio(projectId, id, transcripteurId, token);
-  });
-
-  const validateBatch = useBatchAction<number>(async (id) => {
-    if (!token) return;
-    await validateAudio(id, true, null, token);
-  });
-
-  const rejectBatch = useBatchAction<number>(async (id) => {
-    if (!token) return;
-    const finalComment = rejectMotif === "Autre (préciser...)" ? rejectComment : `[${rejectMotif}] ${rejectComment}`;
-    await validateAudio(id, false, finalComment, token);
-  });
-
-  const toggleSort = (field: "filename" | "uploaded_at") => {
-    if (sortField === field) {
-      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
-    } else {
-      setSortField(field);
-      setSortDirection("asc");
-    }
-  };
-
-  const handleToggleRow = (id: number | string) => {
-    const newSelected = new Set(selectedIds);
-    if (newSelected.has(id as number)) {
-      newSelected.delete(id as number);
-    } else {
-      newSelected.add(id as number);
-    }
-    setSelectedIds(newSelected);
-  };
-
-  const handleToggleAll = () => {
-    const visibleIds = filteredAndSortedAudios.map(a => a.id);
-    const allVisibleSelected = visibleIds.every(id => selectedIds.has(id));
-
-    const newSelected = new Set(selectedIds);
-    if (allVisibleSelected) {
-      visibleIds.forEach(id => newSelected.delete(id));
-    } else {
-      visibleIds.forEach(id => newSelected.add(id));
-    }
-    setSelectedIds(newSelected);
-  };
-
-  const handleQuickValidate = async (id: number) => {
-    if (!token) return;
-    setLoading(true);
-    try {
-      await validateAudio(id, true, null, token);
-      refreshData();
-    } catch (e: any) {
-      setError(e.message || "Erreur lors de la validation");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleQuickReject = (id: number) => {
-    setPendingActionId(id);
-    setRejectMotif("");
-    setRejectComment("");
-    setActiveModal("reject");
-  };
-
-  const handleShowAudit = async () => {
-    if (!token) return;
-    setAuditLoading(true);
-    setActiveModal("audit");
-    try {
-      const logs = await fetchProjectAuditTrail(projectId, token);
-      setAuditLogs(logs);
-    } catch (e: any) {
-      setError(e.message || "Erreur lors du chargement de l'historique");
-    } finally {
-      setAuditLoading(false);
-    }
-  };
-
-  const executeAssign = async () => {
-    if (!transcripteurId) return;
-    const eligibleIds = Array.from(selectedIds).filter(id => {
-      const a = audios.find(aud => aud.id === id);
-      return a && (a.status === "uploaded" || a.status === "assigned");
-    });
-    setActiveModal("report");
-    await assignBatch.runBatch(eligibleIds);
-    refreshData();
-    setSelectedIds(new Set());
-  };
-
-  const executeValidate = async () => {
-    const eligibleIds = Array.from(selectedIds).filter(id => {
-      const a = audios.find(aud => aud.id === id);
-      return a && a.status === "transcribed";
-    });
-    setActiveModal("report");
-    await validateBatch.runBatch(eligibleIds);
-    refreshData();
-    setSelectedIds(new Set());
-  };
-
-  const executeReject = async () => {
-    if (rejectMotif === "Autre (préciser...)" && !rejectComment) return;
-    if (!rejectMotif) return;
-
-    if (pendingActionId) {
-      // Single reject
-      setLoading(true);
-      setActiveModal("none");
-      try {
-        const finalComment = rejectMotif === "Autre (préciser...)" ? rejectComment : `[${rejectMotif}] ${rejectComment}`;
-        await validateAudio(pendingActionId, false, finalComment, token || "");
-        refreshData();
-      } catch (e: any) {
-        setError(e.message || "Erreur lors du rejet");
-      } finally {
-        setLoading(false);
-        setPendingActionId(null);
+  const assignedUsersInfo = useMemo(() => {
+    const counts: Record<string, number> = {};
+    const safeAudios = audios || [];
+    safeAudios.forEach(a => {
+      if (a && a.assigned_to) {
+        const ids = a.assigned_to.split(",").filter(Boolean);
+        ids.forEach(id => {
+          counts[id] = (counts[id] || 0) + 1;
+        });
       }
-    } else {
-      // Bulk reject
-      const eligibleIds = Array.from(selectedIds).filter(id => {
-        const a = audios.find(aud => aud.id === id);
-        return a && a.status === "transcribed";
-      });
-      setActiveModal("report");
-      await rejectBatch.runBatch(eligibleIds);
-      refreshData();
-      setSelectedIds(new Set());
-    }
-  };
+    });
+    return Object.entries(counts).map(([userId, count]) => {
+      const u = (users || []).find(user => user && user.id === userId);
+      return {
+        id: userId,
+        username: u?.username || userId,
+        count
+      };
+    });
+  }, [audios, users]);
 
-  if (auth.isLoading) {
-    return <p style={{ color: "var(--color-text-muted)" }}>Chargement du projet...</p>;
-  }
-  if (!token) {
-    return (
-      <p style={{ color: "var(--color-error)" }}>
-        Session indisponible. Veuillez vous reconnecter.
-      </p>
-    );
-  }
-
-  if (loading) return <p style={{ color: "var(--color-text-muted)" }}>Chargement du projet...</p>;
-  if (error) return <p style={{ color: "var(--color-error)" }}>{error}</p>;
-
-  const allVisibleSelected = filteredAndSortedAudios.length > 0 && 
-    filteredAndSortedAudios.every(a => selectedIds.has(a.id));
-
-  const currentBatch = assignBatch.status !== "idle" ? assignBatch : 
-                  validateBatch.status !== "idle" ? validateBatch : 
-                  rejectBatch.status !== "idle" ? rejectBatch : null;
+  if (loading) return <div style={{ padding: "2rem" }}>Chargement des détails du projet ({projectId})...</div>;
+  if (error) return <div style={{ padding: "2rem", color: "var(--color-error)" }}>Erreur: {error} <button onClick={refreshData}>Réessayer</button></div>;
 
   return (
-    <div style={{ display: "grid", gap: "var(--spacing-4)", position: "relative", minHeight: "100%" }}>
+    <div style={{ display: "grid", gap: "var(--spacing-6)", animation: "fade-in 0.3s ease" }}>
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-3)" }}>
-          <button type="button" className="za-btn za-btn--ghost" onClick={onBack}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-4)" }}>
+          <button onClick={onBack} className="za-btn za-btn--ghost" style={{ border: "none" }}>
             &larr; Retour
           </button>
-          <h2 style={{ margin: 0, fontFamily: "var(--font-headline)" }}>
+          <h2 style={{ margin: 0, fontFamily: "var(--font-headline)", fontWeight: 800 }}>
             {projectDetail?.name || `Projet #${projectId}`}
           </h2>
-          <button 
-            type="button" 
-            className="za-btn za-btn--ghost za-btn--sm" 
-            onClick={() => setActiveModal("settings")}
-            style={{ border: "1px solid var(--color-outline)" }}
-          >
-            Paramètres
-          </button>
-          <button 
-            type="button" 
-            className="za-btn za-btn--ghost za-btn--sm" 
-            onClick={handleShowAudit}
-            style={{ border: "1px solid var(--color-outline)" }}
-          >
-            Historique
-          </button>
+          <Badge tone={projectStatus === "active" ? "success" : "default"}>{projectStatus}</Badge>
         </div>
-        <div style={{ display: "flex", gap: "var(--spacing-3)", alignItems: "center" }}>
-          <div style={{ display: "flex", gap: "var(--spacing-2)", alignItems: "center" }}>
-            <label htmlFor="sort-field" style={{ fontSize: "0.9rem", color: "var(--color-text-muted)" }}>Trier par:</label>
-            <select 
-              id="sort-field"
-              value={sortField} 
-              onChange={(e) => toggleSort(e.target.value as "filename" | "uploaded_at")}
-              style={{ 
-                padding: "var(--spacing-1) var(--spacing-2)", 
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid var(--color-outline)",
-                background: "var(--color-surface)",
-                color: "var(--color-text)"
-              }}
-            >
-              <option value="filename">Nom de fichier</option>
-              <option value="uploaded_at">Date d'upload</option>
-            </select>
-            <button 
-              type="button" 
-              className="za-btn za-btn--ghost" 
-              style={{ padding: "var(--spacing-1) var(--spacing-2)" }}
-              onClick={() => setSortDirection(sortDirection === "asc" ? "desc" : "asc")}
-            >
-              {sortDirection === "asc" ? "↑" : "↓"}
-            </button>
-          </div>
-          <div style={{ display: "flex", gap: "var(--spacing-2)", alignItems: "center" }}>
-            <label htmlFor="status-filter" style={{ fontSize: "0.9rem", color: "var(--color-text-muted)" }}>Filtrer par statut:</label>
-            <select 
-              id="status-filter"
-              value={statusFilter} 
-              onChange={(e) => setStatusFilter(e.target.value)}
-              style={{ 
-                padding: "var(--spacing-1) var(--spacing-2)", 
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid var(--color-outline)",
-                background: "var(--color-surface)",
-                color: "var(--color-text)"
-              }}
-            >
-              <option value="all">Tous</option>
-              <option value="uploaded">Uploadé</option>
-              <option value="assigned">Assigné</option>
-              <option value="in_progress">En cours</option>
-              <option value="transcribed">Transcrit</option>
-              <option value="validated">Validé</option>
-            </select>
-          </div>
+        <div style={{ display: "flex", gap: "var(--spacing-3)" }}>
+          <button
+            type="button"
+            className="za-btn za-btn--ghost"
+            style={{ color: "var(--color-error)", border: "1px solid var(--color-error)" }}
+            onClick={() => setActiveModal("delete-project")}
+          >
+            Supprimer le projet
+          </button>
+          <button
+            type="button"
+            className="za-btn za-btn--primary"
+            onClick={() => setActiveModal("import")}
+          >
+            + Ajouter Audios
+          </button>
         </div>
       </header>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "var(--spacing-4)" }}>
-        <Metric label="Statut Projet" value={projectStatus || "--"} tone={projectStatus === "active" ? "success" : "default"} />
-        <Metric label="Progression" value={`${analytics.progress.toFixed(1)}%`} tone={analytics.progress === 100 ? "success" : "default"} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "var(--spacing-4)" }}>
+        <Metric label="Fichiers" value={String(audios.length)} />
+        <Metric label="Progression" value={`${analytics.progress.toFixed(0)}%`} tone="success" />
+        <Metric label="Assignés" value={String(new Set(audios.flatMap(a => (a.assigned_to || "").split(",").filter(Boolean))).size)} />
         <Metric label="Durée Totale" value={formatDuration(analytics.duration)} />
-        <Metric label="Confiance Moy." value="--" />
       </div>
 
-      <Card title="Liste des fichiers audio" subtitle={`Affichage de ${filteredAndSortedAudios.length} fichier(s)`}>
+      {assignedUsersInfo.length > 0 && (
+        <Card title="Équipe du projet" subtitle="Collaborateurs travaillant sur ce projet">
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--spacing-3)" }}>
+            {assignedUsersInfo.map(u => (
+              <div key={u.id} style={{ 
+                display: "flex", 
+                alignItems: "center", 
+                gap: "var(--spacing-2)", 
+                background: "var(--color-surface-hi)", 
+                padding: "8px 12px", 
+                borderRadius: "var(--radius-full)",
+                border: "1px solid var(--color-outline-ghost)"
+              }}>
+                <div style={{ 
+                  width: "24px", 
+                  height: "24px", 
+                  borderRadius: "50%", 
+                  background: "var(--color-primary-soft)", 
+                  color: "var(--color-primary)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "0.75rem",
+                  fontWeight: 800
+                }}>
+                  {u.username.substring(0, 1).toUpperCase()}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  <span style={{ fontSize: "0.85rem", fontWeight: 700 }}>{u.username}</span>
+                </div>
+                <Badge tone="primary" style={{ marginLeft: "4px" }}>{u.count} audios</Badge>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      <Card title="Fichiers Audio" subtitle={`${audios.length} fichiers dans ce projet`}>
         {audios.length === 0 ? (
-          <p style={{ color: "var(--color-text-muted)", margin: 0 }}>Aucun fichier audio n'a été ajouté à ce projet.</p>
+          <p style={{ color: "var(--color-text-muted)" }}>Aucun fichier.</p>
         ) : (
           <DataTable
             selectable
             selectedIds={selectedIds}
-            onToggleRow={handleToggleRow}
-            onToggleAll={handleToggleAll}
-            allSelected={allVisibleSelected}
-            rowIds={filteredAndSortedAudios.map(a => a.id)}
-            columns={["Fichier", "Statut", "Assigné à", "Uploadé le", "Actions"]}
-            rows={filteredAndSortedAudios.map((a) => [
-              a.filename,
-              <Badge 
-                key={`status-${a.id}`} 
-                tone={a.status === "validated" ? "success" : a.status === "transcribed" || a.status === "in_progress" ? "primary" : "default"}
-                glow={true}
-                pulse={a.status === "in_progress"}
-              >
-                {a.status}
-              </Badge>,
-              a.assigned_to || "--",
-              formatIso(a.uploaded_at),
-              <div key={`actions-${a.id}`} style={{ display: "flex", gap: "var(--spacing-1)" }}>
-                {a.status === "transcribed" && (
-                  <>
-                    <button 
-                      type="button" 
-                      className="za-btn za-btn--ghost" 
-                      title="Valider"
-                      onClick={() => handleQuickValidate(a.id)}
-                      style={{ color: "var(--color-success)", padding: "4px" }}
+            onToggleRow={(id) => {
+              const newSelected = new Set(selectedIds);
+              if (newSelected.has(id as number)) newSelected.delete(id as number);
+              else newSelected.add(id as number);
+              setSelectedIds(newSelected);
+            }}
+            onToggleAll={() => {
+              const allIds = audios.map(a => a.id);
+              if (selectedIds.size === allIds.length) setSelectedIds(new Set());
+              else setSelectedIds(new Set(allIds));
+            }}
+            allSelected={selectedIds.size > 0 && selectedIds.size === audios.length}
+            columns={["Fichier", "Statut", "Prêt", "Assigné à"]}
+            rowIds={audios.map(a => a.id)}
+            rows={audios.map(a => {
+              const assignedIdsList = (a.assigned_to || "").split(",").filter(Boolean);
+              const isNormalized = !!a.normalized_path && !a.validation_error;
+
+              return [
+                <div key={`file-${a.id}`} style={{ fontWeight: 600 }}>{a.filename}</div>,
+                <Badge key={`status-${a.id}`} tone={a.status === "validated" ? "success" : a.status === "transcribed" ? "primary" : "default"}>
+                  {a.status}
+                </Badge>,
+                <span
+                  key={`norm-${a.id}`}
+                  title={
+                    a.validation_error
+                      ? `Erreur de normalisation : ${a.validation_error}`
+                      : isNormalized
+                      ? "Audio normalisé, prêt pour assignation"
+                      : "En attente de normalisation (worker FFmpeg)"
+                  }
+                  style={{
+                    display: "inline-block",
+                    width: "10px",
+                    height: "10px",
+                    borderRadius: "50%",
+                    background: a.validation_error
+                      ? "var(--color-error)"
+                      : isNormalized
+                      ? "var(--color-success)"
+                      : "var(--color-text-muted)",
+                    flexShrink: 0,
+                  }}
+                />,
+                <div key={`assign-${a.id}`} style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px" }}>
+                  {assignedIdsList.length === 0 ? (
+                    <span style={{ color: "var(--color-text-muted)", fontSize: "0.85rem" }}>--</span>
+                  ) : (
+                    assignedIdsList.map(id => {
+                      const u = users.find(user => user.id === id);
+                      const name = u ? (u.firstName || u.lastName ? `${u.firstName} ${u.lastName}` : u.username) : id;
+                      return (
+                        <span key={id} style={{ 
+                          background: "var(--color-surface-vhi)", 
+                          padding: "2px 6px", 
+                          borderRadius: "4px", 
+                          fontSize: "0.75rem",
+                          fontWeight: 600,
+                          border: "1px solid var(--color-outline-ghost)"
+                        }}>
+                          {name}
+                        </span>
+                      );
+                    })
+                  )}
+                  <button
+                    type="button"
+                    className="za-btn za-btn--ghost"
+                    style={{ padding: "4px", opacity: 0.6 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedIds(new Set([a.id]));
+                      setTranscripteurIds(assignedIdsList);
+                      setActiveModal("assign");
+                    }}
+                    title="Modifier l'assignation"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                  </button>
+                  {a.validation_error && (
+                    <button
+                      type="button"
+                      className="za-btn za-btn--ghost"
+                      style={{ padding: "4px 8px", fontSize: "0.7rem", color: "var(--color-primary)", border: "1px solid var(--color-primary)", opacity: audioActionLoading === a.id ? 0.5 : 1 }}
+                      disabled={audioActionLoading === a.id}
+                      onClick={(e) => { e.stopPropagation(); handleRetryNormalization(a.id); }}
+                      title="Relancer la normalisation FFmpeg"
                     >
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                      {audioActionLoading === a.id ? "..." : "Retry"}
                     </button>
-                    <button 
-                      type="button" 
-                      className="za-btn za-btn--ghost" 
-                      title="Rejeter"
-                      onClick={() => handleQuickReject(a.id)}
-                      style={{ color: "var(--color-error)", padding: "4px" }}
+                  )}
+                  {!["transcribed", "validated"].includes(a.status) && (
+                    <button
+                      type="button"
+                      className="za-btn za-btn--ghost"
+                      style={{ padding: "4px", color: "var(--color-error)", opacity: audioActionLoading === a.id ? 0.5 : 0.7 }}
+                      disabled={audioActionLoading === a.id}
+                      onClick={(e) => { e.stopPropagation(); handleDeleteAudio(a.id, a.filename); }}
+                      title="Supprimer cet audio"
                     >
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>
                     </button>
-                  </>
-                )}
-                <button type="button" className="za-btn za-btn--ghost" style={{ padding: "4px", opacity: 0.5 }} title="Détails">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-                </button>
-              </div>
-            ])}
+                  )}
+                </div>
+              ];
+            })}
           />
         )}
       </Card>
 
       {/* Bulk Action Bar */}
-      {selectedIds.size > 0 && (
+      {selectedIds.size > 0 && activeModal === "none" && (
         <div style={{
           position: "fixed",
           bottom: "var(--spacing-6)",
           left: "50%",
           transform: "translateX(-50%)",
           background: "var(--color-surface-hi)",
-          backdropFilter: "blur(12px)",
-          border: "1px solid var(--color-primary-soft)",
           padding: "var(--spacing-3) var(--spacing-6)",
           borderRadius: "var(--radius-full)",
-          boxShadow: "0 10px 30px rgba(0,0,0,0.3), 0 0 15px var(--color-glow-blue)",
+          boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
           display: "flex",
           alignItems: "center",
           gap: "var(--spacing-5)",
           zIndex: 100,
-          animation: "za-slide-up 0.3s ease-out"
+          border: "1px solid var(--color-primary-soft)"
         }}>
-          <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>
-            {selectedIds.size} élément(s) sélectionné(s)
-          </span>
-          <div style={{ width: "1px", height: "24px", background: "var(--color-outline)" }} />
-          <div style={{ display: "flex", gap: "var(--spacing-2)" }}>
-            <button type="button" className="za-btn za-btn--primary" onClick={() => setActiveModal("assign")}>Assigner</button>
-            <button type="button" className="za-btn za-btn--success" onClick={executeValidate}>Valider</button>
-            <button type="button" className="za-btn za-btn--ghost" style={{ color: "var(--color-error)" }} onClick={() => setActiveModal("reject")}>Rejeter</button>
-          </div>
-          <button 
-            type="button" 
-            className="za-btn za-btn--ghost" 
-            onClick={() => setSelectedIds(new Set())}
-            style={{ padding: "var(--spacing-1)" }}
-          >
-            &times;
-          </button>
+          <span style={{ fontWeight: 700 }}>{selectedIds.size} sélectionnés</span>
+          <button className="za-btn za-btn--primary za-btn--sm" onClick={() => {
+            setTranscripteurIds([]); // Start fresh for bulk
+            setActiveModal("assign");
+          }}>Assigner à...</button>
+          <button className="za-btn za-btn--ghost za-btn--sm" onClick={() => setSelectedIds(new Set())}>Annuler</button>
         </div>
       )}
 
-      {/* Modals */}
-      <GlassModal 
-        isOpen={activeModal === "assign"} 
-        title="Assignation Groupée" 
-        onClose={() => setActiveModal("none")}
-        size="sm"
-      >
-        <div style={{ display: "grid", gap: "var(--spacing-4)" }}>
-          <div>
-            <p style={{ margin: "0 0 var(--spacing-2)" }}>
-              Saisissez l'ID du Transcripteur pour les <strong>{selectedIds.size}</strong> éléments sélectionnés.
-            </p>
-            <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
-              Projet: {projectDetail?.name}
-            </div>
-          </div>
-          <input 
-            type="text" 
-            className="za-input" 
-            placeholder="ID Transcripteur (ex: user_123)" 
-            value={transcripteurId}
-            onChange={(e) => setTranscripteurId(e.target.value)}
-            autoFocus
-          />
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--spacing-2)" }}>
-            <button className="za-btn za-btn--ghost" onClick={() => setActiveModal("none")}>Annuler</button>
-            <button className="za-btn za-btn--primary" disabled={!transcripteurId} onClick={executeAssign}>Assigner</button>
-          </div>
-        </div>
-      </GlassModal>
-
-      <GlassModal 
-        isOpen={activeModal === "reject"} 
-        title={pendingActionId ? "Rejeter la transcription" : "Rejet Groupé"} 
-        onClose={() => {
-          setActiveModal("none");
-          setPendingActionId(null);
-        }}
-        size="sm"
-      >
-        <div style={{ display: "grid", gap: "var(--spacing-4)" }}>
-          <div>
-            <p style={{ margin: "0 0 var(--spacing-2)" }}>
-              {pendingActionId 
-                ? "Pourquoi rejetez-vous cette transcription ?" 
-                : `Motif du rejet pour les ${selectedIds.size} éléments sélectionnés.`}
-            </p>
-          </div>
-
-          <div style={{ display: "grid", gap: "var(--spacing-1)" }}>
-            <label style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--color-text-muted)" }}>MOTIF PRINCIPAL</label>
-            <select 
-              className="za-input"
-              value={rejectMotif}
-              onChange={(e) => setRejectMotif(e.target.value)}
-              style={{ width: "100%" }}
-            >
-              <option value="">-- Sélectionner un motif --</option>
-              {REJECTION_MOTIFS.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-          </div>
-
-          <div style={{ display: "grid", gap: "var(--spacing-1)" }}>
-            <label style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--color-text-muted)" }}>
-              COMMENTAIRE {rejectMotif === "Autre (préciser...)" ? "(OBLIGATOIRE)" : "(OPTIONNEL)"}
-            </label>
-            <textarea 
-              className="za-input" 
-              placeholder="Précisez votre retour ici..." 
-              value={rejectComment}
-              onChange={(e) => setRejectComment(e.target.value)}
-              rows={4}
+      {/* MODALS */}
+      {activeModal === "import" && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
+          <div className="za-glass" style={{ padding: "2rem", borderRadius: "1rem", width: "400px" }}>
+            <h3 style={{ marginTop: 0 }}>Ajouter des audios</h3>
+            <input 
+              type="file" 
+              multiple 
+              accept="audio/*" 
+              onChange={(e) => setImportFiles(Array.from(e.target.files || []))}
+              disabled={importing}
+              style={{ marginBottom: "1rem" }}
             />
-          </div>
-
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--spacing-2)" }}>
-            <button className="za-btn za-btn--ghost" onClick={() => {
-              setActiveModal("none");
-              setPendingActionId(null);
-            }}>Annuler</button>
-            <button 
-              className="za-btn za-btn--error" 
-              disabled={!rejectMotif || (rejectMotif === "Autre (préciser...)" && !rejectComment)} 
-              onClick={executeReject}
-            >
-              Confirmer le rejet
-            </button>
+            {importing && (
+              <div style={{ marginBottom: "1rem" }}>
+                <div style={{ height: "4px", background: "var(--color-surface-low)", borderRadius: "2px" }}>
+                  <div style={{ width: `${importProgress}%`, height: "100%", background: "var(--color-primary)" }} />
+                </div>
+                <p style={{ fontSize: "0.8rem", textAlign: "center" }}>En cours... {importProgress}%</p>
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+              <button className="za-btn za-btn--ghost" onClick={() => setActiveModal("none")} disabled={importing}>Annuler</button>
+              <button className="za-btn za-btn--primary" onClick={handleImportFiles} disabled={importing || importFiles.length === 0}>Lancer l'import</button>
+            </div>
           </div>
         </div>
-      </GlassModal>
+      )}
 
-      <GlassModal 
-        isOpen={activeModal === "settings"} 
-        title="Paramètres du Projet" 
-        onClose={() => setActiveModal("none")}
-        size="md"
-      >
-        {projectDetail && (
-          <div style={{ display: "grid", gap: "var(--spacing-6)" }}>
-            <div style={{ display: "grid", gap: "var(--spacing-2)" }}>
-              <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase" }}>Informations</div>
-              <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "var(--spacing-2)" }}>
-                <span style={{ opacity: 0.7 }}>Nom:</span>
-                <span style={{ fontWeight: 600 }}>{projectDetail.name}</span>
-                <span style={{ opacity: 0.7 }}>Nature:</span>
-                <span style={{ fontWeight: 600 }}>{projectDetail.nature_name}</span>
-                <span style={{ opacity: 0.7 }}>Créé le:</span>
-                <span style={{ fontWeight: 600 }}>{formatIso(projectDetail.created_at)}</span>
-              </div>
-            </div>
+      {activeModal === "assign" && (() => {
+        const selectedAudios = audios.filter(a => selectedIds.has(a.id));
+        const notReady = selectedAudios.filter(a => !a.normalized_path || !!a.validation_error);
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
+            <div className="za-glass" style={{ padding: "2rem", borderRadius: "1rem", width: "500px", maxHeight: "80vh", display: "flex", flexDirection: "column" }}>
+              <h3 style={{ marginTop: 0 }}>Assignation des collaborateurs</h3>
+              <p style={{ fontSize: "0.9rem", color: "var(--color-text-muted)", marginBottom: "1rem" }}>
+                Recherchez et ajoutez les personnes pour ces {selectedIds.size} audio(s).
+              </p>
 
-            <div style={{ display: "grid", gap: "var(--spacing-3)" }}>
-              <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase" }}>Labels de la Nature</div>
-              <div style={{ 
-                display: "flex", 
-                flexWrap: "wrap", 
-                gap: "var(--spacing-2)",
-                background: "var(--color-surface-hi)",
-                padding: "var(--spacing-4)",
-                borderRadius: "var(--radius-md)",
-                border: "1px solid var(--color-outline-ghost)"
-              }}>
-                {projectDetail.labels.map(label => (
-                  <Badge 
-                    key={label.id} 
-                    tone="default"
-                    style={{ background: label.color, color: "#fff", textShadow: "0 1px 2px rgba(0,0,0,0.3)" }}
-                  >
-                    {label.name}
-                  </Badge>
-                ))}
-                {projectDetail.labels.length === 0 && (
-                  <span style={{ fontSize: "0.9rem", color: "var(--color-text-muted)" }}>Aucun label configuré.</span>
-                )}
-              </div>
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "var(--spacing-2)" }}>
-              <button className="za-btn za-btn--primary" onClick={() => setActiveModal("none")}>Fermer</button>
-            </div>
-          </div>
-        )}
-      </GlassModal>
-
-      <GlassModal
-        isOpen={activeModal === "audit"}
-        title="Historique du Projet"
-        onClose={() => setActiveModal("none")}
-        size="md"
-      >
-        {auditLoading ? (
-          <p style={{ textAlign: "center", padding: "var(--spacing-8)", color: "var(--color-text-muted)" }}>
-            Chargement de l'historique...
-          </p>
-        ) : (
-          <div style={{ display: "grid", gap: "var(--spacing-4)", maxHeight: "60vh", overflowY: "auto", padding: "var(--spacing-2)" }}>
-            {auditLogs.length === 0 ? (
-              <p style={{ textAlign: "center", color: "var(--color-text-muted)" }}>Aucun événement enregistré.</p>
-            ) : (
-              <div style={{ position: "relative", paddingLeft: "var(--spacing-6)" }}>
-                <div style={{ 
-                  position: "absolute", 
-                  left: "7px", 
-                  top: 0, 
-                  bottom: 0, 
-                  width: "2px", 
-                  background: "var(--color-outline-ghost)" 
-                }} />
-                
-                {auditLogs.map((log) => (
-                  <div key={log.id} style={{ position: "relative", marginBottom: "var(--spacing-6)" }}>
-                    <div style={{ 
-                      position: "absolute", 
-                      left: "-23px", 
-                      top: "4px", 
-                      width: "12px", 
-                      height: "12px", 
-                      borderRadius: "50%", 
-                      background: "var(--color-primary)",
-                      boxShadow: "0 0 8px var(--color-glow-blue)",
-                      border: "2px solid var(--color-surface)"
-                    }} />
-                    
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                      <span style={{ fontWeight: 700, fontSize: "0.9rem", color: "var(--color-primary)" }}>
-                        {log.action.replace(/_/g, " ")}
-                      </span>
-                      <span style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
-                        {formatIso(log.created_at)}
-                      </span>
-                    </div>
-                    
-                    <div style={{ fontSize: "0.85rem", marginTop: "var(--spacing-1)" }}>
-                      Utilisateur: <code style={{ color: "var(--color-text-dim)" }}>{log.user_id}</code>
-                    </div>
-                    
-                    {Object.keys(log.details).length > 0 && (
-                      <div style={{ 
-                        marginTop: "var(--spacing-2)", 
-                        padding: "var(--spacing-2) var(--spacing-3)", 
-                        background: "var(--color-surface-low)", 
-                        borderRadius: "var(--radius-sm)",
-                        fontSize: "0.8rem",
-                        border: "1px solid var(--color-outline-ghost)"
-                      }}>
-                        {Object.entries(log.details).map(([key, val]) => (
-                          <div key={key}>
-                            <span style={{ opacity: 0.6, textTransform: "capitalize" }}>{key}: </span>
-                            <span style={{ fontWeight: 500 }}>{String(val)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "var(--spacing-4)" }}>
-              <button className="za-btn za-btn--primary" onClick={() => setActiveModal("none")}>Fermer</button>
-            </div>
-          </div>
-        )}
-      </GlassModal>
-
-      <GlassModal 
-        isOpen={activeModal === "report"} 
-        title="Opération en cours" 
-        onClose={() => {
-          assignBatch.reset();
-          validateBatch.reset();
-          rejectBatch.reset();
-          setActiveModal("none");
-        }}
-        size="sm"
-      >
-        {currentBatch && (
-          <div style={{ display: "grid", gap: "var(--spacing-4)" }}>
-            <div style={{ fontSize: "1.25rem", fontWeight: 700, textAlign: "center" }}>
-              {currentBatch.status === "processing" ? "Traitement..." : "Terminé"}
-            </div>
-            <div style={{ height: "8px", background: "var(--color-surface-low)", borderRadius: "4px", overflow: "hidden" }}>
-              <div style={{ 
-                width: `${(currentBatch.progress / currentBatch.total) * 100}%`, 
-                height: "100%", 
-                background: "var(--color-primary)",
-                transition: "width 0.3s ease"
-              }} />
-            </div>
-            <p style={{ textAlign: "center" }}>{currentBatch.progress} sur {currentBatch.total} traités</p>
-            
-            {currentBatch.status === "completed" && (
-              <div style={{ marginTop: "var(--spacing-2)" }}>
-                <div style={{ fontWeight: 700, marginBottom: "var(--spacing-2)" }}>Résumé :</div>
-                <div style={{ color: "var(--color-success)" }}>
-                  {currentBatch.results.filter(r => r.success).length} succès
+              {notReady.length > 0 && (
+                <div style={{ marginBottom: "1rem", padding: "10px 12px", background: "rgba(255,80,0,0.12)", border: "1px solid rgba(255,80,0,0.3)", borderRadius: "6px", fontSize: "0.82rem" }}>
+                  <strong style={{ color: "var(--color-error)" }}>⚠️ {notReady.length} audio(s) non normalisé(s)</strong>
+                  <ul style={{ margin: "4px 0 0", paddingLeft: "1.2rem", color: "var(--color-error)" }}>
+                    {notReady.map(a => (
+                      <li key={a.id}>{a.filename}{a.validation_error ? ` — ${a.validation_error}` : " — en attente FFmpeg"}</li>
+                    ))}
+                  </ul>
+                  <p style={{ margin: "6px 0 0", color: "var(--color-text-muted)" }}>
+                    Cliquez "Retry" sur ces audios avant d'assigner, ou sélectionnez uniquement les audios avec le point vert.
+                  </p>
                 </div>
-                {currentBatch.results.some(r => !r.success) && (
-                  <>
-                    <div style={{ color: "var(--color-error)", marginTop: "var(--spacing-1)" }}>
-                      {currentBatch.results.filter(r => !r.success).length} échecs
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "center", marginTop: "var(--spacing-4)", gap: "var(--spacing-2)" }}>
-                      <button className="za-btn za-btn--ghost" onClick={() => {
-                        const failedIds = currentBatch.results.filter(r => !r.success).map(r => Number(r.id));
-                        currentBatch.runBatch(failedIds);
-                      }}>Réessayer les échecs</button>
-                      <button className="za-btn za-btn--primary" onClick={() => {
-                        assignBatch.reset();
-                        validateBatch.reset();
-                        rejectBatch.reset();
-                        setActiveModal("none");
-                      }}>Fermer</button>
-                    </div>
-                  </>
-                )}
-                {!currentBatch.results.some(r => !r.success) && (
-                  <div style={{ display: "flex", justifyContent: "center", marginTop: "var(--spacing-4)" }}>
-                    <button className="za-btn za-btn--primary" onClick={() => {
-                      assignBatch.reset();
-                      validateBatch.reset();
-                      rejectBatch.reset();
-                      setActiveModal("none");
-                    }}>Fermer</button>
+              )}
+
+              <MultiUserSelect
+                users={users}
+                selectedIds={transcripteurIds}
+                onChange={setTranscripteurIds}
+              />
+
+              <div style={{ marginTop: "1rem", fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+                {transcripteurIds.length === 0 && (
+                  <div style={{ padding: "8px", background: "rgba(255,255,255,0.05)", borderRadius: "4px" }}>
+                    ℹ️ Aucun collaborateur sélectionné : l'audio sera disponible en <strong>Libre Service</strong>.
                   </div>
                 )}
               </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "2rem", paddingTop: "1rem", borderTop: "1px solid var(--color-outline)" }}>
+                <button className="za-btn za-btn--ghost" onClick={() => { setActiveModal("none"); setTranscripteurIds([]); }}>Annuler</button>
+                <button
+                  className="za-btn za-btn--primary"
+                  onClick={executeAssign}
+                  disabled={notReady.length === selectedIds.size}
+                  title={notReady.length === selectedIds.size ? "Tous les audios sélectionnés doivent être normalisés d'abord" : undefined}
+                >
+                  Valider l'équipe
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {activeModal === "report" && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
+          <div className="za-glass" style={{ padding: "2rem", borderRadius: "1rem", width: "460px" }}>
+            <h3 style={{ marginTop: 0 }}>Résultat de l'assignation</h3>
+            {assignBatch.status === "processing" ? (
+              <p style={{ color: "var(--color-text-muted)" }}>En cours... ({assignBatch.progress}/{assignBatch.total})</p>
+            ) : (
+              <>
+                {(() => {
+                  const successes = assignBatch.results.filter(r => r.success);
+                  const failures = assignBatch.results.filter(r => !r.success);
+                  return (
+                    <>
+                      {successes.length > 0 && (
+                        <p style={{ color: "var(--color-success)", fontWeight: 700 }}>
+                          {successes.length} assignation(s) réussie(s).
+                        </p>
+                      )}
+                      {failures.length > 0 && (
+                        <div>
+                          <p style={{ color: "var(--color-error)", fontWeight: 700, marginBottom: "0.5rem" }}>
+                            {failures.length} échec(s) — ces audios ne peuvent pas être assignés :
+                          </p>
+                          <ul style={{ margin: 0, paddingLeft: "1.2rem", fontSize: "0.85rem", color: "var(--color-error)" }}>
+                            {failures.map(r => (
+                              <li key={r.id} style={{ marginBottom: "4px" }}>
+                                Audio #{r.id} : {r.error || "Erreur inconnue"}
+                              </li>
+                            ))}
+                          </ul>
+                          <p style={{ fontSize: "0.8rem", color: "var(--color-text-muted)", marginTop: "0.75rem" }}>
+                            Les audios doivent être normalisés par le worker FFmpeg avant d'être assignés. Vérifiez que le service est en ligne.
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "1.5rem" }}>
+                  <button className="za-btn za-btn--primary" onClick={() => setActiveModal("none")}>Fermer</button>
+                </div>
+              </>
             )}
           </div>
-        )}
-      </GlassModal>
+        </div>
+      )}
 
-      <style>{`
-        @keyframes za-slide-up {
-          from { transform: translate(-50%, 100%); opacity: 0; }
-          to { transform: translate(-50%, 0); opacity: 1; }
-        }
-        .za-input {
-          padding: var(--spacing-3);
-          border-radius: var(--radius-md);
-          border: 1px solid var(--color-outline);
-          background: var(--color-surface-low);
-          color: var(--color-text);
-          font-family: inherit;
-        }
-        .za-input:focus {
-          outline: 2px solid var(--color-primary);
-          border-color: transparent;
-        }
-      `}</style>
+      {activeModal === "delete-project" && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
+          <div className="za-glass" style={{ padding: "2rem", borderRadius: "1rem", width: "420px" }}>
+            <h3 style={{ marginTop: 0, color: "var(--color-error)" }}>Supprimer le projet</h3>
+            <p>
+              Vous êtes sur le point de supprimer <strong>{projectDetail?.name || `le projet #${projectId}`}</strong> ainsi que tous ses fichiers audio.
+            </p>
+            <p style={{ fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
+              Cette action est <strong>irréversible</strong>. Les audios transcrit(s) ou validé(s) bloquent la suppression.
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "1.5rem" }}>
+              <button
+                className="za-btn za-btn--ghost"
+                onClick={() => setActiveModal("none")}
+                disabled={deleteProjectLoading}
+              >
+                Annuler
+              </button>
+              <button
+                className="za-btn za-btn--primary"
+                style={{ background: "var(--color-error)", border: "none" }}
+                onClick={handleDeleteProject}
+                disabled={deleteProjectLoading}
+              >
+                {deleteProjectLoading ? "Suppression..." : "Confirmer la suppression"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

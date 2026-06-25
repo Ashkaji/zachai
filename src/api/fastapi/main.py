@@ -914,7 +914,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         if error.get("loc") and "production_goal" in error.get("loc", ()):
             return JSONResponse(
                 status_code=400,
-                content={"error": "production_goal must be one of: livre, sous-titres, dataset, archive"},
+                content={"error": "production_goal must be one of: livre, sous-titres, dataset, archive, autre"},
             )
     # For other validation errors, return 422 (Pydantic default)
     return JSONResponse(
@@ -1101,7 +1101,7 @@ class LabelsUpdateRequest(BaseModel):
     labels: list[LabelIn]
 
 
-VALID_PRODUCTION_GOALS = {"livre", "sous-titres", "dataset", "archive"}
+VALID_PRODUCTION_GOALS = {"livre", "sous-titres", "dataset", "archive", "autre"}
 
 
 class ProjectCreateRequest(BaseModel):
@@ -1109,7 +1109,7 @@ class ProjectCreateRequest(BaseModel):
     description: str | None = Field(None, max_length=1000)
     nature_id: int
     production_goal: str = Field(
-        ..., pattern=r"^(livre|sous-titres|dataset|archive)$"
+        ..., pattern=r"^(livre|sous-titres|dataset|archive|autre)$"
     )
 
 
@@ -3527,7 +3527,7 @@ async def assign_audio_to_transcripteur(
         delete(Assignment).where(Assignment.audio_id == audio.id)
     )
 
-    # 2. Add new assignments
+    # 2. Add new assignments + auto-enrol transcripteur in manager's perimeter
     if body.transcripteur_ids:
         for t_id in body.transcripteur_ids:
             if not t_id: continue
@@ -3538,6 +3538,14 @@ async def assign_audio_to_transcripteur(
                     assigned_at=now,
                 )
             )
+            # Auto-create ManagerMembership so transcripteur can see Libre Service
+            if "Manager" in roles and sub:
+                r_m = await db.execute(
+                    select(ManagerMembership)
+                    .where(ManagerMembership.manager_id == sub, ManagerMembership.member_id == t_id)
+                )
+                if not r_m.scalar_one_or_none():
+                    db.add(ManagerMembership(manager_id=sub, member_id=t_id))
         audio.status = AudioFileStatus.ASSIGNED
     else:
         audio.status = AudioFileStatus.UPLOADED
@@ -5070,6 +5078,103 @@ async def normalize_project_audio_on_demand(
     await call_ffmpeg_normalize(db, audio)
     await db.refresh(audio)
     return _audio_file_to_dict(audio)
+
+
+@app.delete("/v1/projects/{project_id}/audio-files/{audio_file_id}", tags=["Project audio"], status_code=204)
+async def delete_project_audio_file(
+    project_id: int,
+    audio_file_id: int,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Delete an audio file and its MinIO objects. Manager owner or Admin.
+    Blocked if audio has been transcribed or validated."""
+    roles = get_roles(payload)
+    _require_manager_or_admin(roles)
+    sub = payload.get("sub")
+
+    result = await db.execute(
+        select(Project).where(Project.id == project_id)
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail={"error": "Project not found"})
+    _require_project_owner_or_admin(project, payload, roles)
+
+    result = await db.execute(
+        select(AudioFile).where(
+            AudioFile.id == audio_file_id,
+            AudioFile.project_id == project_id,
+        )
+    )
+    audio = result.scalar_one_or_none()
+    if not audio:
+        raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
+
+    if audio.status in (AudioFileStatus.TRANSCRIBED, AudioFileStatus.VALIDATED):
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "Cannot delete an audio file that has been transcribed or validated"},
+        )
+
+    # Best-effort MinIO cleanup — log failures but don't block DB deletion
+    for full_key in filter(None, [audio.minio_path, audio.normalized_path]):
+        try:
+            bucket, obj = _parse_bucket_and_object(full_key)
+            internal_client.remove_object(bucket, obj)
+        except Exception as exc:
+            logger.warning("MinIO delete failed for %s: %s", full_key, exc)
+
+    await db.execute(delete(AudioFile).where(AudioFile.id == audio_file_id))
+    await log_audit_action(
+        db, project_id, sub, "AUDIO_DELETED",
+        {"audio_id": audio_file_id, "filename": audio.filename},
+    )
+    await db.commit()
+
+
+@app.delete("/v1/projects/{project_id}", tags=["Projects"], status_code=204)
+async def delete_project(
+    project_id: int,
+    payload: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Delete a project and all its audio files. Manager owner or Admin.
+    Blocked if any audio has been transcribed or validated."""
+    roles = get_roles(payload)
+    _require_manager_or_admin(roles)
+
+    result = await db.execute(
+        select(Project)
+        .where(Project.id == project_id)
+        .options(selectinload(Project.audio_files))
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail={"error": "Project not found"})
+    _require_project_owner_or_admin(project, payload, roles)
+
+    has_locked = any(
+        af.status in (AudioFileStatus.TRANSCRIBED, AudioFileStatus.VALIDATED)
+        for af in project.audio_files
+    )
+    if has_locked:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "Cannot delete a project that contains transcribed or validated audio files"},
+        )
+
+    # Best-effort MinIO cleanup
+    for af in project.audio_files:
+        for full_key in filter(None, [af.minio_path, af.normalized_path]):
+            try:
+                bucket, obj = _parse_bucket_and_object(full_key)
+                internal_client.remove_object(bucket, obj)
+            except Exception as exc:
+                logger.warning("MinIO delete failed for %s: %s", full_key, exc)
+
+    await db.execute(delete(Project).where(Project.id == project_id))
+    await db.commit()
 
 
 # ─── Routes — Golden Set (Story 4.1) ─────────────────────────────────────────

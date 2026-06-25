@@ -30,6 +30,8 @@ type AudioRegisterResult = {
   id: number;
   filename: string;
   status: string;
+  normalized_path: string | null;
+  validation_error: string | null;
 };
 
 export function listNatures(token: string): Promise<NatureItem[]> {
@@ -42,6 +44,7 @@ export function createNature(
 ): Promise<NatureItem> {
   return apiJson<NatureItem>("/v1/natures", token, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 }
@@ -52,11 +55,12 @@ export function createProject(
     name: string;
     description?: string;
     nature_id: number;
-    production_goal: "livre" | "sous-titres" | "dataset" | "archive";
+    production_goal: "livre" | "sous-titres" | "dataset" | "archive" | "autre";
   },
 ): Promise<ProjectItem> {
   return apiJson<ProjectItem>("/v1/projects", token, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 }
@@ -68,6 +72,7 @@ export function requestAudioUpload(
 ): Promise<UploadRequestResult> {
   return apiJson<UploadRequestResult>(`/v1/projects/${projectId}/audio-files/upload`, token, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 }
@@ -79,6 +84,7 @@ export function registerAudio(
 ): Promise<AudioRegisterResult> {
   return apiJson<AudioRegisterResult>(`/v1/projects/${projectId}/audio-files/register`, token, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ object_key: objectKey }),
   });
 }
@@ -87,10 +93,11 @@ export function assignAudio(
   token: string,
   projectId: number,
   audioId: number,
-  transcripteurId: string,
+  transcripteurIds: string[],
 ): Promise<void> {
   return apiJson<void>(`/v1/projects/${projectId}/assign`, token, {
     method: "POST",
-    body: JSON.stringify({ audio_id: audioId, transcripteur_id: transcripteurId }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ audio_id: audioId, transcripteur_ids: transcripteurIds }),
   });
 }

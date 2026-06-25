@@ -2,13 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useAuth } from "react-oidc-context";
 import { bearerForApi } from "../../auth/api-client";
-import { Card, DataTable, Metric } from "../../shared/ui/Primitives";
+import { Card, DataTable, Metric, Badge } from "../../shared/ui/Primitives";
 import { formatIso } from "../../shared/utils/dateUtils";
 import {
+  claimTask,
+  fetchAvailableTasks,
   fetchExpertTasks,
   fetchGoldenSetStatus,
   fetchManagerProjects,
   fetchMyAudioTasks,
+  toggleHelp,
   type AudioTask,
   type ExpertTask,
   type GoldenSetStatus,
@@ -298,7 +301,9 @@ export function ManagerDashboard({
 
   const totals = useMemo(() => {
     let assigned = 0, inProgress = 0, transcribed = 0, validated = 0;
-    for (const p of projects) {
+    const safeProjects = projects || [];
+    for (const p of safeProjects) {
+      if (!p) continue;
       assigned += p.audio_counts_by_status?.assigned ?? 0;
       inProgress += p.audio_counts_by_status?.in_progress ?? 0;
       transcribed += p.audio_counts_by_status?.transcribed ?? 0;
@@ -306,6 +311,8 @@ export function ManagerDashboard({
     }
     return { assigned, inProgress, transcribed, validated };
   }, [projects]);
+
+  const safeProjectsCount = (projects || []).length;
 
   return (
     <div style={{ animation: "fade-in 0.4s ease" }}>
@@ -333,13 +340,6 @@ export function ManagerDashboard({
         token={token ?? ""}
         onSuccess={() => {
           setError("");
-          // Note: refreshKey is already supported by the dashboard effect
-          // but we need a way to increment it from inside onSuccess if it's passed down.
-          // Since refreshKey is a prop, we need the parent to handle the increment 
-          // or we can just rely on the fact that if a manager is using the dashboard,
-          // they might want to see the new user in a list (though no list exists yet).
-          // For now, clearing the error is correct per spec, but we'll add 
-          // the pattern for future list integration.
         }}
       />
 
@@ -347,50 +347,58 @@ export function ManagerDashboard({
       {loading ? <DashboardInfo text="Mise à jour des données..." /> : null}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "var(--spacing-5)", marginBottom: "var(--spacing-8)" }}>
-        <Metric label="Projets gérés" value={String(projects.length)} />
+        <Metric label="Projets gérés" value={String(safeProjectsCount)} />
         <Metric label="Audios en cours" value={String(totals.assigned + totals.inProgress)} />
         <Metric label="Attente Validation" value={String(totals.transcribed)} tone={totals.transcribed > 0 ? "error" : "default"} />
         <Metric label="Potentiel LoRA" value={golden ? `${Math.round((golden.count/golden.threshold)*100)}%` : "--"} tone="success" />
       </div>
 
       <Card title="Vos Projets" subtitle="Pipeline de production en cours">
-        {projects.length === 0 ? (
+        {(projects || []).length === 0 ? (
           <DashboardInfo text="Aucun projet actif. Commencez par en créer un." />
         ) : (
           <DataTable
-            columns={["Nom du Projet", "Nature", "Progression", "Statut", "Actions"]}
-            rows={projects.map((p) => {
+            columns={["Nom du Projet", "Nature", "Progression", "Statut"]}
+            onRowClick={(id) => {
+              console.log("Click row ID:", id);
+              onViewProject?.(id as number);
+            }}
+            rowIds={(projects || []).map(p => p.id)}
+            rows={(projects || []).map((p) => {
+              if (!p) return [];
               const total = (p.audio_counts_by_status?.uploaded ?? 0) + (p.audio_counts_by_status?.assigned ?? 0) + (p.audio_counts_by_status?.in_progress ?? 0) + (p.audio_counts_by_status?.transcribed ?? 0) + (p.audio_counts_by_status?.validated ?? 0);
               const done = p.audio_counts_by_status?.validated ?? 0;
               const prog = total > 0 ? Math.round((done / total) * 100) : 0;
               
               return [
-                <div style={{ fontWeight: 700 }}>{p.name}</div>,
-                <div style={{ fontSize: "0.85rem", opacity: 0.8 }}>{p.nature_name}</div>,
-                <div style={{ width: "120px" }}>
+                <div key={`p-name-${p.id}`} style={{ fontWeight: 700 }}>{p.name}</div>,
+                <div key={`p-nat-${p.id}`} style={{ fontSize: "0.85rem", opacity: 0.8 }}>{p.nature_name}</div>,
+                <div key={`p-prog-${p.id}`} style={{ width: "120px" }}>
                   <div style={{ fontSize: "0.75rem", marginBottom: "4px", fontWeight: 600 }}>{prog}% ({done}/{total})</div>
                   <div style={{ height: "4px", background: "var(--color-surface-hi)", borderRadius: "2px", overflow: "hidden" }}>
                     <div style={{ width: `${prog}%`, height: "100%", background: "var(--color-primary)" }} />
                   </div>
                 </div>,
-                <span style={{ 
-                  padding: "4px 8px", 
-                  borderRadius: "4px", 
-                  fontSize: "0.7rem", 
-                  fontWeight: 800,
-                  background: p.status === "completed" ? "var(--color-primary-soft)" : "var(--color-surface-hi)",
-                  color: p.status === "completed" ? "var(--color-primary)" : "var(--color-text-muted)"
-                }}>{p.status.toUpperCase()}</span>,
-                onViewProject ? (
+                <div key={`p-stat-${p.id}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+                  <span style={{ 
+                    padding: "4px 8px", 
+                    borderRadius: "4px", 
+                    fontSize: "0.7rem", 
+                    fontWeight: 800,
+                    background: p.status === "completed" ? "var(--color-primary-soft)" : "var(--color-surface-hi)",
+                    color: p.status === "completed" ? "var(--color-primary)" : "var(--color-text-muted)"
+                  }}>{(p.status || "").toUpperCase()}</span>
                   <button 
-                    type="button" 
-                    className="za-btn za-btn--ghost" 
-                    style={{ padding: "6px 12px", fontSize: "0.8rem", border: "none", background: "var(--color-surface-hi)" }}
-                    onClick={() => onViewProject(p.id)}
+                    className="za-btn za-btn--ghost za-btn--sm"
+                    style={{ padding: "4px", opacity: 0.5 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onViewProject?.(p.id);
+                    }}
                   >
-                    Détails →
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                   </button>
-                ) : "--"
+                </div>
               ];
             })}
           />
@@ -420,25 +428,63 @@ function ConflictWidget({ data }: { data: { type: string, count: number, color: 
   );
 }
 
-export function TranscriberDashboard() {
+export function TranscriberDashboard({ onEditTask }: { onEditTask?: (audioId: number) => void }) {
   const auth = useAuth();
   const token = useMemo(() => bearerForApi(auth.user), [auth.user]);
   const [tasks, setTasks] = useState<AudioTask[]>([]);
+  const [availableTasks, setAvailableTasks] = useState<AudioTask[]>([]);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const refreshTasks = async (t: string) => {
+    setLoading(true);
+    try {
+      const [mine, available] = await Promise.all([
+        fetchMyAudioTasks(t),
+        fetchAvailableTasks(t)
+      ]);
+      setTasks(mine);
+      setAvailableTasks(available);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erreur lors du chargement des tâches");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!token) return;
-    let active = true;
-    fetchMyAudioTasks(token).then((rows) => {
-      if (active) setTasks(rows);
-    }).catch(e => active && setError(e instanceof Error ? e.message : "Erreur backend"));
-    return () => { active = false; };
+    refreshTasks(token);
   }, [token]);
+
+  const handleClaim = async (audioId: number) => {
+    if (!token) return;
+    try {
+      await claimTask(audioId, token);
+      await refreshTasks(token);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Erreur lors de la récupération");
+    }
+  };
+
+  const handleToggleHelp = async (audioId: number, currentHelp: boolean) => {
+    if (!token) return;
+    try {
+      const message = !currentHelp ? prompt("Message d'aide (optionnel) :") : null;
+      await toggleHelp(audioId, !currentHelp, message, token);
+      await refreshTasks(token);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Erreur lors de la demande d'aide");
+    }
+  };
 
   const transcribed = tasks.filter((t) => t.status === "transcribed").length;
 
   return (
     <div style={{ animation: "fade-in 0.4s ease" }}>
+      <div style={{ fontSize: "0.7rem", opacity: 0.4, textAlign: "right", marginBottom: "8px" }}>
+        Utilisateur: {auth.user?.profile.preferred_username} | ID: {auth.user?.profile.sub}
+      </div>
       <header style={{ marginBottom: "var(--spacing-6)" }}>
         <p style={{ margin: 0, color: "var(--color-text-muted)", fontSize: "0.95rem" }}>
           Vos tâches de transcription et de correction en cours.
@@ -446,39 +492,89 @@ export function TranscriberDashboard() {
       </header>
 
       {error ? <p style={{ color: "var(--color-error)", marginBottom: "var(--spacing-4)" }}>{error}</p> : null}
+      {loading ? <DashboardInfo text="Mise à jour des flux..." /> : null}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "var(--spacing-4)", marginBottom: "var(--spacing-8)" }}>
-        <Metric label="Assignés" value={String(tasks.length)} />
-        <Metric label="Soumis" value={String(transcribed)} tone="success" />
+        <Metric label="Mes Tâches" value={String(tasks.length)} />
+        <Metric label="Libre Service" value={String(availableTasks.length)} tone="success" />
         <Metric label="À Traiter" value={String(tasks.length - transcribed)} tone={tasks.length - transcribed > 5 ? "error" : "default"} />
         <Metric label="Productivité" value="1.2h/j" />
       </div>
 
-      <Card title="File de Travail" subtitle="Priorité aux tâches les plus anciennes">
-        {tasks.length === 0 ? (
-          <DashboardInfo text="Aucune tâche assignée. Prenez une pause !" />
-        ) : (
-          <DataTable
-            columns={["Fichier Audio", "Projet", "Statut", "Reçu le", "Action"]}
-            rows={tasks.map(t => [
-              <div style={{ fontWeight: 700 }}>{t.filename}</div>,
-              <div style={{ fontSize: "0.85rem", opacity: 0.8 }}>{t.project_name}</div>,
-              <span style={{ 
-                padding: "2px 6px", 
-                borderRadius: "4px", 
-                fontSize: "0.7rem", 
-                fontWeight: 800,
-                background: t.status === "in_progress" ? "var(--color-primary-soft)" : "var(--color-surface-hi)",
-                color: t.status === "in_progress" ? "var(--color-primary)" : "var(--color-text-muted)"
-              }}>{t.status.toUpperCase()}</span>,
-              formatIso(t.assigned_at),
-              <button className="za-btn za-btn--ghost" style={{ padding: "4px 8px", fontSize: "0.75rem", border: "none", background: "var(--color-surface-hi)" }}>
-                Éditer →
-              </button>
-            ])}
-          />
-        )}
-      </Card>
+      <div style={{ display: "grid", gap: "var(--spacing-8)" }}>
+        <Card title="Mes Assignations" subtitle="Tâches qui vous sont directement confiées">
+          {tasks.length === 0 ? (
+            <DashboardInfo text="Aucune tâche assignée." />
+          ) : (
+            <DataTable
+              columns={["Fichier Audio", "Projet", "Statut", "Action"]}
+              rows={tasks.map(t => [
+                <div>
+                  <div style={{ fontWeight: 700 }}>{t.filename}</div>
+                  {t.help_requested && (
+                    <div style={{ fontSize: "0.7rem", color: "var(--color-error)", fontWeight: 700 }}>
+                      ⚠️ Entraide demandée {t.help_message ? `: ${t.help_message}` : ""}
+                    </div>
+                  )}
+                </div>,
+                <div style={{ fontSize: "0.85rem", opacity: 0.8 }}>{t.project_name}</div>,
+                <span style={{ 
+                  padding: "2px 6px", 
+                  borderRadius: "4px", 
+                  fontSize: "0.7rem", 
+                  fontWeight: 800,
+                  background: t.status === "in_progress" ? "var(--color-primary-soft)" : "var(--color-surface-hi)",
+                  color: t.status === "in_progress" ? "var(--color-primary)" : "var(--color-text-muted)"
+                }}>{t.status.toUpperCase()}</span>,
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button 
+                    onClick={() => onEditTask?.(t.audio_id)}
+                    className="za-btn za-btn--ghost" 
+                    style={{ padding: "4px 8px", fontSize: "0.75rem", border: "none", background: "var(--color-surface-hi)" }}
+                  >
+                    Éditer →
+                  </button>
+                  <button 
+                    onClick={() => handleToggleHelp(t.audio_id, !!t.help_requested)}
+                    className="za-btn za-btn--ghost" 
+                    style={{ 
+                      padding: "4px 8px", 
+                      fontSize: "0.75rem", 
+                      border: t.help_requested ? "1px solid var(--color-error)" : "1px solid var(--color-outline-ghost)",
+                      color: t.help_requested ? "var(--color-error)" : "inherit"
+                    }}
+                    title={t.help_requested ? "Annuler la demande d'aide" : "Demander de l'aide à un collègue"}
+                  >
+                    {t.help_requested ? "Aide ✓" : "Besoin d'aide ?"}
+                  </button>
+                </div>
+              ])}
+            />
+          )}
+        </Card>
+
+        <Card title="Libre Service (Périmètre)" subtitle="Audios prêts que vous pouvez récupérer">
+          {availableTasks.length === 0 ? (
+            <DashboardInfo text="Aucune tâche disponible en libre service. Les audios doivent être normalisés (traitement FFmpeg) et non encore assignés pour apparaître ici." />
+          ) : (
+            <DataTable
+              columns={["Fichier Audio", "Projet", "Prêt le", "Action"]}
+              rows={availableTasks.map(t => [
+                <div style={{ fontWeight: 700 }}>{t.filename}</div>,
+                <div style={{ fontSize: "0.85rem", opacity: 0.8 }}>{t.project_name}</div>,
+                formatIso(t.assigned_at || (t as any).uploaded_at),
+                <button 
+                  onClick={() => handleClaim(t.audio_id)}
+                  className="za-btn za-btn--primary" 
+                  style={{ padding: "4px 8px", fontSize: "0.75rem" }}
+                >
+                  Récupérer
+                </button>
+              ])}
+            />
+          )}
+        </Card>
+      </div>
     </div>
   );
 }
@@ -505,6 +601,9 @@ export function ExpertDashboard({ onReconcile }: { onReconcile?: (audioId: numbe
 
   return (
     <div style={{ animation: "fade-in 0.4s ease" }}>
+      <div style={{ fontSize: "0.7rem", opacity: 0.4, textAlign: "right", marginBottom: "8px" }}>
+        Utilisateur: {auth.user?.profile.preferred_username} | ID: {auth.user?.profile.sub}
+      </div>
       <header style={{ marginBottom: "var(--spacing-6)" }}>
         <p style={{ margin: 0, color: "var(--color-text-muted)", fontSize: "0.95rem" }}>
           Réconciliation des segments et validation de la qualité finale.
