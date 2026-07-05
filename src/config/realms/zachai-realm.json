@@ -58,6 +58,7 @@
       "protocol": "openid-connect",
       "fullScopeAllowed": true,
       "defaultClientScopes": [
+        "basic",
         "profile",
         "email",
         "roles"
@@ -89,7 +90,7 @@
       "clientAuthenticatorType": "client-secret",
       "secret": "zachai-admin-secret-placeholder",
       "protocol": "openid-connect",
-      "fullScopeAllowed": false,
+      "fullScopeAllowed": true,
       "defaultClientScopes": [
         "profile",
         "email",
@@ -106,6 +107,8 @@
         "realm-management": [
           "manage-users",
           "view-users",
+          "query-users",
+          "view-realm",
           "query-groups"
         ]
       }
