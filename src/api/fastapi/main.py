@@ -1718,6 +1718,18 @@ def _audio_normalized_eligible(af: AudioFile) -> bool:
     return af.normalized_path is not None and af.validation_error is None
 
 
+def _assignment_for(af: AudioFile, sub: str | None) -> "Assignment | None":
+    """Return the Assignment belonging to `sub` among an audio's assignees.
+
+    `AudioFile.assignment` is a collection (multiple transcripteurs may share an
+    audio), so callers must not treat it as a scalar.
+    """
+    for a in (af.assignment or []):
+        if str(a.transcripteur_id) == str(sub):
+            return a
+    return None
+
+
 def _assign_state_blocks_reassign(af: AudioFile) -> bool:
     """409 when human workflow has moved past assignment (Story 2.4 AC4 optional)."""
     return af.status in (AudioFileStatus.TRANSCRIBED, AudioFileStatus.VALIDATED)
@@ -1827,8 +1839,8 @@ async def _resolve_audio_for_export(
         _require_project_owner_or_admin(project, payload, roles)
         return af
     if "Transcripteur" in roles:
-        asg = af.assignment
-        if not asg or asg.transcripteur_id != sub:
+        # `assignment` is a collection: authorise if the caller's sub is an assignee.
+        if not any(a.transcripteur_id == sub for a in (af.assignment or [])):
             raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
         return af
     raise HTTPException(
@@ -4220,8 +4232,7 @@ async def list_audio_snapshots(
             if not proj or proj.manager_id != sub:
                 raise HTTPException(status_code=403, detail={"error": "Not the project owner"})
         else:
-            asg = af.assignment
-            if not asg or asg.transcripteur_id != sub:
+            if _assignment_for(af, sub) is None:
                 raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
 
     stmt = (
@@ -4274,8 +4285,7 @@ async def get_snapshot_yjs(
             if not proj or proj.manager_id != sub:
                 raise HTTPException(status_code=403, detail={"error": "Not the project owner"})
         else:
-            asg = af.assignment
-            if not asg or asg.transcripteur_id != sub:
+            if _assignment_for(af, sub) is None:
                 raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
 
     # Fetch JSON from MinIO
@@ -4671,8 +4681,7 @@ async def _authorize_restore_collaborator_access(
             raise HTTPException(status_code=403, detail={"error": "Project is not active"})
         return
     if "Transcripteur" in roles:
-        asg = af.assignment
-        if not asg or asg.transcripteur_id != sub:
+        if _assignment_for(af, sub) is None:
             raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
         if af.status not in (AudioFileStatus.ASSIGNED, AudioFileStatus.IN_PROGRESS):
             raise HTTPException(
@@ -5244,8 +5253,7 @@ async def post_golden_set_frontend_correction(
         raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
 
     if "Admin" not in roles:
-        asg = af.assignment
-        if not asg or asg.transcripteur_id != sub:
+        if _assignment_for(af, sub) is None:
             raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
 
     if af.status not in (AudioFileStatus.ASSIGNED, AudioFileStatus.IN_PROGRESS):
@@ -5316,11 +5324,11 @@ async def submit_transcription(
     if not af:
         raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
 
-    asg = af.assignment
+    asg = _assignment_for(af, sub) or (af.assignment[0] if af.assignment else None)
     if not asg:
         raise HTTPException(status_code=404, detail={"error": "Assignment not found for audio file"})
 
-    if "Admin" not in roles and asg.transcripteur_id != sub:
+    if "Admin" not in roles and str(asg.transcripteur_id) != str(sub):
         raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
 
     if af.status == AudioFileStatus.TRANSCRIBED and asg.submitted_at is not None:
@@ -5379,7 +5387,7 @@ async def validate_transcription(
     if not af:
         raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
 
-    asg = af.assignment
+    asg = af.assignment[0] if af.assignment else None
     if not asg:
         raise HTTPException(status_code=404, detail={"error": "Assignment not found for audio file"})
 
@@ -5477,8 +5485,8 @@ async def get_audio_transcription(
         raise HTTPException(status_code=404, detail={"error": "Audio file not found"})
 
     if "Admin" not in roles:
-        asg = af.assignment
-        if not asg or asg.transcripteur_id != sub:
+        # `assignment` is a collection: authorise if the caller's sub is an assignee.
+        if not any(a.transcripteur_id == sub for a in (af.assignment or [])):
             raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
 
     return {"segments": []}
@@ -5652,8 +5660,9 @@ async def get_audio_media(
             if proj is None or proj.status != ProjectStatus.ACTIVE:
                 raise HTTPException(status_code=403, detail={"error": "Project is not active"})
         elif "Transcripteur" in roles:
-            asg = af.assignment
-            if not asg or asg.transcripteur_id != sub:
+            # `assignment` is a collection (multiple transcripteurs may share an audio):
+            # the caller is authorised if their sub is among the assignees.
+            if not any(a.transcripteur_id == sub for a in (af.assignment or [])):
                 raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
             if af.status not in (AudioFileStatus.ASSIGNED, AudioFileStatus.IN_PROGRESS):
                 raise HTTPException(
@@ -5968,8 +5977,9 @@ async def post_editor_ticket(
             if proj is None or proj.status != ProjectStatus.ACTIVE:
                 raise HTTPException(status_code=403, detail={"error": "Project is not active"})
         elif "Transcripteur" in roles:
-            asg = af.assignment
-            if not asg or asg.transcripteur_id != sub:
+            # `assignment` is a collection (multiple transcripteurs may share an audio):
+            # the caller is authorised if their sub is among the assignees.
+            if not any(a.transcripteur_id == sub for a in (af.assignment or [])):
                 raise HTTPException(status_code=403, detail={"error": "Not assigned to this audio file"})
             if af.status not in (AudioFileStatus.ASSIGNED, AudioFileStatus.IN_PROGRESS):
                 raise HTTPException(
@@ -5997,6 +6007,17 @@ async def post_editor_ticket(
     except Exception as exc:
         logger.exception("Redis error while storing WSS ticket: %s", exc)
         raise HTTPException(status_code=503, detail={"error": "Redis unavailable"})
+
+    # First time the assigned transcripteur opens the editor for writing, move the
+    # audio ASSIGNED → IN_PROGRESS so dashboards show work has started
+    # (the "Commencer" action becomes "Reprendre").
+    if (
+        "Transcripteur" in roles
+        and "write" in body.permissions
+        and af.status == AudioFileStatus.ASSIGNED
+    ):
+        af.status = AudioFileStatus.IN_PROGRESS
+        await db.commit()
 
     return EditorTicketResponse(ticket_id=ticket_id, ttl=editor_ticket.WSS_TICKET_TTL_SEC)
 

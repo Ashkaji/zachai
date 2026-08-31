@@ -3,8 +3,7 @@ import {
   Layers, 
   ListTodo, 
   CheckSquare, 
-  FolderPlus, 
-  FileEdit, 
+  FolderPlus,
   Palette,
   UserCircle
 } from "lucide-react";
@@ -30,7 +29,8 @@ export type NavItem = {
 };
 
 const PROFILE_ITEM: NavItem = { id: "profile", label: "Profil & Sécurité", description: "RGPD, préférences, export", icon: UserCircle };
-const EDITOR_ITEM: NavItem = { id: "legacy-editor", label: "Éditeur de transcription", description: "Workspace de transcription audio", icon: FileEdit };
+// The transcription editor is opened contextually from a task ("Reprendre"),
+// never as a standalone destination — so it has no top-level nav entry.
 
 export const ROLE_NAVIGATION: Record<AppRole, NavItem[]> = {
   admin: [
@@ -45,12 +45,10 @@ export const ROLE_NAVIGATION: Record<AppRole, NavItem[]> = {
   ],
   transcriber: [
     { id: "dashboard-transcriber", label: "Mes Tâches", description: "File de tâches assignées", icon: ListTodo },
-    EDITOR_ITEM,
     PROFILE_ITEM,
   ],
   expert: [
     { id: "dashboard-expert", label: "Réconciliation", description: "Réconciliation & Golden Set", icon: CheckSquare },
-    EDITOR_ITEM,
     PROFILE_ITEM,
   ],
 };

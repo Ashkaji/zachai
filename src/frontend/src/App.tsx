@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy } from "react";
 import { useAuth } from "react-oidc-context";
 import { AppShell } from "./app/AppShell";
 
@@ -7,6 +7,7 @@ const TranscriptionEditor = lazy(() =>
 );
 import { ThemeProvider } from "./theme/ThemeContext";
 import { NotificationProvider } from "./shared/notifications/NotificationContext";
+import { AuthLanding } from "./features/auth/AuthLanding";
 import { resolveAppRole } from "./types/rbac";
 
 export function App() {
@@ -14,44 +15,30 @@ export function App() {
   const role = resolveAppRole(auth.user?.profile as Record<string, unknown> | undefined);
   const username = (auth.user?.profile.preferred_username as string | undefined) ?? auth.user?.profile.sub ?? "Utilisateur";
 
-  if (auth.isLoading) {
-    return <p style={{ padding: "2rem" }}>Chargement de l'authentification...</p>;
-  }
-
-  if (auth.error) {
-    return (
-      <div style={{ padding: "2rem", color: "#c00" }}>
-        <p>Erreur OIDC : {auth.error.message}</p>
-        <button onClick={() => auth.signinRedirect()}>Réessayer</button>
-      </div>
-    );
-  }
-
-  if (!auth.isAuthenticated) {
-    return (
-      <div style={{ padding: "2rem", textAlign: "center" }}>
-        <h1 style={{ fontFamily: "var(--font-headline)" }}>ZachAI - Plateforme de Transcription</h1>
-        <button onClick={() => auth.signinRedirect()} className="za-btn za-btn--primary" style={{ marginTop: "1rem" }}>
-          Se connecter avec Keycloak
-        </button>
-      </div>
-    );
-  }
-
+  // ThemeProvider wraps every state so design tokens (and light/dark mode)
+  // are always applied — including the pre-auth screens.
   return (
     <ThemeProvider>
-      <NotificationProvider>
-        <AppShell
-          role={role}
-          username={String(username)}
-          onSignout={() => auth.signoutRedirect()}
-          legacyEditor={
-            <Suspense fallback={<p style={{ padding: "2rem" }}>Chargement de l'éditeur…</p>}>
-              <TranscriptionEditor />
-            </Suspense>
-          }
+      {auth.isLoading ? (
+        <AuthLanding variant="loading" />
+      ) : auth.error ? (
+        <AuthLanding
+          variant="error"
+          errorMessage={auth.error.message}
+          onSignin={() => auth.signinRedirect()}
         />
-      </NotificationProvider>
+      ) : !auth.isAuthenticated ? (
+        <AuthLanding variant="signin" onSignin={() => auth.signinRedirect()} />
+      ) : (
+        <NotificationProvider>
+          <AppShell
+            role={role}
+            username={String(username)}
+            onSignout={() => auth.signoutRedirect()}
+            legacyEditor={<TranscriptionEditor />}
+          />
+        </NotificationProvider>
+      )}
     </ThemeProvider>
   );
 }

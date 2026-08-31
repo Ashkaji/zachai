@@ -17,8 +17,9 @@ import {
   registerAudio, 
   requestAudioUpload 
 } from "../project-wizard/projectApi";
-import { Card, DataTable, Metric, Badge } from "../../shared/ui/Primitives";
-import { formatIso, formatDuration } from "../../shared/utils/dateUtils";
+import { Card, DataTable, Badge } from "../../shared/ui/Primitives";
+import { MetricTile, StatusChip } from "../../shared/ui/StatusUI";
+import { formatDuration } from "../../shared/utils/dateUtils";
 import { useBatchAction } from "../../shared/hooks/useBatchAction";
 
 type ProjectDetailManagerProps = {
@@ -395,10 +396,10 @@ export function ProjectDetailManager({ projectId, onBack }: ProjectDetailManager
       </header>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "var(--spacing-4)" }}>
-        <Metric label="Fichiers" value={String(audios.length)} />
-        <Metric label="Progression" value={`${analytics.progress.toFixed(0)}%`} tone="success" />
-        <Metric label="Assignés" value={String(new Set(audios.flatMap(a => (a.assigned_to || "").split(",").filter(Boolean))).size)} />
-        <Metric label="Durée Totale" value={formatDuration(analytics.duration)} />
+        <MetricTile label="Fichiers" value={audios.length} />
+        <MetricTile label="Progression" value={`${analytics.progress.toFixed(0)}%`} tone="positive" />
+        <MetricTile label="Assignés" value={new Set(audios.flatMap(a => (a.assigned_to || "").split(",").filter(Boolean))).size} />
+        <MetricTile label="Durée totale" value={formatDuration(analytics.duration)} />
       </div>
 
       {assignedUsersInfo.length > 0 && (
@@ -465,9 +466,7 @@ export function ProjectDetailManager({ projectId, onBack }: ProjectDetailManager
 
               return [
                 <div key={`file-${a.id}`} style={{ fontWeight: 600 }}>{a.filename}</div>,
-                <Badge key={`status-${a.id}`} tone={a.status === "validated" ? "success" : a.status === "transcribed" ? "primary" : "default"}>
-                  {a.status}
-                </Badge>,
+                <StatusChip key={`status-${a.id}`} status={a.status} />,
                 <span
                   key={`norm-${a.id}`}
                   title={
@@ -483,10 +482,10 @@ export function ProjectDetailManager({ projectId, onBack }: ProjectDetailManager
                     height: "10px",
                     borderRadius: "50%",
                     background: a.validation_error
-                      ? "var(--color-error)"
+                      ? "var(--st-critical)"
                       : isNormalized
-                      ? "var(--color-success)"
-                      : "var(--color-text-muted)",
+                      ? "var(--st-validated)"
+                      : "var(--st-transcribed)",
                     flexShrink: 0,
                   }}
                 />,

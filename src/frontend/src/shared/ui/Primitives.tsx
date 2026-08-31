@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import React, { ReactNode } from "react";
 
 export function Card({
   title,
@@ -85,7 +85,7 @@ export function Badge({
     error: { bg: "rgba(255, 113, 108, 0.15)", text: "var(--color-error)", glow: "0 0 12px var(--color-error)" },
   };
 
-  const current = styles[tone];
+  const current = styles[tone] || styles.default;
 
   return (
     <span
@@ -127,6 +127,7 @@ export function DataTable({
   selectedIds,
   onToggleAll,
   onToggleRow,
+  onRowClick,
   allSelected,
   rowIds,
 }: {
@@ -136,6 +137,7 @@ export function DataTable({
   selectedIds?: Set<number | string>;
   onToggleAll?: () => void;
   onToggleRow?: (id: number | string) => void;
+  onRowClick?: (id: number | string) => void;
   allSelected?: boolean;
   rowIds?: (number | string)[];
 }) {
@@ -183,36 +185,38 @@ export function DataTable({
         </thead>
         <tbody>
           {rows.map((row, rowIndex) => {
-          const rowId = (rowIds ? rowIds[rowIndex] : rowIndex) ?? rowIndex;
-          const isSelected = selectedIds?.has(rowId);
-          return (
-          <tr
-          key={`row-${rowIndex}`}
-          className="za-row-hover"
-          style={{
-            transition: "background 0.2s ease",
-            background: isSelected ? "var(--color-primary-soft)" : undefined,
-          }}
-          >
-          {selectable && (
-            <td
-              style={{
-                padding: "16px",
-                borderBottom: "none", // No-Line rule
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={isSelected}
-                onChange={() => onToggleRow?.(rowId)}
-                style={{ cursor: "pointer" }}
-              />
-            </td>
-          )}
-
+            const rowId = (rowIds ? rowIds[rowIndex] : rowIndex) ?? rowIndex;
+            const isSelected = selectedIds?.has(rowId);
+            return (
+              <tr
+                key={`row-${rowIndex}`}
+                className="za-row-hover"
+                style={{
+                  transition: "background 0.2s ease",
+                  background: isSelected ? "var(--color-primary-soft)" : undefined,
+                  cursor: onRowClick ? "pointer" : "default",
+                }}
+              >
+                {selectable && (
+                  <td
+                    style={{
+                      padding: "16px",
+                      borderBottom: "none", // No-Line rule
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => onToggleRow?.(rowId)}
+                      style={{ cursor: "pointer" }}
+                    />
+                  </td>
+                )}
                 {row.map((cell, cellIndex) => (
                   <td
                     key={`cell-${rowIndex}-${cellIndex}`}
+                    onClick={() => onRowClick?.(rowId)}
                     style={{
                       padding: "16px",
                       fontSize: "0.9rem",

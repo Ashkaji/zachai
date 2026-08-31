@@ -30,6 +30,14 @@
   --color-outline-ghost: rgba(255, 255, 255, 0.05);
   --glass-bg: rgba(32, 38, 47, 0.6);
   --glow-primary: 0 0 20px rgba(116, 177, 255, 0.3);
+
+  /* Pipeline status scale — one hue per production stage */
+  --st-uploaded: #7f889f;
+  --st-assigned: #8f8bff;
+  --st-progress: #35b6e6;
+  --st-transcribed: #f0a72e;
+  --st-validated: #46c295;
+  --st-critical: #ff6b6b;
 }
 
 :root[data-theme="light"] {
@@ -49,6 +57,14 @@
   --color-outline-ghost: rgba(0, 0, 0, 0.05);
   --glass-bg: rgba(255, 255, 255, 0.7);
   --glow-primary: 0 0 20px rgba(0, 91, 192, 0.15);
+
+  /* Pipeline status scale — one hue per production stage */
+  --st-uploaded: #8a93ad;
+  --st-assigned: #6f6bff;
+  --st-progress: #0091c2;
+  --st-transcribed: #d98a00;
+  --st-validated: #17936b;
+  --st-critical: #c02b2b;
 }
 
 * {
@@ -200,4 +216,8 @@ body {
   color: var(--color-text-muted);
   background: var(--color-surface-low);
   max-width: 560px;
+}
+
+@keyframes za-spin {
+  to { transform: rotate(360deg); }
 }

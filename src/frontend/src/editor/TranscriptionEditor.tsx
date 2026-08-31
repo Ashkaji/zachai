@@ -44,6 +44,7 @@ import {
   type TextSpan,
 } from "./grammarUtils";
 import { useNotifications } from "../shared/notifications/NotificationContext";
+import { EmptyState } from "../shared/ui/StatusUI";
 import {
   editorStrings,
   remoteRestoreFailureFallback,
@@ -168,15 +169,17 @@ function collectMarkedSegments(
   return results;
 }
 
-export function TranscriptionEditor() {
+export function TranscriptionEditor({ audioId: propAudioId }: { audioId?: number }) {
   const auth = useAuth();
   const token = useMemo(() => bearerForApi(auth.user), [auth.user]);
   const { notify } = useNotifications();
   const [editorLocale] = useState<EditorLocale>(() => resolveEditorLocale());
   const editorCopy = useMemo(() => editorStrings(editorLocale), [editorLocale]);
   const audioIdParam = new URLSearchParams(window.location.search).get("audio_id");
-  const audioId =
-    audioIdParam && /^\d+$/.test(audioIdParam) ? parseInt(audioIdParam, 10) : null;
+  const audioId = useMemo(() => {
+    if (propAudioId !== undefined && propAudioId !== null) return propAudioId;
+    return audioIdParam && /^\d+$/.test(audioIdParam) ? parseInt(audioIdParam, 10) : null;
+  }, [propAudioId, audioIdParam]);
 
   const ydoc = useMemo(() => new Y.Doc(), []);
 
@@ -1442,11 +1445,18 @@ export function TranscriptionEditor() {
 
   if (!audioId) {
     return (
-      <div style={{ padding: "1rem", color: "#666" }}>
-        <p>
-          Pass <code>?audio_id=N</code> to load transcription segments for an
-          assigned audio file.
-        </p>
+      <div style={{ maxWidth: "560px", margin: "48px auto", padding: "0 24px" }}>
+        <EmptyState
+          icon={
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 18V5l12-2v13" />
+              <circle cx="6" cy="18" r="3" />
+              <circle cx="18" cy="16" r="3" />
+            </svg>
+          }
+          title="Aucun audio sélectionné"
+          description="L'éditeur s'ouvre sur une tâche précise. Ouvrez « Mes tâches » et cliquez sur « Reprendre » pour charger un audio et sa transcription."
+        />
       </div>
     );
   }

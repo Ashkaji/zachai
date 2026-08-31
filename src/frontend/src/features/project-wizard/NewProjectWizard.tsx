@@ -19,7 +19,7 @@ const NATURE_PRESETS = [
   "Temoignage de conversion",
   "Campagne d'evangelisation",
   "Enseignements thematiques",
-  "Autre (personnalise)",
+  "Autre (personnalisé)",
 ] as const;
 
 const PRODUCTION_GOALS = [
@@ -40,7 +40,7 @@ export type UploadedAudioRow = {
   errorDetail?: string;
 };
 
-const STEPS = ["Nature et metadonnees", "Labels", "Audios", "Assignation"] as const;
+const STEPS = ["Nature & métadonnées", "Labels", "Audios", "Assignation"] as const;
 
 type Props = {
   onCancel: () => void;
@@ -79,7 +79,7 @@ export function NewProjectWizard({ onCancel, onComplete }: Props) {
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [overallProgress, setOverallProgress] = useState(0);
 
-  const effectiveNature = nature === "Autre (personnalise)" ? customNature.trim() || "-" : nature;
+  const effectiveNature = nature === "Autre (personnalisé)" ? customNature.trim() || "-" : nature;
 
   useEffect(() => {
     if (!token) return;
@@ -324,7 +324,7 @@ export function NewProjectWizard({ onCancel, onComplete }: Props) {
         <div>
           <h2 style={{ margin: 0, fontFamily: "var(--font-headline)", fontSize: "1.35rem" }}>Nouveau projet</h2>
           <p style={{ margin: "var(--spacing-2) 0 0", color: "var(--color-text-muted)", maxWidth: "700px" }}>
-            Wizard avec suivi d'upload granulaire et assignation multiple.
+            Définissez la nature, les labels, déposez vos audios et assignez votre équipe.
           </p>
         </div>
         <button type="button" className="za-btn za-btn--ghost" onClick={onCancel} disabled={isSubmitting}>Fermer</button>
@@ -366,9 +366,9 @@ export function NewProjectWizard({ onCancel, onComplete }: Props) {
                 {NATURE_PRESETS.map((n) => <option key={n} value={n}>{n}</option>)}
               </select>
             </div>
-            {nature === "Autre (personnalise)" && (
+            {nature === "Autre (personnalisé)" && (
               <div>
-                <label className="za-label">Libelle de la nature</label>
+                <label className="za-label">Libellé de la nature</label>
                 <input className="za-input" value={customNature} onChange={(e) => setCustomNature(e.target.value)} disabled={isSubmitting} />
               </div>
             )}
@@ -407,7 +407,7 @@ export function NewProjectWizard({ onCancel, onComplete }: Props) {
         <Card title="Import audio">
           {!isSubmitting && (
             <div className="za-dropzone" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); onFilesPicked(e.dataTransfer.files); }}>
-              <p>Glissez-deposez des fichiers audio ici</p>
+              <p>Glissez-déposez des fichiers audio ici</p>
               <input id={fileInputId} type="file" multiple accept="audio/*" style={{ display: "none" }} onChange={(e) => onFilesPicked(e.target.files)} />
               <label htmlFor={fileInputId} className="za-btn za-btn--primary" style={{ cursor: "pointer" }}>Choisir des fichiers</label>
             </div>
@@ -418,8 +418,20 @@ export function NewProjectWizard({ onCancel, onComplete }: Props) {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px", fontSize: "0.9rem" }}>
                   <span style={{ fontWeight: 500, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span>
                   <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-2)", flexShrink: 0, marginLeft: "var(--spacing-2)" }}>
-                    <span style={{ color: a.status === "error" ? "var(--color-error)" : "var(--color-text-muted)", fontSize: "0.8rem" }}>
-                      {a.status === "pending" ? "Prêt" : a.status === "uploading" ? `Upload ${a.progress}%` : a.status}
+                    <span style={{ color: a.status === "error" ? "var(--st-critical)" : a.status === "complete" ? "var(--st-validated)" : "var(--color-text-muted)", fontSize: "0.8rem", fontWeight: 600 }}>
+                      {a.status === "pending"
+                        ? "Prêt"
+                        : a.status === "uploading"
+                        ? `Envoi ${a.progress}%`
+                        : a.status === "registering"
+                        ? "Enregistrement…"
+                        : a.status === "assigning"
+                        ? "Assignation…"
+                        : a.status === "complete"
+                        ? "Terminé"
+                        : a.status === "error"
+                        ? "Erreur"
+                        : a.status}
                     </span>
                     {!isSubmitting && (a.status === "pending" || a.status === "error") && (
                       <button

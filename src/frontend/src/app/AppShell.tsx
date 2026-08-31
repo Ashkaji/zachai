@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState, useEffect } from "react";
+import React, { lazy, Suspense, useMemo, useState, useEffect } from "react";
 import type { ReactNode } from "react";
 import { useTheme } from "../theme/ThemeContext";
 import type { AppRole } from "../types/rbac";
@@ -6,23 +6,20 @@ import { ROLE_NAVIGATION, type AppRouteId } from "./navigation";
 import { useNotifications } from "../shared/notifications/NotificationContext";
 import { ChevronLeft, ChevronRight, LogOut, Moon, Sun } from "lucide-react";
 
+import { ProjectDetailManager } from "../features/projects/ProjectDetailManager";
+import { ManagerDashboard } from "../features/dashboard/RoleDashboards";
+
 const AdminDashboard = lazy(() =>
   import("../features/dashboard/RoleDashboards").then((m) => ({ default: m.AdminDashboard })),
 );
 const ExpertDashboard = lazy(() =>
   import("../features/dashboard/RoleDashboards").then((m) => ({ default: m.ExpertDashboard })),
 );
-const ManagerDashboard = lazy(() =>
-  import("../features/dashboard/RoleDashboards").then((m) => ({ default: m.ManagerDashboard })),
-);
 const TranscriberDashboard = lazy(() =>
   import("../features/dashboard/RoleDashboards").then((m) => ({ default: m.TranscriberDashboard })),
 );
 const NewProjectWizard = lazy(() =>
   import("../features/project-wizard/NewProjectWizard").then((m) => ({ default: m.NewProjectWizard })),
-);
-const ProjectDetailManager = lazy(() =>
-  import("../features/projects/ProjectDetailManager").then((m) => ({ default: m.ProjectDetailManager })),
 );
 const Playground = lazy(() => import("../dev/Playground").then((m) => ({ default: m.Playground })));
 const ReconciliationWorkspace = lazy(() =>
@@ -298,11 +295,6 @@ export function AppShell({
           }}
         >
           <div>
-            <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--color-text-muted)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "6px" }}>
-              <span>Azure Flow</span>
-              <span style={{ opacity: 0.5 }}>›</span>
-              <span>{roleTitle(role)}</span>
-            </div>
             <h2 style={{ margin: 0, fontFamily: "var(--font-headline)", fontSize: "1.75rem", fontWeight: 800, color: "var(--color-primary)" }}>
               {activeLabel}
             </h2>
@@ -349,7 +341,7 @@ export function AppShell({
               <NewProjectWizard onCancel={handleBackToDashboard} onComplete={handleBackToDashboard} />
             ) : null}
 
-            {activeRoute === "project-detail" && selectedProjectId ? (
+            {activeRoute === "project-detail" && selectedProjectId !== null && selectedProjectId !== undefined ? (
               <ProjectDetailManager projectId={selectedProjectId} onBack={handleBackToDashboard} />
             ) : null}
 
@@ -366,11 +358,20 @@ export function AppShell({
               <ReconciliationWorkspace audioId={selectedProjectId!} onBack={handleBackToDashboard} />
             ) : null}
             {activeRoute === "dashboard-transcriber" && role === "transcriber" ? (
-              <TranscriberDashboard />
+              <TranscriberDashboard onEditTask={(id) => {
+                setSelectedProjectId(id);
+                setActiveRoute("legacy-editor");
+              }} />
             ) : null}
 
             {activeRoute === "profile" ? <ProfileCenter /> : null}
-            {activeRoute === "legacy-editor" ? legacyEditor : null}
+            {activeRoute === "legacy-editor" ? (
+              <Suspense fallback={<RouteFallback />}>
+                {typeof legacyEditor === "object" && legacyEditor !== null && "type" in legacyEditor 
+                  ? React.cloneElement(legacyEditor as any, { audioId: selectedProjectId })
+                  : legacyEditor}
+              </Suspense>
+            ) : null}
             {activeRoute === "playground" ? <Playground /> : null}
           </Suspense>
         </section>
@@ -425,6 +426,22 @@ export function AppShell({
                     <p style={{ margin: "var(--spacing-2) 0 0", color: "var(--color-text-muted)", fontSize: "0.85rem" }}>
                       {notice.body}
                     </p>
+                    {notice.body.includes("Mot de passe initial") && (
+                      <button
+                        onClick={() => {
+                          const match = notice.body.match(/:\s*(\S+)/);
+                          const pwd = match ? match[1] : notice.body.split(":").pop()?.trim();
+                          if (pwd) {
+                            navigator.clipboard.writeText(pwd);
+                            // Visual feedback could be added here, but keep it simple for now
+                          }
+                        }}
+                        className="za-btn za-btn--ghost"
+                        style={{ fontSize: "0.7rem", padding: "4px 8px", marginTop: "8px" }}
+                      >
+                        Copier le mot de passe
+                      </button>
+                    )}
                     <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)", marginTop: "var(--spacing-2)", opacity: 0.6 }}>
                       {new Date(notice.timestamp).toLocaleTimeString()}
                     </div>

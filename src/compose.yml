@@ -127,7 +127,6 @@ services:
       KC_DB_PASSWORD: ${DB_KC_PASSWORD:-keycloak_pass}
       KC_HTTP_ENABLED: "true"
       KC_HOSTNAME_STRICT: "false"
-      KC_HOSTNAME_STRICT_HTTPS: "false"
       KC_HEALTH_ENABLED: "true"
     networks:
       - zachai-network
@@ -376,7 +375,7 @@ services:
       interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 60s
+      start_period: 180s
     deploy:
       resources:
         limits:
@@ -635,4 +634,34 @@ services:
           memory: 512M
         reservations:
           memory: 128M
+    restart: unless-stopped
+
+  # ── Layer 6: Frontend ───────────────────────────────────────────────────────
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: zachai-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      #BACKEND_URL est utilisé UNIQUEMENT par le proxy Vite (interne Docker)
+      BACKEND_URL: http://fastapi:8000
+      # Utilisé directement par votre navigateur (doit passer par l'hôte)
+      VITE_HOCUSPOCUS_URL: ws://localhost:11234
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+      # On évite de monter node_modules pour ne pas polluer l'hôte (ou inversement)
+      - /app/node_modules
+    networks:
+      - zachai-network
+    depends_on:
+      fastapi:
+        condition: service_healthy
+      hocuspocus:
+        condition: service_healthy
     restart: unless-stopped

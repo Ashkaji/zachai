@@ -7,7 +7,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/v1": {
-        target: process.env.VITE_API_BASE || "http://localhost:8000",
+        // On utilise BACKEND_URL pour le proxy interne
+        // Si non défini, on tente localhost:8000 (dev hors docker)
+        target: process.env.BACKEND_URL || "http://localhost:8000",
         changeOrigin: true,
       },
     },
